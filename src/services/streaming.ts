@@ -63,6 +63,11 @@ export function streamAudioUrl(trackId: string, originalUrl: string): string {
   return `${ENDPOINT}/api/stream/audio/${encodeURIComponent(trackId)}?src=${encodeURIComponent(originalUrl)}`;
 }
 
+/** Proxy URL for a resolved stream (still used by the legacy player in legacy/original-player.html). */
+export function getProxyStreamUrl(streamUrl: string): string {
+  return `${ENDPOINT}/api/stream/proxy?url=${encodeURIComponent(streamUrl)}`;
+}
+
 /**
  * Connects to the Server-Sent Events (SSE) analysis stream for progressive window-by-window features.
  */
