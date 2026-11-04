@@ -42,3 +42,15 @@ def test_selects_top_views_per_season_without_duplicate_songs() -> None:
 def test_era_boundaries() -> None:
     assert [CokeStudioCatalog.era_for_season(s) for s in (1, 6, 7, 10, 11, 15)] == [
         'classic', 'classic', 'middle', 'middle', 'modern', 'modern']
+
+
+def test_generic_code_can_read_a_coke_studio_manifest(tmp_path) -> None:
+    from musicdna.corpus.coke_studio import CokeStudioManifest
+    from musicdna.corpus.manifest import CorpusManifest
+    videos = [{'id': 'a', 'title': 'Coke Studio Season 9| Song A| X', 'duration': 300, 'view_count': 10}]
+    path = tmp_path / 'manifest.json'
+    CokeStudioManifest(1, '', {}, CokeStudioCatalog.select({'coke_studio_pakistan': videos}, per_season=1)).save(path)
+    generic = CorpusManifest.load(path).entries[0]
+    specific = CokeStudioManifest.load(path).entries[0]
+    assert (generic.song, generic.label) == ('Song A', 'Song A')
+    assert (specific.season, specific.era, specific.label) == (9, 'middle', 'S 9 Song A')

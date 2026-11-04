@@ -24,7 +24,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
 from musicdna.config import DEFAULT, Config, RankerConfig
-from musicdna.corpus.coke_studio import MANIFEST_PATH, CorpusManifest
+from musicdna.corpus.manifest import MANIFEST_PATH, CorpusManifest
 from musicdna.corpus.feature_store import FeatureStore
 from musicdna.features.spatial import SpatialDescriptors
 from musicdna.features.vocal import VocalDescriptors

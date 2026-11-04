@@ -2,14 +2,13 @@ import numpy as np
 
 from musicdna.config import Config
 
-from musicdna.corpus.coke_studio import CorpusEntry, CorpusManifest
+from musicdna.corpus.manifest import CorpusEntry, CorpusManifest
 from musicdna.corpus.feature_store import FeatureStore
 from musicdna.experiments.r01 import PairRow, R01Experiment
 
 
 def entry(video_id: str, artists: str) -> CorpusEntry:
-    return CorpusEntry(video_id=video_id, title='', song=video_id, artists=artists, season=9, year=2016,
-                       era='middle', source_channel='', view_count=0, duration_sec=200, url='')
+    return CorpusEntry(video_id=video_id, title='', song=video_id, artists=artists, duration_sec=200, url='')
 
 
 def build_store(tmp_path, songs: list[str]) -> FeatureStore:

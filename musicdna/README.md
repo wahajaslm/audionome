@@ -29,7 +29,8 @@ musicdna/
 │   ├── favorite_passages.py FAV-corpus reason taxonomy and passage contrast
 │   └── emotion.py        personalised dynamic emotion baseline (DMER)
 ├── corpus/               research data
-│   ├── coke_studio.py    60-song Coke Studio corpus: select, download, verify, load
+│   ├── manifest.py       generic CorpusEntry / CorpusManifest: load, save, download, verify
+│   ├── coke_studio.py    Coke Studio entries (season, era, views) and song selection
 │   └── feature_store.py  cached per-window features for the corpus
 ├── experiments/          runnable studies, each writes to research-output/
 │   ├── pipeline.py       corpus -> features -> pairs -> R01, in one command

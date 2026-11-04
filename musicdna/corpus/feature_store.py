@@ -21,11 +21,13 @@ import soundfile as sf
 from musicdna.audio.io import load_audio
 from musicdna.audio.windows import WindowGrid
 from musicdna.config import DEFAULT, Config
-from musicdna.corpus.coke_studio import DATA_DIRECTORY, CorpusEntry, CorpusManifest
+from musicdna.corpus.coke_studio import CokeStudioManifest
+from musicdna.corpus.manifest import CorpusEntry, CorpusManifest
 from musicdna.features.spatial import SpatialAnalyzer
 from musicdna.features.vocal import PitchContour, VocalPitchAnalyzer
+from musicdna.paths import CORPUS_DIR
 
-FEATURE_DIRECTORY = DATA_DIRECTORY / 'features'
+FEATURE_DIRECTORY = CORPUS_DIR / 'features'
 
 
 class FeatureStore:
@@ -268,7 +270,7 @@ def _run_in_worker(job: tuple[str, CorpusEntry, Config, Path]) -> str:
     stage_name, entry, config, root = job
     try:
         STAGES[stage_name].run(FeatureStore(config, root), entry)
-        return f'{stage_name:<7} S{entry.season:>2} {entry.song}'
+        return f'{stage_name:<7} {entry.label}'
     except Exception as error:  # noqa: BLE001 - one bad song must not stop the corpus
         return f'{stage_name:<7} FAILED {entry.video_id} {entry.song}: {error}'
 
@@ -312,7 +314,7 @@ class FeatureBuilder:
         for entry in todo:
             try:
                 stage.run(self.store, entry)
-                print(f'{stage.name:<7} S{entry.season:>2} {entry.song}', flush=True)
+                print(f'{stage.name:<7} {entry.label}', flush=True)
             except PermissionError as error:
                 return failures + [f'{stage.name}: {error}']
             except Exception as error:  # noqa: BLE001
@@ -329,7 +331,7 @@ def main() -> None:
     Config.add_arguments(parser)
     arguments = parser.parse_args()
 
-    entries = CorpusManifest.load().entries[:arguments.limit]
+    entries = CokeStudioManifest.load().entries[:arguments.limit]
     builder = FeatureBuilder(FeatureStore(Config.from_arguments(arguments)), arguments.workers, arguments.allow_nc_weights)
     failures = builder.build(arguments.stages, entries)
     print(json.dumps(builder.coverage(entries)))

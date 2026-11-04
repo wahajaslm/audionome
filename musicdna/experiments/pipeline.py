@@ -14,7 +14,8 @@ from pathlib import Path
 from typing import Any
 
 from musicdna.config import Config
-from musicdna.corpus.coke_studio import CorpusManifest
+from musicdna.corpus.coke_studio import CokeStudioManifest
+from musicdna.corpus.manifest import CorpusManifest
 from musicdna.corpus.feature_store import DEFAULT_STAGES, FeatureBuilder, FeatureStore
 from musicdna.experiments.r01 import R01Experiment
 from musicdna.paths import RESEARCH_OUTPUT_DIR
@@ -42,7 +43,7 @@ class R01Pipeline:
 
     def check_corpus(self) -> CorpusManifest:
         print('1/4 corpus')
-        corpus = CorpusManifest.load()
+        corpus = CokeStudioManifest.load()
         problems = corpus.verify()
         if problems:
             raise SystemExit('Corpus incomplete; run `python -m musicdna.corpus.coke_studio download`.\n' + '\n'.join(problems))
