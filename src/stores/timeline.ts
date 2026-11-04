@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia';
 import { computed, ref, shallowRef, watch } from 'vue';
 import { fetchTimeline, hasFull, hasQuick, startTimeline, type Timeline } from '../core/timeline';
-import { SPEC_SR, type Spectrum } from '../core/spectrum';
+import { SPEC_SR, type Spectrum, type SpectrumKind, type SpectrumView } from '../core/spectrum';
+import { getSetting, putSetting } from '../core/repository';
 import { fallbackUrl } from '../core/library';
 import { useLibraryStore } from './library';
 import { usePlaybackStore } from './playback';
@@ -16,8 +17,17 @@ import { usePlaybackStore } from './playback';
 export const useTimelineStore = defineStore('timeline', () => {
   const trackId = ref<string | null>(null);
   const timeline = shallowRef<Timeline | null>(null);
+  /** The mel view and the instant curves (loudness, brightness). */
   const spectrum = shallowRef<Spectrum | null>(null);
   const spectrumState = ref<'idle' | 'decoding' | 'done' | 'error'>('idle');
+  /** Which spectrum view is drawn (SPECTRUM VIEWS), remembered across songs and reloads. */
+  const spectrumKind = ref<SpectrumKind>('mel');
+  getSetting<string>('spectrumKind').then(k => { if (k === 'mel' || k === 'cqt' || k === 'linear') spectrumKind.value = k; }).catch(() => { });
+  /** CQT and linear views, made on first use for the loaded song. */
+  const views = shallowRef<Partial<Record<SpectrumKind, SpectrumView>>>({});
+  /** The view to draw: the chosen one, or mel while the chosen one is being made. */
+  const spectrumView = computed<SpectrumView | null>(() => views.value[spectrumKind.value] ?? spectrum.value);
+  const viewBusy = ref(false);
   /** True after a start request failed: the service is not running, or runs code without timelines. */
   const serviceOff = ref(false);
   const serviceOutdated = ref(false);
@@ -26,6 +36,42 @@ export const useTimelineStore = defineStore('timeline', () => {
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let worker: Worker | null = null;
   let workerSeq = 0;
+  const pending = new Map<number, { resolve: (v: SpectrumView) => void; reject: (e: Error) => void }>();
+  /** Asks the worker for one view; the samples go along only the first time per song. */
+  function askWorker(kind: SpectrumKind, samples?: Float32Array): Promise<SpectrumView> {
+    if (!worker) {
+      worker = new Worker(new URL('../core/spectrum.worker.ts', import.meta.url), { type: 'module' });
+      worker.onmessage = (e: MessageEvent<{ id: number; view?: SpectrumView; error?: string }>) => {
+        const p = pending.get(e.data.id);
+        if (!p) return;
+        pending.delete(e.data.id);
+        e.data.view ? p.resolve(e.data.view) : p.reject(new Error(e.data.error));
+      };
+    }
+    const id = ++workerSeq;
+    return new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject });
+      worker!.postMessage({ id, kind, samples }, samples ? [samples.buffer] : []);
+    });
+  }
+
+  /** Switch the spectrum view; CQT and linear are computed the first time they are chosen. */
+  async function setSpectrumKind(kind: SpectrumKind): Promise<void> {
+    spectrumKind.value = kind;
+    putSetting('spectrumKind', kind).catch(() => { });
+    await ensureView(kind);
+  }
+  async function ensureView(kind: SpectrumKind): Promise<void> {
+    if (kind === 'mel' || views.value[kind] || !spectrum.value || viewBusy.value) return;
+    const mySeq = seq;
+    viewBusy.value = true;
+    try {
+      const v = await askWorker(kind);
+      if (mySeq === seq) views.value = { ...views.value, [kind]: v };
+    } catch (err) { console.warn('Spectrum view notice:', err); }
+    finally { viewBusy.value = false; }
+    if (mySeq === seq && spectrumKind.value !== kind) ensureView(spectrumKind.value);
+  }
 
   const quick = computed(() => hasQuick(timeline.value));
   const full = computed(() => hasFull(timeline.value));
@@ -113,18 +159,11 @@ export const useTimelineStore = defineStore('timeline', () => {
         const ch = buf.getChannelData(c);
         for (let i = 0; i < mono.length; i++) mono[i] += ch[i] / buf.numberOfChannels;
       }
-      worker ??= new Worker(new URL('../core/spectrum.worker.ts', import.meta.url), { type: 'module' });
-      const myWorkerSeq = ++workerSeq;
-      const result = await new Promise<Spectrum>((resolve, reject) => {
-        worker!.onmessage = (e: MessageEvent<{ id: number; spectrum?: Spectrum; error?: string }>) => {
-          if (e.data.id !== myWorkerSeq) return;
-          e.data.spectrum ? resolve(e.data.spectrum) : reject(new Error(e.data.error));
-        };
-        worker!.postMessage({ id: myWorkerSeq, samples: mono }, [mono.buffer]);
-      });
+      const result = await askWorker('mel', mono) as Spectrum;
       if (mySeq !== seq) return;
       spectrum.value = result;
       spectrumState.value = 'done';
+      ensureView(spectrumKind.value);
     } catch (err) {
       console.warn('Spectrum notice:', err);
       if (mySeq === seq) spectrumState.value = 'error';
@@ -137,6 +176,7 @@ export const useTimelineStore = defineStore('timeline', () => {
     trackId.value = id;
     timeline.value = null;
     spectrum.value = null;
+    views.value = {};
     spectrumState.value = 'idle';
     serviceOff.value = false;
     serviceOutdated.value = false;
@@ -167,5 +207,5 @@ export const useTimelineStore = defineStore('timeline', () => {
     });
   }
 
-  return { trackId, timeline, spectrum, spectrumState, serviceOff, quick, full, statusText, load, bind };
+  return { trackId, timeline, spectrum, spectrumState, spectrumKind, spectrumView, viewBusy, setSpectrumKind, serviceOff, quick, full, statusText, load, bind };
 });

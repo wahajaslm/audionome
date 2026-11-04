@@ -6,11 +6,12 @@
  */
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { STEM_NAMES, type Timeline } from '../../core/timeline';
-import { spectrumTiles, type Spectrum } from '../../core/spectrum';
+import { spectrumTiles, type Spectrum, type SpectrumKind, type SpectrumView } from '../../core/spectrum';
+import SpectrumSwitch from '../../ui/SpectrumSwitch.vue';
 import { useTimeDrag } from '../../composables/useTimeDrag';
 
-const props = defineProps<{ timeline: Timeline | null; spectrum: Spectrum | null; duration: number; t: number | null; spectrumNote: string }>();
-const emit = defineEmits<{ seek: [sec: number]; range: [a: number, b: number] }>();
+const props = defineProps<{ timeline: Timeline | null; spectrum: Spectrum | null; view: SpectrumView | null; kind: SpectrumKind; viewBusy: boolean; duration: number; t: number | null; spectrumNote: string }>();
+const emit = defineEmits<{ seek: [sec: number]; range: [a: number, b: number]; kind: [kind: SpectrumKind] }>();
 const dragRange = ref<[number, number] | null>(null);
 
 const ROWS = [
@@ -29,7 +30,7 @@ const cv = ref<HTMLCanvasElement | null>(null);
 const width = ref(0);
 let ro: ResizeObserver | null = null;
 let tiles: HTMLCanvasElement[] = [];
-watch(() => props.spectrum, s => { tiles = s ? spectrumTiles(s) : []; }, { immediate: true });
+watch(() => props.view, s => { tiles = s ? spectrumTiles(s) : []; }, { immediate: true });
 
 function draw(): void {
   const c = cv.value, w = width.value;
@@ -54,7 +55,7 @@ function draw(): void {
         if (b - a > 14) { g.fillStyle = '#0e0e10'; g.font = '600 11px ' + font; g.fillText(p.label, a + 5, y + 13); }
       }
     } else if (r.k === 'spec') {
-      const sp = props.spectrum;
+      const sp = props.view;
       if (!sp || !tiles.length) { pend(y, r.h, props.spectrumNote); continue; }
       g.imageSmoothingEnabled = true;
       let f0 = 0;
@@ -100,7 +101,7 @@ function draw(): void {
   }
 }
 
-watch(() => [props.timeline, props.spectrum, props.duration, props.t == null ? -1 : Math.round(props.t * 4), dragRange.value], () => requestAnimationFrame(draw));
+watch(() => [props.timeline, props.spectrum, props.view, props.duration, props.t == null ? -1 : Math.round(props.t * 4), dragRange.value], () => requestAnimationFrame(draw));
 onMounted(() => {
   ro = new ResizeObserver(([e]) => { width.value = e.contentRect.width; draw(); });
   if (cv.value) ro.observe(cv.value);
@@ -124,7 +125,9 @@ const drag = useTimeDrag(
   <div class="map">
     <div class="lbl" :style="{ height: HEIGHT + 'px' }">
       <span v-for="r in ROWS.filter(x => x.name)" :key="r.name" class="l" :style="{ top: r.y + 'px', height: r.h + 'px' }">
-        <i v-if="r.s" class="sw" :style="{ background: 'var(--stem-' + r.s + ')' }"></i>{{ r.name }}
+        <i v-if="r.s" class="sw" :style="{ background: 'var(--stem-' + r.s + ')' }"></i>
+        <span v-if="r.k === 'spec'" class="specl">{{ r.name }}<SpectrumSwitch :kind="kind" :busy="viewBusy" @select="k => emit('kind', k)" /></span>
+        <template v-else>{{ r.name }}</template>
       </span>
     </div>
     <canvas ref="cv" class="cv" :style="{ height: HEIGHT + 'px' }" aria-label="The whole song: parts, spectrum, loudness and stems. Click to play from there, drag to loop a range." @pointerdown="drag.pointerdown" @pointermove="drag.pointermove" @pointerup="drag.pointerup" @pointercancel="drag.pointercancel"></canvas>
@@ -132,7 +135,8 @@ const drag = useTimeDrag(
 </template>
 
 <style scoped>
-.map { display: grid; grid-template-columns: 92px minmax(0, 1fr); }
+.map { display: grid; grid-template-columns: 112px minmax(0, 1fr); }
+.specl { display: flex; flex-direction: column; gap: 4px; width: 100%; }
 .lbl { position: relative; }
 .l { position: absolute; left: 0; display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-mute); }
 .sw { width: 7px; height: 7px; border-radius: 50%; }

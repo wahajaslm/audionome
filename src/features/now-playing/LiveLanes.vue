@@ -8,12 +8,18 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { noteName, quantile, STEM_NAMES, type StemName, type Timeline } from '../../core/timeline';
-import { hzToMel, spectrumTiles, SPEC_TILE, type Spectrum } from '../../core/spectrum';
+import { bandForHz, spectrumLabels, spectrumTiles, SPEC_TILE, type Spectrum, type SpectrumKind, type SpectrumView } from '../../core/spectrum';
+import SpectrumSwitch from '../../ui/SpectrumSwitch.vue';
 import { useTimeDrag } from '../../composables/useTimeDrag';
 
 const props = defineProps<{
   timeline: Timeline | null;
+  /** Mel view + instant curves (loudness lane). */
   spectrum: Spectrum | null;
+  /** The spectrum view to draw (mel, CQT or linear) and its switch. */
+  view: SpectrumView | null;
+  kind: SpectrumKind;
+  viewBusy: boolean;
   range: { a: number; b: number };
   t: number;
   zoom: 'live' | 'all';
@@ -21,7 +27,7 @@ const props = defineProps<{
   activeStem: string;
   waitingText: { quick: string; full: string; spectrum: string };
 }>();
-const emit = defineEmits<{ seek: [sec: number]; loop: [a: number, b: number]; solo: [stem: StemName]; mute: [stem: StemName] }>();
+const emit = defineEmits<{ seek: [sec: number]; loop: [a: number, b: number]; solo: [stem: StemName]; mute: [stem: StemName]; kind: [kind: SpectrumKind] }>();
 
 type Row = { k: 'bar' | 'spec' | 'chord' | 'melody' | 'stem' | 'loud' | 'axis'; h: number; gap?: number; name: string; s?: StemName; y?: number };
 const ROWS: Row[] = [
@@ -41,7 +47,7 @@ const cv = ref<HTMLCanvasElement | null>(null);
 const width = ref(0);
 let ro: ResizeObserver | null = null;
 let tiles: HTMLCanvasElement[] = [];
-watch(() => props.spectrum, s => { tiles = s ? spectrumTiles(s) : []; }, { immediate: true });
+watch(() => props.view, s => { tiles = s ? spectrumTiles(s) : []; }, { immediate: true });
 
 const soloed = computed(() => (STEM_NAMES as readonly string[]).includes(props.activeStem) ? props.activeStem : null);
 const mutedStem = computed(() => props.activeStem.startsWith('no_') ? props.activeStem.slice(3) : null);
@@ -107,7 +113,7 @@ function draw(): void {
         if (props.zoom === 'live' || i % 4 === 0) { g.fillStyle = C.sub; g.fillText(String(i + 1), X(d) + 3, ry + 10); }
       });
     } else if (r.k === 'spec') {
-      const sp = props.spectrum;
+      const sp = props.view;
       if (!sp || !tiles.length) { pend(r, props.waitingText.spectrum); continue; }
       // Slice [v0, v1] out of the tiles; a view can cross a tile edge, so draw per tile.
       const f0 = Math.max(0, v0 * sp.fps), f1 = Math.min(sp.frames, v1 * sp.fps);
@@ -117,10 +123,11 @@ function draw(): void {
         if (b <= a) continue;
         g.drawImage(tiles[ti], a - t0, 0, b - a, sp.bands, X(a / sp.fps), ry, X(b / sp.fps) - X(a / sp.fps), r.h);
       }
-      const melY = (f: number) => ry + r.h - (hzToMel(f) - hzToMel(sp.fmin)) / (hzToMel(sp.fmax) - hzToMel(sp.fmin)) * r.h;
+      // Axis labels follow the view: Hz for mel and linear, note names for CQT.
+      const bandY = (f: number) => ry + r.h - (bandForHz(sp, f) + 0.5) / sp.bands * r.h;
       g.font = '600 10px ' + font;
-      for (const [f, label] of [[100, '100 Hz'], [1000, '1 kHz'], [5000, '5 kHz']] as const) {
-        const yy = melY(f);
+      for (const [f, label] of spectrumLabels(sp.kind)) {
+        const yy = bandY(f);
         g.fillStyle = 'rgba(14,14,16,0.72)'; g.fillRect(2, yy - 7, 40, 13);
         g.fillStyle = C.ink; g.fillText(label, 5, yy + 3);
       }
@@ -191,7 +198,7 @@ function draw(): void {
   }
 }
 
-watch(() => [props.t, props.zoom, props.timeline, props.spectrum, props.activeStem, props.range.a, props.range.b, dragRange.value], () => requestAnimationFrame(draw));
+watch(() => [props.t, props.zoom, props.timeline, props.spectrum, props.view, props.activeStem, props.range.a, props.range.b, dragRange.value], () => requestAnimationFrame(draw));
 onMounted(() => {
   ro = new ResizeObserver(([e]) => { width.value = e.contentRect.width; draw(); });
   if (cv.value) ro.observe(cv.value);
@@ -218,7 +225,8 @@ const stemsReady = computed(() => !!props.timeline?.stems);
     <div class="lbl" :style="{ height: HEIGHT + 'px' }">
       <div v-for="r in ROWS.filter(x => x.name)" :key="r.name" class="l" :style="{ top: r.y + 'px', height: r.h + 'px' }">
         <span v-if="r.s" class="sw" :style="{ background: 'var(--stem-' + r.s + ')' }"></span>
-        <span>{{ r.name }}</span>
+        <span v-if="r.k === 'spec'" class="specl"><span>{{ r.name }}</span><SpectrumSwitch :kind="kind" :busy="viewBusy" @select="k => emit('kind', k)" /></span>
+        <span v-else>{{ r.name }}</span>
         <template v-if="r.s">
           <button type="button" class="sm" :aria-pressed="soloed === r.s" :disabled="!stemsReady" :aria-label="'Solo ' + r.s" @click="emit('solo', r.s)">S</button>
           <button type="button" class="sm" :aria-pressed="mutedStem === r.s" :disabled="!stemsReady" :aria-label="'Mute ' + r.s" @click="emit('mute', r.s)">M</button>
@@ -234,6 +242,7 @@ const stemsReady = computed(() => !!props.timeline?.stems);
 .lbl { position: relative; }
 .l { position: absolute; left: 0; right: 6px; display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--ink-mute); }
 .sw { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.specl { display: flex; flex-direction: column; gap: 4px; width: 100%; }
 .sm {
   padding: 0 5px; font-size: 10px; line-height: 15px; border-radius: 4px; margin-left: auto;
   border: 1px solid var(--line-strong); background: none; color: var(--ink-sub); cursor: pointer; font-family: var(--font-sans);

@@ -62,6 +62,7 @@ onBeforeUnmount(() => { if (timer) clearTimeout(timer); });
 
 const tl = computed(() => (isLoaded.value ? timelineStore.timeline : own.value));
 const spectrum = computed(() => (isLoaded.value ? timelineStore.spectrum : null));
+const spectrumView = computed(() => (isLoaded.value ? timelineStore.spectrumView : null));
 const duration = computed(() => tl.value?.durationSec || track.value?.durationSec || 0);
 const serviceOff = computed(() => (isLoaded.value ? timelineStore.serviceOff : ownOff.value));
 
@@ -150,7 +151,8 @@ async function rerun(): Promise<void> {
         <h2 class="heading">{{ track.title }}</h2>
         <span class="caption sub">{{ facts.join(' · ') || (serviceOff ? 'Start the analysis service to see the song’s structure.' : 'Analysing…') }}</span>
       </div>
-      <SongMap :timeline="tl" :spectrum="spectrum" :duration="duration" :t="isLoaded ? playback.t : null"
+      <SongMap :timeline="tl" :spectrum="spectrum" :view="spectrumView" :kind="timelineStore.spectrumKind" :view-busy="timelineStore.viewBusy"
+        @kind="k => timelineStore.setSpectrumKind(k)" :duration="duration" :t="isLoaded ? playback.t : null"
         :spectrum-note="isLoaded ? 'Reading audio…' : 'Open this song in the player to see its spectrum'" @seek="seek" @range="playPart" />
     </section>
 

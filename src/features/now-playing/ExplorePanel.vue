@@ -36,7 +36,7 @@ const { feel, love, note, ask } = storeToRefs(flow);
 const askHere = computed(() => (ask.value && sel.value && Math.abs(ask.value.a - sel.value.a) < 0.5 && Math.abs(ask.value.b - sel.value.b) < 0.5 ? ask.value : null));
 const describeOpen = ref(false);
 function askMore(): void { flow.skipAsk(); describeOpen.value = true; }
-const { timeline, spectrum, spectrumState, serviceOff } = storeToRefs(timelineStore);
+const { timeline, spectrum, spectrumState, spectrumView, spectrumKind, viewBusy, serviceOff } = storeToRefs(timelineStore);
 
 const zoom = ref<'live' | 'all'>('live');
 
@@ -159,6 +159,9 @@ const measurements = computed(() => {
     <LiveLanes
       :timeline="timeline"
       :spectrum="spectrum"
+      :view="spectrumView"
+      :kind="spectrumKind"
+      :view-busy="viewBusy"
       :range="sel"
       :t="t"
       :zoom="zoom"
@@ -166,6 +169,7 @@ const measurements = computed(() => {
       :waiting-text="waitingText"
       @seek="s => playback.clickSeek(s)"
       @loop="setLoop"
+      @kind="k => timelineStore.setSpectrumKind(k)"
       @solo="solo"
       @mute="mute"
     />

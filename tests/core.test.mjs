@@ -7,7 +7,7 @@ import {
 } from '../src/core/playback.ts';
 import { toDbMoment, withTags, collectionsOf, newMoment, savedRanges } from '../src/core/moments.ts';
 import { barAt, beatInBar, blockIndexAt, chordChart, chordSheet, noteName, passageEvidence, passageMoments, rankIn } from '../src/core/timeline.ts';
-import { computeSpectrum, fft, hzToMel, melFilters, melToHz, SPEC_SR } from '../src/core/spectrum.ts';
+import { bandForHz, computeSpectrum, computeView, fft, hzToMel, melFilters, melToHz, SPEC_SR } from '../src/core/spectrum.ts';
 
 /** Minimal HTMLMediaElement stand-in: an EventTarget with the fields the engine reads. */
 class FakeMedia extends EventTarget {
@@ -457,4 +457,16 @@ test('timeline: the save question asks about the strongest measured event in the
   const rising = { trackId: 'x', version: 2, status: {}, fps: 10, mix: Array.from({ length: n }, (_, i) => i / n) };
   assert.match(passageEvidence(rising, { a: 0, b: 60 }).question, /build-up/);
   assert.equal(passageEvidence({ trackId: 'x', version: 2, status: {} }, { a: 0, b: 10 }), null, 'no timeline yet: the window rule is used');
+});
+
+test('spectrum views: an A4 tone is the A4 row in CQT; a 1 kHz tone the 1 kHz row in linear', () => {
+  const tone = (hz) => Float32Array.from({ length: SPEC_SR }, (_, i) => 0.5 * Math.sin(2 * Math.PI * hz * i / SPEC_SR));
+  const peakRow = (v) => { const mid = Math.floor(v.frames / 2) * v.bands, row = Array.from(v.data.slice(mid, mid + v.bands)); return row.indexOf(Math.max(...row)); };
+  const cqt = computeView(tone(440), 'cqt');
+  assert.equal(cqt.bands, 168);
+  assert.ok(Math.abs(cqt.freqs[peakRow(cqt)] - 440) < 440 * 0.03, 'within a quarter tone of A4, got ' + cqt.freqs[peakRow(cqt)].toFixed(1));
+  assert.equal(bandForHz(cqt, 440), 24 * 2 + 18, 'A4 = 2 octaves + 9 semitones above C2');
+  const lin = computeView(tone(1000), 'linear');
+  assert.ok(Math.abs(lin.freqs[peakRow(lin)] - 1000) < 60);
+  assert.equal(computeSpectrum(tone(1000)).kind, 'mel');
 });
