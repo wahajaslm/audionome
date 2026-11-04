@@ -15,6 +15,7 @@ import librosa
 import numpy as np
 import soundfile as sf
 from musicdna.audio.io import load_audio
+from musicdna.local_models import LocalModels
 from musicdna.features.dsp import AcousticFeatureExtractor
 
 HF_CLAP_MODEL_ID: str = os.getenv('MUSIC_DNA_CLAP_MODEL', 'laion/clap-htsat-unfused').strip()
@@ -118,9 +119,10 @@ class DeepAudioEncoder:
         """Loads the pretrained LAION-CLAP model and processor once per encoder."""
         if self._hf_clap is None:
             from transformers import ClapModel, ClapProcessor
-            model = ClapModel.from_pretrained(HF_CLAP_MODEL_ID)
-            model.eval()
-            self._hf_clap = (model, ClapProcessor.from_pretrained(HF_CLAP_MODEL_ID))
+            with LocalModels.offline_when_downloaded(HF_CLAP_MODEL_ID) as local:
+                model = ClapModel.from_pretrained(HF_CLAP_MODEL_ID, local_files_only=local)
+                model.eval()
+                self._hf_clap = (model, ClapProcessor.from_pretrained(HF_CLAP_MODEL_ID, local_files_only=local))
         return self._hf_clap
 
     def encode_clips_with_hf_clap(self, audio_clips: list[np.ndarray], sample_rate: int) -> list[np.ndarray]:
@@ -151,9 +153,11 @@ class DeepAudioEncoder:
         if self._mert is None:
             self.license_manager.verify_license('mert', allow_noncommercial=allow_noncommercial)
             from transformers import AutoModel, Wav2Vec2FeatureExtractor
-            model = AutoModel.from_pretrained(MERT_MODEL_ID, trust_remote_code=True)
-            model.eval()
-            processor = Wav2Vec2FeatureExtractor.from_pretrained(MERT_MODEL_ID, trust_remote_code=True)
+            with LocalModels.offline_when_downloaded(MERT_MODEL_ID) as local:
+                model = AutoModel.from_pretrained(MERT_MODEL_ID, trust_remote_code=True, local_files_only=local)
+                model.eval()
+                processor = Wav2Vec2FeatureExtractor.from_pretrained(MERT_MODEL_ID, trust_remote_code=True,
+                                                                     local_files_only=local)
             self._mert_layers: list[Any] = []
             for layer in model.encoder.layers:
                 layer.register_forward_hook(

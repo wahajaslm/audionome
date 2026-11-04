@@ -7,6 +7,7 @@ from pathlib import Path
 import librosa
 import numpy as np
 import soundfile as sf
+from musicdna.local_models import LocalModels
 from musicdna.paths import AUDIO_CACHE_DIR
 
 
@@ -81,7 +82,10 @@ class StemSeparator:
         else:
             tensor = torch.from_numpy(audio_44k.reshape(1, -1)).repeat(2, 1).float()
 
-        separator = demucs.api.Separator(model=model_name)
+        from demucs.hf import hf_repo_name
+        # Load the cached Demucs weights without an online check per song (see musicdna.local_models).
+        with LocalModels.offline_when_downloaded(f'adefossez/{hf_repo_name(model_name)}'):
+            separator = demucs.api.Separator(model=model_name)
         _, demucs_stems = separator.separate_tensor(tensor)
 
         result_stems: dict[str, np.ndarray] = {}
