@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { playerState, showToast, selectTrack } from '../../stores/player';
 import { db } from '../../data/db';
+import Icon from '../shell/Icon.vue';
 
 async function deleteMoment(id: string) {
   await db.moments.delete(id);
   playerState.moments = playerState.moments.filter(m => m.id !== id);
-  showToast('Moment removed');
+  showToast('Removed from My Moments');
 }
 
 function playMoment(m: any) {
@@ -14,123 +15,135 @@ function playMoment(m: any) {
     selectTrack(t, m.startSec);
     playerState.activeView = 'player';
   } else {
-    showToast('Associated track is not in library');
+    showToast('This song is no longer in your library.');
   }
+}
+
+function trackFor(m: any) {
+  return playerState.tracks.find(tr => tr.id === m.trackId);
+}
+
+function formatTime(sec: number): string {
+  const mm = Math.floor(sec / 60);
+  const ss = Math.floor(sec % 60);
+  return `${mm}:${ss < 10 ? '0' : ''}${ss}`;
 }
 </script>
 
 <template>
   <div class="moments-container">
+    <!-- Layout rule "Other pages": page title, one lead line, then an open list. -->
     <div class="moments-header">
-      <div>
-        <h1 class="moments-title">My Saved Moments</h1>
-        <p class="moments-sub">Your personal collection of musical passages and emotional memories.</p>
-      </div>
-      <span class="count-pill">{{ playerState.moments.length }} Moments</span>
+      <h1 class="moments-title page-title">My Moments</h1>
+      <p v-if="playerState.moments.length" class="moments-sub body">
+        {{ playerState.moments.length }} {{ playerState.moments.length === 1 ? 'passage' : 'passages' }}
+        you saved. Play one to open it in the player.
+      </p>
+      <p v-else class="moments-sub body">Passages you save from the player show up here.</p>
     </div>
 
     <div v-if="!playerState.moments.length" class="empty-box">
-      <p>No saved moments yet. Drag across the player waveform to capture a 15-second passage you love.</p>
-      <button class="btn-go-player" @click="playerState.activeView = 'player'">Go to Player</button>
+      <p class="body">No saved moments yet. Drag across the waveform to select a passage you love, then Save.</p>
+      <button class="btn-go-player label" @click="playerState.activeView = 'player'">Open the player</button>
     </div>
 
-    <div v-else class="moments-grid">
-      <div v-for="m in playerState.moments" :key="m.id" class="moment-row">
-        <button class="btn-play-moment" @click="playMoment(m)">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-            <polygon points="5 3 19 12 5 21 5 3"/>
-          </svg>
+    <!-- MomentRow rule: round play · song — artist · what it is and your note · tags · range ·
+         duration, in an open list split by `line` hairlines (no cards). -->
+    <ol v-else class="moments-grid">
+      <li v-for="m in playerState.moments" :key="m.id" class="moment-row">
+        <button class="btn-play-moment" aria-label="Play moment" @click="playMoment(m)">
+          <Icon name="play" :size="12" />
         </button>
 
         <div class="moment-info">
-          <div class="moment-passage">
-            Passage: {{ m.startSec }}s – {{ m.endSec }}s 
-            <span class="duration">({{ Math.round((m.endSec - m.startSec) * 10) / 10 }}s)</span>
+          <div class="moment-song item">
+            {{ trackFor(m)?.title || 'Unknown song' }}
+            <span v-if="trackFor(m)?.artist" class="artist">— {{ trackFor(m)?.artist }}</span>
           </div>
-          <div v-if="m.feelings?.length || m.qualities?.length" class="moment-tags">
-            <span v-for="f in m.feelings" :key="f" class="chip feel">{{ f }}</span>
-            <span v-for="q in m.qualities" :key="q" class="chip qual">{{ q }}</span>
+          <div v-if="m.qualities?.length || m.note" class="moment-note label">
+            <template v-if="m.qualities?.length">{{ m.qualities.join(', ') }}</template>
+            <template v-if="m.qualities?.length && m.note"> · </template>
+            <template v-if="m.note">“{{ m.note }}”</template>
           </div>
-          <div v-if="m.note" class="moment-note">"{{ m.note }}"</div>
+          <div v-if="m.feelings?.length" class="moment-tags">
+            <span v-for="f in m.feelings" :key="f" class="chip caption">{{ f }}</span>
+          </div>
         </div>
 
-        <button class="btn-del" title="Delete moment" @click="deleteMoment(m.id)">✕</button>
-      </div>
-    </div>
+        <span class="moment-range label">{{ formatTime(m.startSec) }} – {{ formatTime(m.endSec) }}</span>
+        <span class="duration label">{{ formatTime(m.endSec - m.startSec) }}</span>
+
+        <button class="btn-del" aria-label="Remove moment" title="Remove moment" @click="deleteMoment(m.id)">
+          <Icon name="close" :size="14" />
+        </button>
+      </li>
+    </ol>
   </div>
 </template>
 
 <style scoped>
 .moments-container {
-  max-width: 860px;
+  max-width: var(--content-max);
   margin: 0 auto;
-  padding: 32px 16px;
+  padding: var(--space-6) var(--space-4);
+  font-variant-numeric: tabular-nums;
 }
 .moments-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 28px;
+  margin-bottom: var(--space-5);
 }
 .moments-title {
-  font-size: 24px;
-  font-weight: 500;
   margin: 0;
-  color: var(--fg, #DCDCE0);
+  color: var(--ink);
 }
 .moments-sub {
-  font-size: 13px;
-  color: var(--sub, #A1A1A6);
-  margin: 4px 0 0;
+  color: var(--ink-sub);
+  margin: var(--space-2) 0 0;
 }
-.count-pill {
-  font-size: 12px;
-  color: var(--sub, #A1A1A6);
-  background: var(--raise, #1B1B1F);
-  border: 1px solid var(--line, #1F1F23);
-  padding: 4px 12px;
-  border-radius: 12px;
-}
+/* An empty list is still an open list: a hairline row, no dashed box. */
 .empty-box {
-  background: var(--panel, #151518);
-  border: 1px dashed var(--line2, #2C2C31);
-  border-radius: 14px;
-  padding: 48px 24px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: var(--space-6) 0;
   text-align: center;
-  color: var(--mute, #85858B);
+  color: var(--ink-sub);
 }
+.empty-box p {
+  margin: 0;
+}
+/* Button rule "Primary": ink fill, on-ink text, weight 500, pill (one per view). */
 .btn-go-player {
-  margin-top: 16px;
-  background: var(--accent, #8EC5B8);
-  color: #0E0E10;
+  margin-top: var(--space-4);
+  height: 38px;
+  padding: 0 var(--space-4);
+  background: var(--ink);
+  color: var(--on-ink);
   border: none;
-  font-weight: 600;
-  font-size: 13px;
-  border-radius: 8px;
-  padding: 8px 18px;
+  font-weight: 500;
+  border-radius: var(--radius-pill);
   cursor: pointer;
 }
 .moments-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--line);
 }
 .moment-row {
   display: flex;
   align-items: center;
-  gap: 16px;
-  background: var(--panel, #151518);
-  border: 1px solid var(--line, #1F1F23);
-  border-radius: 12px;
-  padding: 14px 18px;
+  gap: var(--space-4);
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--line);
 }
+/* Button rule "Round play": 40px, line-strong ring. */
 .btn-play-moment {
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  background: var(--raise, #1B1B1F);
-  border: 1px solid var(--line2, #2C2C31);
-  color: var(--accent, #8EC5B8);
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: var(--radius-pill);
+  background: none;
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -138,52 +151,59 @@ function playMoment(m: any) {
 }
 .moment-info {
   flex: 1;
+  min-width: 0;
 }
-.moment-passage {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--fg, #DCDCE0);
-  font-variant-numeric: tabular-nums;
+.moment-song {
+  color: var(--ink);
 }
-.duration {
-  font-size: 12px;
-  color: var(--mute, #85858B);
+.artist {
+  color: var(--ink-mute);
+}
+.moment-note {
+  color: var(--ink-sub);
+  margin-top: var(--space-1);
 }
 .moment-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 6px;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
 }
 .chip {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 10px;
+  color: var(--ink-sub);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
 }
-.chip.feel {
-  background: rgba(142, 197, 184, 0.12);
-  color: var(--accent, #8EC5B8);
+.moment-range {
+  color: var(--ink-mute);
+  white-space: nowrap;
 }
-.chip.qual {
-  background: var(--raise, #1B1B1F);
-  color: var(--sub, #A1A1A6);
-}
-.moment-note {
-  font-size: 12px;
-  color: var(--sub, #A1A1A6);
-  font-style: italic;
-  margin-top: 4px;
+.duration {
+  color: var(--ink);
+  white-space: nowrap;
 }
 .btn-del {
+  width: var(--hit-target);
+  height: var(--hit-target);
+  flex: none;
   background: none;
   border: none;
-  color: var(--mute, #85858B);
+  border-radius: var(--radius-sm);
+  color: var(--ink-mute);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  padding: 4px 8px;
-  font-size: 14px;
 }
 .btn-del:hover {
-  color: #ff6b6b;
+  background: var(--bg-raise);
+  color: var(--ink);
+}
+/* MomentRow rule: below breakpoint-phone (600px) drop the range. */
+@media (max-width: 600px) {
+  .moment-range {
+    display: none;
+  }
 }
 </style>
-

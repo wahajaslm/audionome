@@ -10,7 +10,7 @@ const exampleUrls = [
 
 async function handleLoad() {
   if (!streamUrl.value.trim()) {
-    showToast('Please enter a YouTube, SoundCloud, or audio stream URL');
+    showToast('Paste a YouTube, SoundCloud or audio link first.');
     return;
   }
   try {
@@ -28,126 +28,103 @@ function selectExample(url: string) {
 </script>
 
 <template>
+  <!-- Principle 3 "Seamless, not boxed": an open page (title, lead line, rows), not a card.
+       Voice rule: name things by what listeners recognise, not the system (no "SSE", "MERT"). -->
   <div class="stream-importer-panel">
-    <div class="stream-card">
-      <div class="stream-header">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="10"/>
-          <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/>
-          <path d="M2 12h20"/>
-        </svg>
-        <h3>Direct Audio & Media Stream Resolver</h3>
-      </div>
-      <p class="stream-sub">
-        Connect directly to YouTube, SoundCloud, or live audio streams. The stream is proxied chunk-by-chunk to bypass CORS, enabling real-time waveform inspection, 15s passage extraction, and MERT neural embeddings.
+    <h1 class="stream-title page-title">Stream &amp; Web</h1>
+    <p class="stream-sub body">
+      Paste a YouTube, SoundCloud or direct audio link. It opens in the player with its waveform,
+      so you can select and save moments from it.
+    </p>
+
+    <div class="input-row">
+      <input
+        v-model="streamUrl"
+        type="url"
+        class="stream-input body"
+        aria-label="Audio or video link"
+        placeholder="Paste a YouTube, SoundCloud or audio link…"
+        :disabled="playerState.isResolvingStream"
+        @keyup.enter="handleLoad"
+      />
+      <!-- Button rule "Primary": ink fill + on-ink text (never the accent). Motion rule: nothing
+           loops or pulses on its own, so the spinner was replaced by the button's text. -->
+      <button
+        class="btn-load body"
+        :disabled="playerState.isResolvingStream || !streamUrl.trim()"
+        @click="handleLoad"
+      >
+        {{ playerState.isResolvingStream ? 'Opening…' : 'Open' }}
+      </button>
+    </div>
+
+    <div class="examples">
+      <span class="ex-label caption">Try</span>
+      <!-- Chip rule: square chips (radius-sm) for quick answers, 28px, 12px text. -->
+      <button
+        v-for="ex in exampleUrls"
+        :key="ex.label"
+        class="btn-chip caption"
+        @click="selectExample(ex.url)"
+      >
+        {{ ex.label }}
+      </button>
+    </div>
+
+    <!-- role="status" so progress is announced; plain ink-sub text, no accent and no pulsing dot. -->
+    <div v-if="playerState.isStreamingAnalysis" class="stream-progress-card" role="status">
+      <div class="prog-title body">Listening through the stream</div>
+      <p class="prog-desc label">
+        Part {{ playerState.streamProgress.current }} of {{ playerState.streamProgress.total }}
       </p>
-
-      <div class="input-row">
-        <input
-          v-model="streamUrl"
-          type="url"
-          class="stream-input"
-          placeholder="Paste YouTube, SoundCloud, or direct audio link…"
-          :disabled="playerState.isResolvingStream"
-          @keyup.enter="handleLoad"
-        />
-        <button
-          class="btn-load"
-          :disabled="playerState.isResolvingStream || !streamUrl.trim()"
-          @click="handleLoad"
-        >
-          <span v-if="playerState.isResolvingStream" class="spinner"></span>
-          <span>{{ playerState.isResolvingStream ? 'Resolving Stream…' : 'Load Stream' }}</span>
-        </button>
-      </div>
-
-      <div class="examples">
-        <span class="ex-label">Quick test links:</span>
-        <button
-          v-for="ex in exampleUrls"
-          :key="ex.label"
-          class="btn-chip"
-          @click="selectExample(ex.url)"
-        >
-          {{ ex.label }}
-        </button>
-      </div>
-
-      <div v-if="playerState.isStreamingAnalysis" class="stream-progress-card">
-        <div class="prog-title">
-          <span class="prog-dot"></span>
-          Progressive AI Feature Stream Active
-        </div>
-        <p class="prog-desc">
-          Receiving live 12-second feature windows via Server-Sent Events (SSE):
-          Window {{ playerState.streamProgress.current }} / {{ playerState.streamProgress.total }}
-        </p>
-      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
 .stream-importer-panel {
-  max-width: 800px;
-  margin: 32px auto;
-  padding: 0 16px;
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-4);
 }
-.stream-card {
-  background: var(--panel, #151518);
-  border: 1px solid var(--line2, #2C2C31);
-  border-radius: 16px;
-  padding: 28px;
-}
-.stream-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  color: var(--accent, #8EC5B8);
-}
-.stream-header h3 {
+.stream-title {
   margin: 0;
-  font-size: 18px;
-  font-weight: 500;
-  color: var(--fg, #DCDCE0);
+  color: var(--ink);
 }
 .stream-sub {
-  color: var(--sub, #A1A1A6);
-  font-size: 14px;
-  line-height: 1.5;
-  margin: 12px 0 20px;
+  color: var(--ink-sub);
+  max-width: 60ch;
+  margin: var(--space-2) 0 var(--space-5);
 }
 .input-row {
   display: flex;
-  gap: 10px;
+  gap: var(--space-2);
 }
 .stream-input {
   flex: 1;
-  background: var(--bg, #0E0E10);
-  border: 1px solid var(--line2, #2C2C31);
-  border-radius: 10px;
-  padding: 12px 16px;
-  color: var(--fg, #DCDCE0);
-  font-size: 14px;
-  outline: none;
-  transition: border-color .2s ease;
+  min-width: 0;
+  height: 38px;
+  box-sizing: border-box;
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-3);
+  color: var(--ink);
 }
-.stream-input:focus {
-  border-color: var(--accent, #8EC5B8);
+.stream-input::placeholder {
+  color: var(--ink-mute);
 }
+/* Button rule "Primary": ink fill, on-ink text, weight 500, 38px, pill. */
 .btn-load {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--accent, #8EC5B8);
-  color: #0E0E10;
-  font-weight: 600;
-  font-size: 14px;
+  flex: none;
+  height: 38px;
+  background: var(--ink);
+  color: var(--on-ink);
+  font-weight: 500;
   border: none;
-  border-radius: 10px;
-  padding: 0 20px;
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-4);
   cursor: pointer;
-  transition: opacity .2s ease;
 }
 .btn-load:disabled {
   opacity: 0.5;
@@ -156,67 +133,38 @@ function selectExample(url: string) {
 .examples {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 16px;
-  font-size: 12px;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
 }
 .ex-label {
-  color: var(--mute, #85858B);
+  color: var(--ink-mute);
 }
 .btn-chip {
-  background: var(--raise, #1B1B1F);
-  border: 1px solid var(--line, #1F1F23);
-  color: var(--sub, #A1A1A6);
-  font-size: 12px;
-  border-radius: 6px;
-  padding: 4px 10px;
+  height: 28px;
+  background: none;
+  border: 1px solid var(--line-strong);
+  color: var(--ink-sub);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-3);
   cursor: pointer;
+  transition: border-color 150ms, color 150ms;
 }
 .btn-chip:hover {
-  background: var(--line2, #2C2C31);
-  color: var(--fg, #DCDCE0);
+  border-color: var(--chip-on-line);
+  color: var(--ink);
 }
 .stream-progress-card {
-  margin-top: 20px;
-  background: rgba(142, 197, 184, 0.08);
-  border: 1px solid rgba(142, 197, 184, 0.25);
-  border-radius: 10px;
-  padding: 14px;
+  margin-top: var(--space-5);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: var(--space-4) 0;
 }
 .prog-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--accent, #8EC5B8);
-}
-.prog-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent, #8EC5B8);
-  animation: pulse 1.5s infinite;
+  color: var(--ink);
 }
 .prog-desc {
-  font-size: 12px;
-  color: var(--sub, #A1A1A6);
-  margin: 4px 0 0 16px;
-}
-@keyframes pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(0.85); }
-}
-.spinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid #0E0E10;
-  border-top-color: transparent;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-@keyframes spin {
-  to { transform: rotate(360deg); }
+  color: var(--ink-sub);
+  margin: var(--space-1) 0 0;
 }
 </style>
-

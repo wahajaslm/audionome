@@ -10,6 +10,12 @@ import MomentsList from './components/moments/MomentsList.vue';
 onMounted(() => {
   loadLibrary();
 });
+
+function formatTime(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s < 10 ? '0' : ''}${s}`;
+}
 </script>
 
 <template>
@@ -22,58 +28,56 @@ onMounted(() => {
       <MusicDNARing v-else-if="playerState.activeView === 'dna'" />
       <MomentsList v-else-if="playerState.activeView === 'moments'" />
       <div v-else-if="playerState.activeView === 'library'" class="library-view">
-        <h1 class="view-title">Library</h1>
-        <p class="view-sub">Imported audio tracks and streaming references.</p>
-        <div class="track-list">
-          <div
-            v-for="t in playerState.tracks"
-            :key="t.id"
-            class="track-row"
-            :class="{ active: playerState.currentTrack?.id === t.id }"
-            @click="playerState.currentTrack = t; playerState.activeView = 'player'"
-          >
-            <div class="track-title-col">
-              <span class="t-name">{{ t.title }}</span>
-              <span class="t-artist">{{ t.artist }}</span>
-            </div>
-            <span class="t-source">{{ t.source }}</span>
-            <span class="t-dur">{{ Math.round(t.durationSec || 32) }}s</span>
-          </div>
-        </div>
+        <!-- Layout rule "Other pages": page title, one lead line, then open lists. -->
+        <h1 class="view-title page-title">Library</h1>
+        <p class="view-sub body">Songs you imported and streams you opened.</p>
+        <!-- Principle 3 "Seamless, not boxed": rows split by `line` hairlines, no cards.
+             Accessibility rule: every control is a real <button> (was a clickable <div>). -->
+        <ol class="track-list">
+          <li v-for="t in playerState.tracks" :key="t.id">
+            <button
+              class="track-row"
+              :aria-current="playerState.currentTrack?.id === t.id ? 'true' : undefined"
+              @click="playerState.currentTrack = t; playerState.activeView = 'player'"
+            >
+              <span class="track-title-col">
+                <span class="t-name item">{{ t.title }}</span>
+                <span class="t-artist label">{{ t.artist }}</span>
+              </span>
+              <span class="t-source caption">{{ t.source }}</span>
+              <span class="t-dur label">{{ formatTime(t.durationSec || 32) }}</span>
+            </button>
+          </li>
+        </ol>
       </div>
     </main>
 
-    <!-- Global Toast Notification -->
-    <div v-if="playerState.toastMessage" class="toast-box">
+    <!-- Toast rule: role="status" so screen readers announce it; one sentence, bottom centre. -->
+    <div v-if="playerState.toastMessage" class="toast-box body" role="status">
       {{ playerState.toastMessage }}
     </div>
   </div>
 </template>
 
 <style>
+/* Tokens come from src/tokens.css (imported in main.ts). Only app-wide base rules live here. */
 :root {
-  --bg: #0E0E10;
-  --side: #0B0B0D;
-  --panel: #151518;
-  --raise: #1B1B1F;
-  --line: #1F1F23;
-  --line2: #2C2C31;
-  --fg: #DCDCE0;
-  --sub: #A1A1A6;
-  --mute: #85858B;
-  --off: #45454B;
-  --accent: #8EC5B8;
-  --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   color-scheme: dark;
 }
 
 body {
   background: var(--bg);
-  color: var(--fg);
-  font-family: var(--sans);
+  color: var(--ink);
+  font-family: var(--font-sans);
   margin: 0;
   padding: 0;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Accessibility rule "Focus ring: 1px ink outline, 2px offset" — e.g. Tab onto a nav item. */
+:focus-visible {
+  outline: 1px solid var(--ink);
+  outline-offset: 2px;
 }
 </style>
 
@@ -87,87 +91,92 @@ body {
   flex: 1;
   min-width: 0;
   box-sizing: border-box;
-  padding: 24px;
+  padding: var(--space-5);
 }
 .library-view {
-  max-width: 860px;
+  max-width: var(--content-max);
   margin: 0 auto;
-  padding: 32px 16px;
+  padding: var(--space-6) var(--space-4);
 }
 .view-title {
-  font-size: 24px;
-  font-weight: 500;
   margin: 0;
-  color: var(--fg);
+  color: var(--ink);
 }
 .view-sub {
-  font-size: 13px;
-  color: var(--sub);
-  margin: 4px 0 24px;
+  color: var(--ink-sub);
+  margin: var(--space-2) 0 var(--space-5);
 }
 .track-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--line);
+}
+.track-list li {
+  border-bottom: 1px solid var(--line);
 }
 .track-row {
+  width: 100%;
   display: flex;
   align-items: center;
-  gap: 16px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 12px 16px;
+  gap: var(--space-4);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: var(--space-4) var(--space-3);
+  color: var(--ink);
+  text-align: left;
   cursor: pointer;
-  transition: all .15s ease;
+  font-variant-numeric: tabular-nums;
 }
-.track-row:hover {
-  background: var(--raise);
-}
-.track-row.active {
-  border-color: var(--accent);
+.track-row:hover,
+.track-row[aria-current='true'] {
+  background: var(--bg-raise);
 }
 .track-title-col {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
 }
 .t-name {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--fg);
+  color: var(--ink);
 }
 .t-artist {
-  font-size: 12px;
-  color: var(--mute);
+  color: var(--ink-mute);
 }
 .t-source {
-  font-size: 11px;
-  color: var(--sub);
-  background: var(--raise);
-  padding: 2px 8px;
-  border-radius: 6px;
-  text-transform: uppercase;
+  color: var(--ink-sub);
+  border: 1px solid var(--line-strong);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
 }
 .t-dur {
-  font-size: 13px;
-  color: var(--mute);
-  font-variant-numeric: tabular-nums;
+  color: var(--ink-mute);
 }
 .toast-box {
   position: fixed;
-  bottom: 24px;
+  /* Toast rule: above the playback bar, never over the waveform. */
+  bottom: calc(var(--space-8) + var(--space-7));
   left: 50%;
   transform: translateX(-50%);
-  background: var(--raise);
-  color: var(--fg);
-  border: 1px solid var(--line2);
-  padding: 10px 20px;
-  border-radius: 20px;
-  font-size: 13px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  background: var(--bg-raise);
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
   z-index: 1000;
 }
+/* Layout rule: below breakpoint-tabs (820px) the sidebar becomes a bottom tab bar, so leave
+   room for it. Media queries cannot read CSS variables, so the token value is repeated here. */
+@media (max-width: 820px) {
+  .app-layout {
+    flex-direction: column;
+  }
+  .main-content {
+    padding: var(--space-4) var(--space-4) calc(var(--space-8) + var(--space-5));
+  }
+}
 </style>
-
