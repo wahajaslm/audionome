@@ -27,7 +27,7 @@ def build(tmp_path, songs: list[str]) -> FeatureStore:
 
 
 def test_r02_finds_intonation_signal_and_reports_tonic_error(tmp_path) -> None:
-    songs = ['s1', 's2', 's3', 's4']
+    songs = ['s1', 's2', 's3', 's4', 's5', 's6']  # a verdict needs ranker.min_songs_for_verdict songs
     corpus = CorpusManifest(1, '', {}, [CorpusEntry(video_id=s, title='', song=s, artists=f'Singer {s}',
                                                     duration_sec=200, url='') for s in songs])
     pairs = [{'corpus_video_id': s, 'preferred': [i * 10.0, i * 10.0 + 10], 'passed_over': [j * 10.0, j * 10.0 + 10],
@@ -38,6 +38,6 @@ def test_r02_finds_intonation_signal_and_reports_tonic_error(tmp_path) -> None:
     assert next(iter(report['systems']['I_intonation']['feature_directions'])) == 'et_deviation_mean_abs_cents'
     assert report['systems']['B_mert_intonation'] == {'status': 'features_missing', 'blocks': ['mert']}
     assert report['comparisons']['I_intonation vs baseline_louder']['verdict'] == 'better'
-    assert report['tonic']['annotated_songs'] == 4
+    assert report['tonic']['annotated_songs'] == 6
     assert report['tonic']['median_detection_error_cents'] == 10.0  # 57.1 vs 57.0 MIDI
     json.dumps(report)  # report must be serialisable

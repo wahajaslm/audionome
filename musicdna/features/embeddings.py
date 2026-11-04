@@ -126,22 +126,48 @@ class DeepAudioEncoder:
         return self._hf_clap
 
     def encode_clips_with_hf_clap(self, audio_clips: list[np.ndarray], sample_rate: int) -> list[np.ndarray]:
-        """Embeds each clip with the pretrained CLAP audio tower (512-D joint audio-text space)."""
+        """Embeds each clip with the pretrained CLAP audio tower (512-D joint audio-text space).
+
+        FIX: CLAP takes at most 10 s, and its processor cut longer clips at a *random* place
+        (truncation='rand_trunc'), so the same 12 s window gave a different vector on every run
+        (cosine 0.995 between two runs of Garaj Baras 120-132 s) and 2 s of it were never heard.
+        Now a clip longer than 10 s is embedded as fixed 10 s crops that together cover it, and the
+        crops are averaged. Example: a 12 s window -> crops 0-10 s and 2-12 s, mean of the two.
+        Clips of 10 s or less go in whole (the processor repeats short audio to fill 10 s).
+        """
         import torch
         model, processor = self.load_hf_clap()
         resampled = [
             librosa.resample(np.asarray(clip, dtype=np.float32), orig_sr=sample_rate, target_sr=HF_CLAP_SAMPLE_RATE)
             for clip in audio_clips
         ]
-        embeddings: list[np.ndarray] = []
-        for batch_start in range(0, len(resampled), HF_CLAP_BATCH_SIZE):
-            batch = resampled[batch_start:batch_start + HF_CLAP_BATCH_SIZE]
+        crop = int(processor.feature_extractor.nb_max_samples)
+        crops: list[np.ndarray] = []
+        owners: list[int] = []
+        for index, clip in enumerate(resampled):
+            for start in self._crop_starts(len(clip), crop):
+                crops.append(clip[start:start + crop])
+                owners.append(index)
+        vectors: list[np.ndarray] = []
+        for batch_start in range(0, len(crops), HF_CLAP_BATCH_SIZE):
+            batch = crops[batch_start:batch_start + HF_CLAP_BATCH_SIZE]
             inputs = processor(audio=batch, sampling_rate=HF_CLAP_SAMPLE_RATE, return_tensors='pt')
             with torch.no_grad():
                 output = model.get_audio_features(**inputs)
             features = output if isinstance(output, torch.Tensor) else output.pooler_output
-            embeddings.extend(features.detach().cpu().numpy().astype(np.float64))
-        return embeddings
+            vectors.extend(features.detach().cpu().numpy().astype(np.float64))
+        owner_array = np.array(owners)
+        stacked = np.array(vectors)
+        return [stacked[owner_array == index].mean(axis=0) for index in range(len(resampled))]
+
+    @staticmethod
+    def _crop_starts(length: int, crop: int) -> list[int]:
+        """Evenly spaced crop starts from 0 to length - crop, as few as cover the clip.
+        Example (10 s crops): 12 s -> [0, 2 s]; 25 s -> [0, 7.5 s, 15 s]; 6 s -> [0] (whole clip)."""
+        if length <= crop:
+            return [0]
+        count = int(np.ceil(length / crop))
+        return [int(round(i * (length - crop) / (count - 1))) for i in range(count)]
 
     def load_mert(self, allow_noncommercial: bool | None = None) -> tuple[Any, Any]:
         """Loads MERT once. Its weights are CC BY-NC 4.0 and its model code runs via trust_remote_code.

@@ -85,7 +85,7 @@ class IntonationAnalyzer:
     def smoothed(self, contour: PitchContour) -> np.ndarray:
         """Moving average over voiced frames that removes vibrato but keeps note changes and slides.
         Example: a note at 57.27 with +-30 cent vibrato at 5.5 Hz smooths to ~57.27 throughout."""
-        width = max(3, int(self.settings.smoothing_sec * contour.frame_rate) | 1)
+        width = self._smoothing_width(contour.frame_rate)
         voiced = ~np.isnan(contour.semitones)
         values = np.where(voiced, contour.semitones, 0.0)
         kernel = np.ones(width)
@@ -95,6 +95,9 @@ class IntonationAnalyzer:
         # breath keeps its first frames instead of being cut.
         smooth = np.where(count >= 3, total / np.maximum(count, 1e-9), np.nan)
         return np.where(voiced, smooth, np.nan)
+
+    def _smoothing_width(self, frame_rate: float) -> int:
+        return max(3, int(self.settings.smoothing_sec * frame_rate) | 1)
 
     def held_notes(self, contour: PitchContour) -> list[HeldNote]:
         """Runs where the smoothed pitch moves slower than stable_max_velocity for at least stable_min_sec."""
@@ -111,19 +114,31 @@ class IntonationAnalyzer:
             segment = smooth[start:end]
             notes.append(HeldNote(int(start), int(end), float(np.median(segment)),
                                   float(np.std(segment) * 100),
-                                  self._glide_in(smooth, int(start), float(np.median(segment)), rate)))
+                                  self._glide_in(smooth, contour.semitones, int(start), float(np.median(segment)), rate)))
         return notes
 
-    def _glide_in(self, smooth: np.ndarray, onset: int, centre: float, rate: float) -> float:
+    def _glide_in(self, smooth: np.ndarray, raw: np.ndarray, onset: int, centre: float, rate: float) -> float:
         """Size of a slide into a held note: the furthest the voiced pitch was from the note's centre
         during the glide window before it. Measured from the centre, not window start to end, because
         vibrato smoothing spreads a slide over a longer stretch.
         Example: a 0.25 s slide up 200 cents into Ga reports ~200 (start-to-end of a 0.3 s window gave ~145)."""
-        window = smooth[max(0, onset - int(self.settings.glide_window_sec * rate)):onset]
+        first = max(0, onset - int(self.settings.glide_window_sec * rate))
+        window = smooth[first:onset]
         # Only the unbroken voiced stretch right before the note: a breath ends the slide.
         # Example: note A, breath, note B sung directly -> no slide, even though A is within the window.
         gaps = np.flatnonzero(np.isnan(window))
-        lookback = window[gaps[-1] + 1:] if gaps.size else window
+        begin = gaps[-1] + 1 if gaps.size else 0
+        # FIX: a jump in the raw pitch also ends the slide. A slide is continuous; a jump of more than
+        # glide_max_step_cents in one frame is a note change or a tracker error (often leakage the gate
+        # kept), and the 0.2 s smoothing used to turn it into a ramp that looked like a huge slide.
+        # Example: Garaj Baras ~86 s, pitch jumps from below MIDI 41 to 61 in one frame, then holds 62:
+        # it was a 1734-cent "slide"; now the slide starts after the jump, and the smoothing's reach
+        # (half its width) after the jump is skipped too, since those frames still average in the jump.
+        steps = np.abs(np.diff(raw[first:onset + 1])) * 100
+        jumps = np.flatnonzero(steps > self.settings.glide_max_step_cents)
+        if jumps.size:
+            begin = max(begin, int(jumps[-1]) + 1 + self._smoothing_width(rate) // 2)
+        lookback = window[begin:]
         if lookback.size < 3:
             return 0.0
         extent = float(np.max(np.abs(lookback - centre))) * 100

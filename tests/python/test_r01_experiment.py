@@ -30,7 +30,7 @@ def pairs_for(songs: list[str]) -> list[dict]:
 
 
 def test_vocal_ranker_finds_planted_signal_on_held_out_songs(tmp_path) -> None:
-    songs = ['s1', 's2', 's3', 's4']
+    songs = ['s1', 's2', 's3', 's4', 's5', 's6']  # a verdict needs ranker.min_songs_for_verdict songs
     corpus = CorpusManifest(1, '', {}, [entry(s, f'Artist {s}') for s in songs])
     report = R01Experiment(build_store(tmp_path, songs), corpus).run(pairs_for(songs))
     assert report['status'] == 'evaluated'
@@ -51,3 +51,11 @@ def test_primary_artist_groups_collaborations() -> None:
     assert PairRow.primary_artist('Abida Parveen & Rahat Fateh Ali Khan') == 'abida parveen'
     assert PairRow.primary_artist('Ali Sethi x Shae Gill') == 'ali sethi'
     assert PairRow.primary_artist('Ali Pervez Mehdi ft. Meesha Shafi') == 'ali pervez mehdi'
+
+
+def test_no_verdict_from_too_few_songs() -> None:
+    """Three songs that all lean slightly the same way: the bootstrap interval excludes 0, but that
+    happens by chance a quarter of the time, so no 'better' / 'worse' is claimed."""
+    from musicdna.experiments.r01 import SongStatistics
+    result = SongStatistics().compare({'a': 0.52, 'b': 0.51, 'c': 0.53}, {'a': 0.5, 'b': 0.5, 'c': 0.5})
+    assert result['verdict'].startswith('too few songs') and result['mean_difference'] == 0.02

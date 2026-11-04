@@ -139,6 +139,10 @@ class SongStatistics:
         deltas = np.array([a[s] - b[s] for s in songs])
         low, high = np.percentile(self._resample(deltas), [2.5, 97.5])
         verdict = 'better' if low > 0 else 'worse' if high < 0 else 'no clear difference'
+        # FIX: with few songs the bootstrap interval is far too narrow (3 songs leaning the same way by
+        # chance give an interval that excludes 0), so no verdict is given; the numbers are still reported.
+        if len(songs) < self.settings.min_songs_for_verdict:
+            verdict = f'too few songs to tell (need {self.settings.min_songs_for_verdict})'
         return {'mean_difference': round(float(deltas.mean()), 4), 'ci95': [round(float(low), 4), round(float(high), 4)],
                 'songs': len(songs), 'verdict': verdict}
 

@@ -81,6 +81,9 @@ class IntonationConfig:
     stable_min_sec: float = 0.15            # shortest held note counted
     glide_window_sec: float = 0.5           # look this far back for a slide into a note (meend)
     glide_min_cents: float = 80.0           # smaller approaches are not counted as slides
+    # A bigger one-frame (16 ms) pitch jump ends a slide: a note change or tracker error. 200 = 125 st/s, faster
+    # than a sung slide. On 3 songs: slides over 700 cents went from 28 to 1, and 73% of all slides were kept.
+    glide_max_step_cents: float = 200.0
     histogram_bin_cents: float = 5.0        # tonic search resolution
     histogram_smoothing_cents: float = 15.0
     tonic_candidates: int = 5
@@ -122,6 +125,10 @@ class RankerConfig:
     regularization_c: float = 0.1
     min_songs: int = 3
     min_pairs: int = 20
+    # Fewest shared songs for a 'better' / 'worse' verdict between two systems. A song-level test cannot
+    # reach 5% with fewer: by chance alone, all n songs lean the same way with probability 2 / 2**n
+    # (3 songs: 25%; 6 songs: 3%). Example: random pairs on 3 songs gave 'worse' for C_mert_vocal vs B_mert.
+    min_songs_for_verdict: int = 6
     experiment_d_min_pairs: int = 500
     bootstrap_samples: int = 2000
     seed: int = 0

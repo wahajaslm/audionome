@@ -77,3 +77,13 @@ def test_profile_is_tonic_relative() -> None:
 def test_silence_gives_empty_descriptors() -> None:
     contour = PitchContour.from_semitones(np.full(500, np.nan))
     assert not ANALYZER.describe(contour, TonicEstimate(TONIC, 1.0, 'annotated'), 0, 10).to_vector().any()
+
+
+def test_pitch_jump_is_not_a_slide() -> None:
+    """A one-frame jump (tracker error or leakage) right before a held note is not a slide into it;
+    the 0.2 s smoothing used to turn it into a ramp. A real 0.25 s slide still counts."""
+    held = TONIC + 0.30 * np.sin(2 * np.pi * 5.5 * np.arange(int(0.8 * RATE)) / RATE)
+    jump = PitchContour.from_semitones(np.concatenate([np.full(int(0.4 * RATE), TONIC - 20), held]))
+    assert [n.glide_in_cents for n in ANALYZER.held_notes(jump) if n.centre_midi > TONIC - 1] == [0.0]
+    slide = PitchContour.from_semitones(np.concatenate([np.linspace(TONIC - 3, TONIC, int(0.25 * RATE)), held]))
+    assert ANALYZER.held_notes(slide)[-1].glide_in_cents >= 200
