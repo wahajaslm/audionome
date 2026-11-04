@@ -49,7 +49,7 @@ function onToastAction(): void {
     <main class="main-content">
       <RouterView />
     </main>
-    <!-- One bottom player for every screen (Now playing, Library, Feature analysis, ...). -->
+    <!-- One bottom player for every screen (Now playing, Library, Song anatomy, ...). -->
     <PlaybackBar
       :title="playback.currentTrack?.title || 'No track'"
       :artist="playback.currentTrack?.artist || 'Import audio in Library'"

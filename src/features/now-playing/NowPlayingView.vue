@@ -79,7 +79,7 @@ function onLoopButton(): void { playback.toggleLoop(); }
         <div v-if="currentTrack" class="status caption" role="status">
           <span>{{ timelineStore.statusText.busy ? '◐' : '●' }} {{ timelineStore.statusText.text }}</span>
           <span v-if="analyzingStep" class="sub">· window analysis: {{ analyzingStep }}</span>
-          <button v-else-if="analysis" type="button" class="link" @click="router.push('/admin')">· Features →</button>
+          <button v-else-if="analysis" type="button" class="link" @click="router.push({ path: '/admin', query: { track: currentTrack.id } })">· Anatomy →</button>
           <button v-else type="button" class="link" @click="library.analyze(currentTrack.id)">· Run window analysis</button>
         </div>
       </div>

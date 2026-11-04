@@ -46,7 +46,19 @@ const soloed = computed(() => (STEM_NAMES as readonly string[]).includes(props.a
 const mutedStem = computed(() => props.activeStem.startsWith('no_') ? props.activeStem.slice(3) : null);
 const audible = (s: string) => (!soloed.value || soloed.value === s) && mutedStem.value !== s;
 
-const view = computed<[number, number]>(() => props.zoom === 'all' ? [props.range.a, props.range.b] : [props.t - 4, props.t + 8]);
+/**
+ * Visible time span. Follow = 4 s behind and 8 s ahead of the playhead.
+ * FOLLOW CLAMP FIX - with the playhead outside the passage (or near 0:00) the view used to
+ * show the wrong part of the song, or a blank third of negative time.
+ * Example: passage 1:35–2:41, playhead at 0:00 → view 1:35–1:47, not -0:04–0:08.
+ */
+const view = computed<[number, number]>(() => {
+  if (props.zoom === 'all') return [props.range.a, props.range.b];
+  const inside = props.t >= props.range.a && props.t <= props.range.b;
+  const c = inside ? props.t : props.range.a + 4;
+  const a = Math.max(0, c - 4);
+  return [a, a + 12];
+});
 
 /** Melody scale: the passage's own range, so the line uses the lane's height. */
 const melodyRange = computed(() => {

@@ -61,7 +61,7 @@ const badge = (to: string) => (to === '/moments' ? moments.value.length : to ===
       <button type="button" class="sec-link label" :aria-current="route.path === '/settings' ? 'page' : undefined" @click="router.push('/settings')">
         Settings<span v-if="!learning" class="paused caption">Learning paused</span>
       </button>
-      <button type="button" class="sec-link label" :aria-current="route.path === '/admin' ? 'page' : undefined" @click="router.push('/admin')">Feature analysis</button>
+      <button type="button" class="sec-link label" :aria-current="route.path === '/admin' ? 'page' : undefined" @click="router.push('/admin')">Song anatomy</button>
     </nav>
 
   </aside>

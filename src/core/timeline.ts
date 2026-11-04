@@ -186,3 +186,40 @@ export function passageMoments(tl: Timeline, r: { a: number; b: number }): Passa
   }
   return out.sort((x, y) => x.at - y.at).slice(0, 3);
 }
+
+export interface SheetBar { n: number; a: number; b: number; chords: string[] }
+export interface SheetSection { label: string; a: number; b: number; bars: SheetBar[] }
+
+/**
+ * The song as a chord sheet: bars from the downbeats, each with the chords that fill at least a
+ * quarter of it (at most two, in order), grouped into the song's parts.
+ * Example: part D 1:57–3:46 → bars 39–74, "Dm | Dm C | F | C …".
+ * Bars before the first downbeat form a pickup bar 0.
+ */
+export function chordSheet(tl: Timeline): SheetSection[] {
+  const downs = tl.downbeats ?? [], chords = tl.chords ?? [], parts = tl.sections ?? [];
+  const end = tl.durationSec ?? (chords.length ? chords[chords.length - 1].b : 0);
+  if (!downs.length || !chords.length) return [];
+  const edges = (downs[0] > 0.5 ? [0] : []).concat(downs, [end]);
+  const first = downs[0] > 0.5 ? 0 : 1;
+  const bars: SheetBar[] = [];
+  for (let i = 0; i < edges.length - 1; i++) {
+    const a = edges[i], b = edges[i + 1];
+    if (b - a < 0.05) continue;
+    const inBar = chords
+      .map(c => ({ c: c.c, a: Math.max(a, c.a), len: Math.min(b, c.b) - Math.max(a, c.a) }))
+      .filter(x => x.len >= 0.25 * (b - a))
+      .sort((x, y) => x.a - y.a)
+      .slice(0, 2)
+      .map(x => x.c);
+    bars.push({ n: i + first, a, b, chords: inBar.length ? inBar : ['—'] });
+  }
+  const partAt = (t: number) => parts.find(p => t >= p.a && t < p.b)?.label ?? '';
+  const out: SheetSection[] = [];
+  for (const bar of bars) {
+    const label = partAt((bar.a + bar.b) / 2), last = out[out.length - 1];
+    if (last && last.label === label) { last.bars.push(bar); last.b = bar.b; }
+    else out.push({ label, a: bar.a, b: bar.b, bars: [bar] });
+  }
+  return out;
+}

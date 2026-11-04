@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * Tabs: one row of round tabs (radius-pill) for filtering a list — My Moments collections,
- * Discover groups, the recording picker in Feature Analysis, the TraitRing below 700px.
+ * Discover groups, the TraitRing below 700px.
  * Props: items (labels); selected (index); label (aria-label of the tablist).
  * Emits: select(index). Selected tab = chip-on fill + chip-on-line border (never accent).
  * Example: <Tabs :items="['All moments', 'Chills']" :selected="tab" label="Collections" @select="tab = $event" />

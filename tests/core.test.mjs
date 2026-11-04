@@ -6,7 +6,7 @@ import {
   RegionController, enforceMinimumSelection, rangeAround, defaultLoopRange, previewStart, seekTarget, quickSaveRange,
 } from '../src/core/playback.ts';
 import { toDbMoment, withTags, collectionsOf, newMoment, savedRanges } from '../src/core/moments.ts';
-import { barAt, beatInBar, blockIndexAt, noteName, passageMoments, rankIn } from '../src/core/timeline.ts';
+import { barAt, beatInBar, blockIndexAt, chordSheet, noteName, passageMoments, rankIn } from '../src/core/timeline.ts';
 import { computeSpectrum, fft, hzToMel, melFilters, melToHz, SPEC_SR } from '../src/core/spectrum.ts';
 
 /** Minimal HTMLMediaElement stand-in: an EventTarget with the fields the engine reads. */
@@ -413,4 +413,16 @@ test('spectrum: a 1 kHz tone lights the 1 kHz band; loudness rises with the sign
   assert.ok(Math.abs(bandHz - 1000) < 60, 'peak band near 1 kHz, got ' + Math.round(bandHz));
   assert.ok(s.loud[15] > s.loud[5], 'louder second half');
   assert.ok(Math.abs(s.bright[15] - 1000) < 80, 'centroid of a pure tone is its frequency');
+});
+
+test('timeline: the chord sheet puts chords in bars and bars in parts', () => {
+  const tl = { trackId: 'x', version: 1, status: {}, durationSec: 16,
+    downbeats: [1, 5, 9, 13],
+    chords: [{ c: 'Dm', a: 0, b: 5, conf: 1 }, { c: 'C', a: 5, b: 7, conf: 1 }, { c: 'F', a: 7, b: 9.5, conf: 1 }, { c: 'Dm', a: 9.5, b: 16, conf: 1 }],
+    sections: [{ a: 0, b: 9, label: 'A', energy: 0.5 }, { a: 9, b: 16, label: 'B', energy: 0.7 }] };
+  const sheet = chordSheet(tl);
+  assert.deepEqual(sheet.map(s => s.label), ['A', 'B']);
+  assert.deepEqual(sheet[0].bars.map(b => [b.n, b.chords.join(' ')]), [[0, 'Dm'], [1, 'Dm'], [2, 'C F']], 'pickup bar 0, then bars 1, 2');
+  assert.deepEqual(sheet[1].bars.map(b => [b.n, b.chords.join(' ')]), [[3, 'Dm'], [4, 'Dm']], 'a chord under a quarter of the bar (F, 0.5 of 4 s) is left out');
+  assert.deepEqual(chordSheet({ trackId: 'x', version: 1, status: {} }), []);
 });

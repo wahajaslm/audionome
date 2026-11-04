@@ -86,7 +86,7 @@ async function remove(id: string) {
         <!-- Button rule: at most one primary per view. -->
         <Button variant="primary" @click="fileInput?.click()">Import audio</Button>
         <Button variant="outline" :aria-expanded="showStream" @click="showStream = !showStream">Add from a link</Button>
-        <Button @click="router.push('/admin')">Feature analysis →</Button>
+        <Button @click="router.push('/admin')">Song anatomy →</Button>
       </div>
       <input
         ref="fileInput"
@@ -163,7 +163,7 @@ async function remove(id: string) {
           <span v-if="analyzing[t.id]" class="state label">Analysing…</span>
           <template v-else-if="analysisOf(t.id)">
             <span class="state label">Analysed</span>
-            <Button size="sm" class="hide-phone" @click="router.push({ path: '/admin', query: { track: t.id } })">Inspect →</Button>
+            <Button size="sm" class="hide-phone" @click="router.push({ path: '/admin', query: { track: t.id } })">Anatomy →</Button>
           </template>
           <Button v-else size="sm" variant="outline" @click="library.analyze(t.id)">Analyse locally</Button>
           <button

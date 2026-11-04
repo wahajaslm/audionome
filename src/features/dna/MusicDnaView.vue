@@ -118,11 +118,11 @@ async function play(m: Moment | undefined) { if (m) await momentsStore.play(m); 
     <details class="how">
       <summary class="body">How Music DNA learned this</summary>
       <p class="label shs">The ring reflects qualities you selected for saved moments. Listening events are optional and provide only attention hints, not emotional labels.</p>
-      <p class="label shs">Technical audio features, embeddings and model evaluations live in Feature analysis and the research studio.</p>
+      <p class="label shs">How each song is built is in Song anatomy. Embeddings and model evaluations are in the research studio.</p>
       <div class="how-btns">
         <Button variant="outline" @click="listening.exportProfile()">Export my profile</Button>
         <Button @click="router.push('/settings')">Settings →</Button>
-        <Button @click="router.push('/admin')">Feature analysis →</Button>
+        <Button @click="router.push('/admin')">Song anatomy →</Button>
       </div>
     </details>
   </div>

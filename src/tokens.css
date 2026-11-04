@@ -53,6 +53,8 @@
 
 /* Explore lanes: one colour per separated stem (vocals uses the accent). */
 :root{
+  /* Song anatomy uses the screen width (its song map and chord sheet need it); other pages keep --content-max. */
+  --content-wide: 1600px;
   --stem-vocals: #8ec5b8;
   --stem-drums: #d9a86c;
   --stem-bass: #9fa3e6;

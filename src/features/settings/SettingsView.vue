@@ -122,11 +122,11 @@ async function resetAll() {
       </li>
       <li class="row">
         <div class="info">
-          <div class="item s">Feature analysis and research studio</div>
-          <div class="label meta">Measured audio features, analysis windows and research baselines for each analysed song. The studio needs the local service.</div>
+          <div class="item s">Song anatomy and research studio</div>
+          <div class="label meta">How each song is built: parts, chords bar by bar, instruments. Analysis windows and research baselines are in the studio, which needs the local service.</div>
         </div>
         <div class="btns">
-          <Button variant="outline" @click="router.push('/admin')">Feature analysis</Button>
+          <Button variant="outline" @click="router.push('/admin')">Song anatomy</Button>
           <a class="ext label" :href="STUDIO_URL" target="music-dna-studio" @click.prevent="openStudio()">Research studio ↗</a>
         </div>
       </li>
