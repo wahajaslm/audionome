@@ -4,7 +4,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0" />
-  <title>Music DNA Player</title>
+  <title>Music DNA Player (original)</title>
+  <!-- Legacy: the original single-page player, kept working at /legacy/original-player.html.
+       The Vue app (index.html → src/main.ts) is the player now. Both share the same IndexedDB
+       ('music-dna-v1') and src/core, so moments saved in one appear in the other. -->
   <meta name="claude:viewport-fit-sides" content="cover">
   <style>
 /* Layout: app shell — sidebar (desktop) or bottom tabs (phone); one player screen whose states unfold in place */
@@ -974,15 +977,15 @@ button.pill{cursor:pointer;margin:0 10px}
   <script type="module">
     // WaveSurfer.create( adapter compatibility check - wavesurfer.js is no longer imported: the
     // player draws its own bars and the npm dependency was removed (the Vue app uses ui/Waveform.vue).
-    import { db, ensureDemo, importFiles, exportProfile } from './src/data/db.ts';
-    import { analyzeLocalTrack, intelligenceHealth, saveAnalysisToSQLite, deleteTrackFromSQLite, uploadAudioToCache, fetchPythonDiagnostics } from './src/intelligence/client.ts';
-    import { personalRecommendations, attentionCandidates, classifyFavReasons, selectActiveLearningQuestions, synthesizeMusicDnaInsight, evaluatePreferences } from './src/intelligence/personalize.ts';
-    import { buildSimilarityMap } from './src/intelligence/map.ts';
-    import { resolveStreamUrl, getProxyStreamUrl } from './src/services/streaming.ts';
+    import { db, ensureDemo, importFiles, exportProfile } from '../src/data/db.ts';
+    import { analyzeLocalTrack, intelligenceHealth, saveAnalysisToSQLite, deleteTrackFromSQLite, uploadAudioToCache, fetchPythonDiagnostics } from '../src/intelligence/client.ts';
+    import { personalRecommendations, attentionCandidates, classifyFavReasons, selectActiveLearningQuestions, synthesizeMusicDnaInsight, evaluatePreferences } from '../src/intelligence/personalize.ts';
+    import { buildSimilarityMap } from '../src/intelligence/map.ts';
+    import { resolveStreamUrl, getProxyStreamUrl } from '../src/services/streaming.ts';
     // Shared, framework-free core (also used by the Vue app). Each fix is explained there.
-    import { createNativeAudioEngine } from './src/core/audioEngine.ts';
-    import { ListeningLog, readMediaTime } from './src/core/listening.ts';
-    import { computePeaks } from './src/core/waveformPeaks.ts';
+    import { createNativeAudioEngine } from '../src/core/audioEngine.ts';
+    import { ListeningLog, readMediaTime } from '../src/core/listening.ts';
+    import { computePeaks } from '../src/core/waveformPeaks.ts';
     (function () {
       var DUR = 32;
       let music, objectURL = null, analyses = [], ratings = [], events = [], suggestions = [], candidates = [], audioPeaks = [];

@@ -1,10 +1,11 @@
 # Music DNA M3.1 — Acceptance checklist
 
-## A. Original interface — must not regress
-- [ ] Compare live player with `reference/music-dna/player/index.html`: layout, typography, muted sea-glass accent, waveform bar geometry, bottom playback bar, and contextual floating selection toolbar match.
-- [ ] Compare **My Music DNA**: original circular ring, percentage labels, trait chips, explanatory portrait, expandable trait rows and hearing evidence all remain visible.
-- [ ] Test desktop and narrow/mobile viewport; original responsive sidebar/bottom-navigation behavior remains.
-- [ ] Technical Python analysis charts do **not** clutter the listening screen or DNA portrait.
+## A. Interface — Vue player and legacy page
+- [ ] `/` is the Vue player and follows the design system (`reference/music-dna/design-system/`): tokens only, one accent for chosen moments, open lists, no cards.
+- [ ] **My Music DNA**: TraitRing with percentage labels (tabs below 700px), portrait sentence, TraitRow list with expandable, playable evidence.
+- [ ] Desktop sidebar (five places + Collections + Settings / Feature analysis) and the phone bottom tab bar (< 820px); no horizontal scroll at 390px.
+- [ ] Technical analysis stays on Feature analysis and the research studio, not on the listening screen or DNA portrait.
+- [ ] `/legacy/original-player.html` still loads, plays, and shows the same library and moments.
 
 ## B. Player & storage
 - [ ] Original WAV demo starts, pauses, seeks and moves the playhead with actual audio.
@@ -12,6 +13,9 @@
 - [ ] Reopen the page; library, saved moments, emotions and labels persist.
 - [ ] A saved passage from another song actually opens the correct recording and time range.
 - [ ] Play My Moments collection; the selected passages play back-to-back.
+- [ ] Edit a moment's tags and note in My Moments; the change shows in My Music DNA.
+- [ ] Delete an imported song in Library; its moments go too, after an in-place confirmation.
+- [ ] Settings: Learning, automatic analysis and volume persist after reload; Clear history empties the event log.
 - [ ] Feedback can be given even while passive listening-event collection is paused.
 
 ## C. Personal intelligence — no fabricated observations
@@ -29,5 +33,6 @@
 - [ ] Optional pretrained deep encoder cannot silently download weights; DSP and neural model IDs never mix.
 
 ## Verification
-- **Verified here:** five original-UI/source checks, five TypeScript preference-model tests, four Python analysis tests, JavaScript module syntax, and Python local research CLI.
-- **Not verified here:** complete `npm run build`, Vite runtime, real browser audio gestures and IndexedDB persistence after page reload. These need local validation.
+- **Automated:** `npm test` (source checks for the Vue app and the legacy page, core unit tests), `npm run test:model`, `vue-tsc` + `npm run build`.
+- **End to end (Playwright, Chromium, 1440×900 and 390×844, service stubbed with 503):** every route renders without console errors; WAV import, play, select, loop, save, ask; moment in My Moments and DNA; edit, collection playback, Correct after reload; Discover like/dislike written to `ratings`; Settings toggles and volume persist after reload; export downloads `music-dna-profile.json`; delete song; legacy page plays.
+- **Not verified here:** analysis with the real Python service running, and stream import (both need the service).

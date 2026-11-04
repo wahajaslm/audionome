@@ -1,6 +1,6 @@
-# Music DNA Player · M3.1 — Original UI restored
+# Music DNA Player · M3.1
 
-**The supplied `reference/music-dna/player/index.html` is the canonical visual specification.** The actual running `index.html` keeps its **exact CSS**, responsive layout, waveform selection toolbar, playback bar, My Moments rows, Discover rows, and circular Music DNA ring/trait/evidence visuals. **No replacement React player is shipped.** The prototype's simulated playback and fabricated artist/trait data are replaced by real audio controls, persistent listener data, and cautious personal insights.
+The player is a **Vue 3 app** (`index.html` → `src/main.ts`) built on the Music DNA design system (`reference/music-dna/design-system/`). It has real playback, persistent listener data and cautious personal insights; nothing about the listener is invented. The original single-page player is kept, working, at **`/legacy/original-player.html`**. Both read the same IndexedDB database (`music-dna-v1`), so songs, moments and settings carry over between them.
 
 ## Run
 
@@ -11,7 +11,7 @@ npm install
 npm run dev
 ```
 
-Open the local Vite address (typically `http://localhost:5173`). The included **original, 32-second WAV recording** makes the player immediately usable without importing music.
+Open the local Vite address (typically `http://localhost:5173`). That is the Vue player. The original player is at `http://localhost:5173/legacy/original-player.html` (also in `npm run build` output). The included **original, 32-second WAV recording** makes the player usable without importing music.
 
 For authorized local music analysis, run the Python service in a second terminal:
 
@@ -22,15 +22,18 @@ pip install -r requirements.txt
 python -m uvicorn musicdna.service.app:app --host 127.0.0.1 --port 8765
 ```
 
-In **Library**, import MP3/WAV or other browser-supported audio; press **Analyze locally** only if you have the necessary analysis rights. Analysis is opt-in. Original recordings remain in the browser's IndexedDB; temporary analysis copies sent to your own localhost Python service are removed after processing. Streamed tracks are **not** assumed to be analyzable.
+In **Library**, import MP3/WAV or other browser-supported audio; press **Analyse locally** only if you have the necessary analysis rights (with automatic analysis off, the row asks you to confirm them first). Analysis is opt-in. Original recordings remain in the browser's IndexedDB; temporary analysis copies sent to your own localhost Python service are removed after processing. Streamed tracks are **not** assumed to be analyzable.
 
-## What works in the original UI
+## Screens
 
-- **Player:** real WaveSurfer media playback, actual waveform-derived bars, seek, volume, drag-to-select, save, loop, optional describe feedback.
-- **My Moments:** the original collection/list design; saved passages, tags and notes are stored with their exact recording. Play a passage or play the collection consecutively.
-- **My Music DNA:** the **original circular ring**, trait chips, expandable traits, playback evidence and privacy control. No fake traits. Ring shares are computed **only from musical qualities explicitly named in saved moments**, not AI-derived emotions. The portrait starts empty and develops with real annotations. Correct a trait by removing its label from a particular moment.
-- **Discover:** original row/chip styling; suggests new passages only after analysis and positive examples. Likes/dislikes update the local M3 ranking model. No unsupported emotion claims.
-- **Implicit attention:** optional and **off by default**. User-initiated replays and loops may create attention candidates. Automatic loop cycles do not independently prove preference. The player never records microphone audio or OS-level volume.
+- **Now playing:** real media playback, waveform from the decoded audio, seek, volume, drag-to-select, save, loop, ask row / describe strip, stem explore.
+- **Library:** import audio, add from a link (YouTube / SoundCloud / direct, needs the local service), play, delete (with its moments), analyse locally (opt-in, rights confirmed in place), analysis status.
+- **My Moments:** saved passages with tags and notes; play one, play a collection back to back, edit tags and note, remove. Collections: chills, home, melodies.
+- **Discover:** suggestions from the personal ranker once a song is analysed and a moment saved; *I like it* / *Not for me* are stored as ratings and re-rank the list. Moments you return to can be saved or dismissed.
+- **My Music DNA:** TraitRing + TraitRow. Shares come **only from qualities you named on saved moments**. Expand a trait to play its passages or *Correct* (remove that label from a moment). Learning switch, profile export.
+- **Settings:** private listening insights, automatic analysis, volume, clear listening history, export profile.
+- **Feature analysis:** service health, analysis windows with every measured value, active-learning queue, research baselines, held-out ranking. The full plots are in the research studio (`http://127.0.0.1:8765/studio`).
+- **Implicit attention:** optional. User-initiated replays and loops may create attention hints. The player never records microphone audio or OS-level volume.
 
 ## Research separation
 
@@ -52,7 +55,7 @@ python -m pytest -q tests/python
 npm run build
 ```
 
-See `docs/ACCEPTANCE.md` for manual browser checks. The source-level design regression tests, five M3 model tests, and four Python analysis tests passed in the build environment. **End-to-end live Vite/browser runtime remains unverified:** dependency downloads and Chromium navigation were blocked here. Please run `npm install && npm run build` and acceptance checks locally before relying on it.
+See `docs/ACCEPTANCE.md` for manual browser checks. `npm test` covers the Vue app's sources (routes, components, no Dexie in components, honest copy), the legacy page, and the framework-free rules in `src/core` (playback, listening log, DNA, Discover, diagnostics).
 
 ## Privacy and rights
 

@@ -9,10 +9,9 @@ export default defineConfig({
   },
   build: {
     rollupOptions: {
-      // index.html is the live player. The Vue app has no HTML entry until phase 3 switches
-      // to it, so it is built as an extra entry: `npm run build` compiles every .vue file and
-      // fails if the Vue app does not bundle.
-      input: { main: 'index.html', 'vue-app': 'src/main.ts' },
+      // index.html mounts the Vue app (the player). The original single-page player is kept as a
+      // second page, so /legacy/original-player.html works in `vite` dev and in the build.
+      input: { main: 'index.html', legacy: 'legacy/original-player.html' },
     },
   },
 });

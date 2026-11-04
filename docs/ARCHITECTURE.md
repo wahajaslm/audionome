@@ -1,13 +1,17 @@
-# Architecture — Original visual interface, independent intelligence
+# Architecture — Vue player on a shared, framework-free core
 
-The actual live `index.html` is a lightly adapted version of the user's original `reference/music-dna/player/index.html`. Its entire original CSS is unchanged. It retains its DOM structure, navigation and rendering of waveform selection, feedback, moments, Discover and the radial My Music DNA portrait.
+**Entry:** `index.html` mounts the Vue 3 app (`src/main.ts`): Pinia stores, hash router, one screen per route (Now playing, Library, My Moments, Discover, My Music DNA, Settings, Feature analysis). Styling uses only the design-system tokens (`src/tokens.css` = `reference/music-dna/design-system/tokens.css`) and its components, implemented in `src/ui/` (Waveform, SelectionToolbar, AskRow, DescribeStrip, PlaybackBar, Chip, Button, NavItem, Toast, TraitRing, TraitRow, MomentRow, Cover, plus Switch and Tabs).
 
-**Playback:** `wavesurfer.js` provides real media timeline/playback. The visible waveform uses peaks derived from the decoded audio while retaining the original bar styling and region/toolbar interactions. No duplicate React player exists.
+**Layers** (see `src/README.md`): `core/` (no Vue: audio engine, listening log, loop/preview controller, peaks, moment / DNA / Discover / diagnostics rules, Dexie wrappers) ← `stores/` (Pinia, one per domain) ← `features/` and `composables/` ← `router/`, `App.vue`. Components never touch Dexie or the engine; they call store actions, which call `core/`.
 
-**Storage:** Dexie (`src/data/db.ts`) stores recordings, song metadata, user-created moments/labels/notes, opt-in listening events, ratings and versioned analysis vectors in IndexedDB. Data is local by default.
+**Legacy player:** the original single-page player lives at `legacy/original-player.html` with its exact CSS. It imports the same `src/core` engine, listening log and peaks, and the same Dexie schema, so it still plays and shares data with the Vue app. It is built as a second Vite page.
 
-**Product intelligence:** `src/intelligence/personalize.ts` supplies candidate detection and a baseline personalized ranker. Listening events are **attention signals**, and only confirmed/saved/rated passages become preference labels. The My DNA circular ring reflects explicitly selected *musical qualities*, not speculative emotions or raw embedding scores.
+**Playback:** one `NativeAudioEngine` (HTML5 audio) for the whole app. Every timestamp comes from the media clock (`readMediaTime`). Each SYNC FIX / DELAY FIX is explained with an example where it lives in `src/core` or the stores.
 
-**Research boundary:** All Python lives in the `musicdna` package (see `musicdna/README.md`): `audio` and `features` analyse recordings, `preference` learns from listening, `corpus` and `experiments` hold research data and studies, and `service` is the localhost API the player calls. The player displays only listener-relevant insight text and playable evidence. Local rights confirmation is required before analyzing imported music.
+**Storage:** Dexie (`src/data/db.ts`, database `music-dna-v1`) stores recordings, user-created moments/labels/notes, opt-in listening events, ratings, settings and versioned analysis vectors in IndexedDB. Data is local by default; the profile export omits audio.
 
-**Limitations:** This is an early local-first consumer prototype. Music rights and license conditions still apply, preference predictions have not been clinically or scientifically validated, and full Vite/browser E2E operation is pending verification.
+**Product intelligence:** `src/intelligence/personalize.ts` supplies attention candidates and the personal ranker. Listening events are **attention signals**; only saved, confirmed or rated passages become preference labels. The DNA ring reflects explicitly selected *musical qualities*, not emotions or embedding scores.
+
+**Research boundary:** all Python lives in `musicdna/`; `musicdna.service` is the localhost API (127.0.0.1:8765) the player calls for analysis, streams and diagnostics. Every call fails soft when the service is off. Local rights confirmation is required before analysing imported music unless automatic analysis was switched on.
+
+**Limitations:** early local-first prototype. Music rights still apply; preference predictions are not scientifically validated.
