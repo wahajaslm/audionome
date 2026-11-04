@@ -340,3 +340,20 @@ def test_projection_survives_concurrent_threads():
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(EmbeddingProjector().project_to_2d, batches))
     assert all(len(r) == 60 for r in results)
+
+
+def test_timeline_status_reports_saved_live_and_queue_position(tmp_path):
+    """Library progress bars: cheap status per song, with the place in line while waiting."""
+    import json as _json
+    from musicdna.service.timeline_jobs import TimelineJobs, TIMELINE_VERSION
+    jobs = TimelineJobs(tmp_path, lambda _id: None, StemSeparator())
+    jobs.dir.mkdir(parents=True)
+    jobs.path('done').write_text(_json.dumps({'trackId': 'done', 'version': TIMELINE_VERSION, 'status': {'quick': 'done', 'full': 'done'}}))
+    jobs.path('died').write_text(_json.dumps({'trackId': 'died', 'version': TIMELINE_VERSION, 'status': {'quick': 'done', 'full': 'running'}}))
+    with jobs._lock:
+        jobs._queue.extend(['a', 'b'])
+        jobs._status['a'] = jobs._status['b'] = {'quick': 'waiting', 'full': 'waiting', 'stage': 'Waiting in line'}
+    assert jobs.status('done')['full'] == 'done'
+    assert jobs.status('died')['full'] == 'stale'
+    assert jobs.status('b')['position'] == 2
+    assert jobs.status('never') is None

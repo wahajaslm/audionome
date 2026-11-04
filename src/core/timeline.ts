@@ -62,6 +62,26 @@ export async function startTimeline(trackId: string, fetcher: typeof fetch = fet
   } catch { return 'off'; }
 }
 
+/** One song's job status from POST /api/timelines/status (Library progress bars). */
+export interface TimelineJobStatus {
+  quick?: 'waiting' | 'running' | 'done' | 'error' | 'stale';
+  full?: 'waiting' | 'running' | 'done' | 'error' | 'stale';
+  stage?: string;
+  /** Place in the service's line while waiting (1 = next). */
+  position?: number;
+  running?: boolean;
+}
+
+/** Status for many songs in one call; songs never started are missing. Empty when the service is off. */
+export async function fetchTimelineStatuses(ids: string[], fetcher: typeof fetch = fetch): Promise<Record<string, TimelineJobStatus>> {
+  try {
+    const r = await fetcher(SERVICE_URL + '/api/timelines/status', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }), signal: AbortSignal.timeout(5000),
+    });
+    return r.ok ? await r.json() : {};
+  } catch { return {}; }
+}
+
 export const hasQuick = (tl: Timeline | null | undefined): boolean => !!tl?.chords?.length && !!tl.beats?.length;
 export const hasFull = (tl: Timeline | null | undefined): boolean => !!tl?.stems && Object.keys(tl.stems).length > 0;
 

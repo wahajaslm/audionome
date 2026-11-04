@@ -4,7 +4,7 @@
  * 'analyze', 'deltrack', 'toggle-stream-input' actions). Imported files and opened streams
  * share one list. Every action goes through the library / playback stores.
  */
-import { computed, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRouter } from 'vue-router';
 import type { PlayableTrack } from '../../core/library';
@@ -24,7 +24,7 @@ const intelligence = useIntelligenceStore();
 const playback = usePlaybackStore();
 const ui = useUiStore();
 const router = useRouter();
-const { tracks, analyzing, rightsAsk, autoAnalyze, analysisQueue, waitingForService, analysisFailed } = storeToRefs(library);
+const { tracks, analyzing, rightsAsk, autoAnalyze, analysisQueue, waitingForService, analysisFailed, timelineStatus } = storeToRefs(library);
 
 const fileInput = ref<HTMLInputElement | null>(null);
 const showStream = ref(false);
@@ -42,6 +42,45 @@ const jobs = computed(() => Object.entries(analyzing.value).map(([id, step]) => 
 const momentCount = (id: string) => momentsStore.moments.filter(m => m.trackId === id).length;
 const analysisOf = (id: string) => intelligence.analysisFor(id);
 const isCurrent = (t: PlayableTrack) => playback.trackId === t.id;
+
+/**
+ * ANALYSED MEANS ALL OF IT - "Analysed" used to mean only the window analysis, while Song
+ * anatomy and Explore wait for the stems / beats / chords job, so a song said "Analysed" and its
+ * anatomy was empty. Each row now shows a 3-part bar (Sound · Beats & chords · Stems) and says
+ * "Analysed" only when all three are done.
+ * Example: sound done, beats running, stems 12th in line → "Beats & chords: Finding beats and chords".
+ */
+type PartState = 'done' | 'running' | 'waiting' | 'error' | 'none';
+interface Part { name: string; state: PartState; text: string }
+const ordinal = (n: number) => n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th');
+const jobState = (v: string | undefined): PartState => v === 'done' ? 'done' : v === 'running' ? 'running' : v === 'waiting' ? 'waiting' : v === 'error' ? 'error' : 'none';
+function parts(id: string): Part[] {
+  const tl = timelineStatus.value[id];
+  const sound: PartState = library.isFullyAnalysed(id) ? 'done' : analyzing.value[id] ? 'running'
+    : analysisQueue.value.includes(id) || waitingForService.value.includes(id) ? 'waiting' : analysisFailed.value[id] ? 'error' : 'none';
+  const job = (state: PartState) => state === 'running' ? (tl?.stage || 'running')
+    : state === 'waiting' ? (tl?.position ? ordinal(tl.position) + ' in line' : 'waiting') : state === 'error' ? 'failed' : state === 'done' ? 'done' : 'not started';
+  const beats = jobState(tl?.quick), stems = jobState(tl?.full);
+  return [
+    { name: 'Sound', state: sound, text: sound === 'running' ? analyzing.value[id] : sound === 'waiting' ? 'queued' : sound === 'error' ? 'failed' : sound === 'done' ? 'done' : 'not started' },
+    { name: 'Beats & chords', state: beats, text: job(beats) },
+    { name: 'Stems', state: stems, text: job(stems) },
+  ];
+}
+const allDone = (id: string) => parts(id).every(p => p.state === 'done');
+/** The first part that is not done, e.g. "Stems: 12th in line". */
+function progressText(id: string): string {
+  const next = parts(id).find(p => p.state !== 'done');
+  return next ? next.name + ': ' + next.text : 'Sound, beats & chords and stems ready';
+}
+const rowState = (id: string) => {
+  const ps = parts(id);
+  return ps.some(p => p.state === 'running') ? 'Analysing…' : ps.some(p => p.state === 'waiting') ? 'Queued' : '';
+};
+
+let stopStatus: (() => void) | null = null;
+onMounted(() => { stopStatus = library.watchTimelineStatus(); });
+onUnmounted(() => stopStatus?.());
 
 async function onFiles(e: Event) {
   const input = e.target as HTMLInputElement;
@@ -144,6 +183,12 @@ async function remove(id: string) {
               <template v-else> · Not analysed yet</template>
               <template v-if="analysisFailed[t.id] && !analyzing[t.id] && !library.isFullyAnalysed(t.id)"> · <span class="fail">Analysis failed: {{ analysisFailed[t.id] }}</span></template>
             </div>
+            <div v-if="t.id !== 'original-demo' && !allDone(t.id) && (library.isFullyAnalysed(t.id) || rowState(t.id))" class="prog">
+              <span class="bar" role="img" :aria-label="parts(t.id).map(p => p.name + ' ' + p.text).join(', ')">
+                <i v-for="p in parts(t.id)" :key="p.name" :class="p.state" :title="p.name + ': ' + p.text"></i>
+              </span>
+              <span class="label prog-text">{{ progressText(t.id) }}</span>
+            </div>
 
             <!-- Rights rule (classic confirm, now in place): asked only when automatic analysis is off. -->
             <div v-if="rightsAsk === t.id" class="ask" role="group" aria-label="Analysis rights">
@@ -165,11 +210,10 @@ async function remove(id: string) {
               </div>
             </div>
           </div>
-          <span v-if="analyzing[t.id]" class="state label">Analysing…</span>
-          <span v-else-if="analysisQueue.includes(t.id) || waitingForService.includes(t.id)" class="state label">Queued</span>
-          <!-- Only a full analysis says "Analysed"; a link's quick pass has no stems yet. -->
+          <span v-if="rowState(t.id)" class="state label">{{ rowState(t.id) }}</span>
+          <!-- "Analysed" only when sound, beats & chords and stems are all done (ANALYSED MEANS ALL OF IT). -->
           <template v-else-if="library.isFullyAnalysed(t.id)">
-            <span class="state label">Analysed</span>
+            <span class="state label">{{ allDone(t.id) || t.id === 'original-demo' ? 'Analysed' : 'Partly analysed' }}</span>
             <Button size="sm" class="hide-phone" @click="router.push({ path: '/admin', query: { track: t.id } })">Anatomy →</Button>
           </template>
           <Button v-else size="sm" variant="outline" @click="library.analyze(t.id)">Analyse locally</Button>
@@ -215,6 +259,15 @@ h1 { margin: 0; color: var(--ink); }
 .meta { color: var(--ink-mute); margin-top: 3px; }
 .state { color: var(--ink-sub); white-space: nowrap; }
 .fail { color: var(--ink); }
+/* Progress: three short segments, no animation (Motion rule: nothing pulses on its own). */
+.prog { display: flex; align-items: center; gap: var(--space-2); margin-top: 6px; min-width: 0; }
+.bar { display: flex; gap: 3px; flex: none; }
+.bar i { display: block; width: 28px; height: 4px; border-radius: 2px; background: var(--wave-off); opacity: 0.45; }
+.bar i.done { background: var(--ink-mute); opacity: 1; }
+.bar i.running { background: var(--accent); opacity: 1; }
+.bar i.waiting { background: none; box-shadow: inset 0 0 0 1px var(--wave-off); opacity: 1; }
+.bar i.error { background: var(--ink); opacity: 1; }
+.prog-text { color: var(--ink-mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ask { margin-top: var(--space-3); padding: var(--space-3); border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--bg-panel); }
 .ask p { color: var(--ink-sub); margin: 0 0 var(--space-2); }
 .ask-btns { display: flex; flex-wrap: wrap; gap: var(--space-2); }

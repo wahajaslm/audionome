@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from musicdna.service.repository import AUDIO_CACHE_DIR
 from musicdna.service.service import _DEFAULT_SERVICE
@@ -13,6 +14,16 @@ JOBS = TimelineJobs(
     AUDIO_CACHE_DIR, _DEFAULT_SERVICE.find_cached_audio, _DEFAULT_SERVICE.stem_separator,
     max_duration_sec=_DEFAULT_SERVICE.feature_extractor.config.audio.max_duration_sec,
 )
+
+
+class StatusRequest(BaseModel):
+    ids: list[str]
+
+
+@router.post('/api/timelines/status')
+def timeline_statuses(payload: StatusRequest) -> dict[str, Any]:
+    """Job status for many songs in one call (Library progress bars). Songs never started are left out."""
+    return {track_id: s for track_id in payload.ids[:2000] if (s := JOBS.status(track_id)) is not None}
 
 
 @router.get('/api/timeline/{track_id}')

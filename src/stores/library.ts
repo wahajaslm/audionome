@@ -3,7 +3,7 @@ import { computed, reactive, ref, shallowRef } from 'vue';
 import type { Track } from '../data/types';
 import { deleteTrackEverywhere, forgetDeleted, getSetting, importAudioFiles, loadTracks, putAnalysis, putSetting, putTrack, syncFromAnalysisService, updateTrackDuration } from '../core/repository';
 import { intelligenceHealth, uploadAudioToCache } from '../intelligence/client';
-import { startTimeline } from '../core/timeline';
+import { fetchTimelineStatuses, startTimeline, type TimelineJobStatus } from '../core/timeline';
 import { useMomentsStore } from './moments';
 import { runLocalAnalysis } from '../core/intelligence';
 import type { PlayableTrack } from '../core/library';
@@ -244,6 +244,42 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
+  /**
+   * LIBRARY PROGRESS - stems / beats / chords job status per song, polled while Library is open.
+   * A service restart forgets its waiting line, so an analysed song with no job (or one that
+   * died, 'stale') is asked for again, once per session, at the back of the line.
+   */
+  const timelineStatus = ref<Record<string, TimelineJobStatus>>({});
+  const timelineRequested = new Set<string>();
+  let statusTimer: ReturnType<typeof setInterval> | null = null;
+  let statusUsers = 0;
+
+  async function refreshTimelineStatus(): Promise<void> {
+    const ids = tracks.value.map(t => t.id);
+    if (!ids.length) return;
+    timelineStatus.value = await fetchTimelineStatuses(ids);
+    for (const id of ids) {
+      const s = timelineStatus.value[id];
+      const missing = !s || s.full === 'stale' || (s.quick === 'stale' && s.full !== 'done');
+      if (missing && isFullyAnalysed(id) && id !== 'original-demo' && !timelineRequested.has(id)) {
+        timelineRequested.add(id);
+        await startTimeline(id, fetch, false);
+      }
+    }
+  }
+
+  /** Starts polling (every 5 s) for as long as at least one view watches; returns the stop function. */
+  function watchTimelineStatus(): () => void {
+    statusUsers++;
+    if (!statusTimer) {
+      refreshTimelineStatus().catch(console.warn);
+      statusTimer = setInterval(() => { refreshTimelineStatus().catch(console.warn); }, 5000);
+    }
+    return () => {
+      if (--statusUsers === 0 && statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+    };
+  }
+
   /** Deletes a song with its analyses and moments. If it was loaded, the next song is loaded. */
   async function deleteTrack(id: string): Promise<void> {
     if (id === 'original-demo') return;
@@ -378,7 +414,7 @@ export const useLibraryStore = defineStore('library', () => {
 
   return {
     tracks, analyzing, autoAnalyze, rightsAsk, isResolvingStream, isStreamingAnalysis, streamProgress,
-    analysisQueue, waitingForService, analysisFailed, isFullyAnalysed,
+    analysisQueue, waitingForService, analysisFailed, isFullyAnalysed, timelineStatus, watchTimelineStatus,
     track, load, loadSettings, correctDuration, setAutoAnalyze, analyze, analyzeAll, autoAnalyzeLibrary, upsert, openStream,
     openLink, queueAnalysis, importFiles, deleteTrack,
   };

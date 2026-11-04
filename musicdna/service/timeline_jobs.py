@@ -53,6 +53,8 @@ class TimelineJobs:
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None
+        # track_id -> (file mtime, saved status), so status() does not re-read big timeline files.
+        self._saved_status: dict[str, tuple[float, dict[str, Any]]] = {}
 
     # ---------- public ----------
     def path(self, track_id: str) -> Path:
@@ -76,6 +78,40 @@ class TimelineJobs:
                     status[tier] = 'stale'
         out['status'] = status
         return out
+
+    def status(self, track_id: str) -> dict[str, Any] | None:
+        """Just the job status, cheap enough to poll for a whole library (Library progress bars).
+
+        Same rules as get() ('stale' for jobs that died with the service), plus `position`
+        (1 = next) while the song waits in line. None when no job was ever started.
+        Example: {'quick': 'waiting', 'full': 'waiting', 'stage': 'Waiting in line', 'position': 12}.
+        """
+        with self._lock:
+            live = dict(self._status.get(track_id, {}))
+            position = list(self._queue).index(track_id) + 1 if track_id in self._queue else None
+        saved: dict[str, Any] = {}
+        try:
+            mtime = self.path(track_id).stat().st_mtime
+            cached = self._saved_status.get(track_id)
+            if cached and cached[0] == mtime:
+                saved = cached[1]
+            else:
+                saved = dict((self._read(track_id) or {}).get('status', {}))
+                self._saved_status[track_id] = (mtime, saved)
+        except OSError:
+            pass
+        if not saved and not live:
+            return None
+        status = {**saved, **live}
+        running = status.pop('running', None)
+        if not live:
+            for tier in ('quick', 'full'):
+                if status.get(tier) in ('running', 'waiting'):
+                    status[tier] = 'stale'
+        status['running'] = bool(running)
+        if position:
+            status['position'] = position
+        return status
 
     def request(self, track_id: str, front: bool = True) -> dict[str, Any]:
         """Queues the track unless its timeline is complete; the playing song goes first."""
