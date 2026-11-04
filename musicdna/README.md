@@ -143,5 +143,9 @@ slides, ornaments in `features/vocal.py`).
   a tonic-independent grid alignment, held-note steadiness, slides into notes, and a 24-bin tonic-relative pitch profile.
 - Tonic accuracy is measured, not assumed: add `{"<video_id>": <tonic Hz>}` to `data/coke_studio/tonic_annotations.json`
   and the R02 report gives the detection error in cents. Without annotations the report says accuracy is unmeasured.
-- Known limits: accompaniment leaking into the vocal stem (harmonium, sarangi) and pitch-tracker errors affect these values.
+- Singing gate (`vocal.gate_*`): a pitch frame counts only if the vocal stem is not buried under the accompaniment
+  (default -15 dB) and is not near-silent. This stops instruments leaking into the vocal stem (harmonium, sarangi)
+  from being measured as the singer. On Garaj Baras 60-120 s it kept 91% of tracked frames (262 dropped as buried,
+  18 as near-silent). R02 reports the kept share per song.
+- Known limits: the gate cannot tell a soft sung note from loud leakage at the same level, and pitch-tracker errors remain.
 

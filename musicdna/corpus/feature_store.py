@@ -30,7 +30,7 @@ from musicdna.paths import CORPUS_DIR
 
 FEATURE_DIRECTORY = CORPUS_DIR / 'features'
 TONIC_ANNOTATIONS = CORPUS_DIR / 'tonic_annotations.json'
-JSON_ARTIFACTS = {'lyrics', 'tonic'}
+JSON_ARTIFACTS = {'lyrics', 'tonic', 'vocal_gate'}
 
 
 class FeatureStore:
@@ -193,7 +193,8 @@ class SpatialStage(FeatureStage):
 class VocalStage(FeatureStage):
     """9-D pitch descriptors per window; the full contour is cached and reused across window settings."""
     name = 'vocal'
-    artifacts = {'vocal': ('windows', 'audio', 'vocal'), 'pitch_contour': ('audio', 'vocal')}
+    artifacts = {'vocal': ('windows', 'audio', 'vocal'), 'pitch_contour': ('audio', 'vocal'),
+                 'vocal_gate': ('audio', 'vocal')}
     needs_vocals = True
     parallel = True
 
@@ -202,8 +203,13 @@ class VocalStage(FeatureStage):
         if store.has(entry.video_id, 'pitch_contour'):
             contour = PitchContour.from_semitones(store.load(entry.video_id, 'pitch_contour'), store.config.vocal)
         else:
-            contour = analyzer.track(store.vocals(entry.video_id), store.config.vocal.sample_rate)
+            # Singing gate needs the accompaniment: the mix minus the vocal stem, at the stem's rate.
+            vocals = store.vocals(entry.video_id)
+            mix = store.audio(entry, store.config.vocal.sample_rate)
+            length = min(len(vocals), len(mix))
+            contour = analyzer.track(vocals[:length], store.config.vocal.sample_rate, mix[:length] - vocals[:length])
             store.save(entry.video_id, 'pitch_contour', contour.semitones)
+            store.save_json(entry.video_id, 'vocal_gate', analyzer.last_gate.to_dict())
         rows = [analyzer.describe(contour, start, end).to_vector() for start, end in store.windows(entry)]
         store.save(entry.video_id, 'vocal', np.array(rows))
 

@@ -30,6 +30,10 @@ ornament_prominence_st = 0.75
 ornament_max_width_sec = 0.3
 max_step_st = 1.0
 pitch_resolution_cents = 2.0
+gate_enabled = true
+gate_min_vocal_to_accompaniment_db = -15.0
+gate_min_vocal_dbfs = -50.0
+gate_min_voicing_probability = 0.0
 
 # Microtonal intonation: note placement relative to the song's own tonic, never snapped to piano keys.
 [intonation]

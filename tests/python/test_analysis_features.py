@@ -55,3 +55,22 @@ def test_spatial_bands_are_a_config_parameter() -> None:
     default = SPATIAL.describe(stereo, 44100)
     moved = SpatialAnalyzer(Config.load(overrides=['spatial.band_edges_hz=20,50,4000,16000']).spatial).describe(stereo, 44100)
     assert default.low_width < 0.01 and moved.low_width != default.low_width
+
+
+def test_singing_gate_drops_pitch_buried_under_accompaniment() -> None:
+    """First 2 s: the singer, louder than the band. Last 2 s: only a faint copy of an instrument in
+    the vocal stem while the band is loud. Pitch is kept for the first part and dropped for the second."""
+    from musicdna.features.vocal import VocalPitchAnalyzer
+    t = np.arange(2 * RATE) / RATE
+    sung = 0.3 * np.sin(2 * np.pi * 220 * t)
+    leak = 0.01 * np.sin(2 * np.pi * 330 * t)             # audible on its own (-43 dBFS) but 34 dB under the band
+    vocals = np.concatenate([sung, leak]).astype(np.float32)
+    band = (0.5 * np.sin(2 * np.pi * 110 * np.arange(4 * RATE) / RATE)).astype(np.float32)
+    analyzer = VocalPitchAnalyzer()
+    contour = analyzer.track(vocals, RATE, band)
+    first, second = contour.semitones[: len(contour.semitones) // 2], contour.semitones[len(contour.semitones) // 2 + 5:]
+    assert np.mean(~np.isnan(first)) > 0.9
+    assert np.mean(~np.isnan(second)) < 0.05
+    assert analyzer.last_gate.reasons['buried_under_accompaniment'] > 0
+    ungated = VocalPitchAnalyzer(Config.load(overrides=['vocal.gate_enabled=false']).vocal).track(vocals, RATE, band)
+    assert np.mean(~np.isnan(ungated.semitones[len(ungated.semitones) // 2 + 5:])) > 0.5  # without the gate the leak is tracked

@@ -56,20 +56,78 @@ class VocalDescriptors:
         return {key: round(float(value), 4) for key, value in asdict(self).items()}
 
 
+@dataclass
+class GateReport:
+    tracked_frames: int      # frames pYIN called voiced
+    kept_frames: int         # of those, frames that passed the singing gate
+    reasons: dict[str, int]  # frames removed per rule
+
+    @property
+    def kept_fraction(self) -> float:
+        return self.kept_frames / self.tracked_frames if self.tracked_frames else 0.0
+
+    def to_dict(self) -> dict[str, float | int | dict[str, int]]:
+        return {'tracked_frames': self.tracked_frames, 'kept_frames': self.kept_frames,
+                'kept_fraction': round(self.kept_fraction, 4), 'removed_by': self.reasons}
+
+
+class SingingGate:
+    """Keeps a pitch frame only when it is plausibly the singer, not accompaniment leaking into the stem.
+
+    Example: the singer rests while a sarangi plays on. Demucs leaves a faint copy of the sarangi in
+    the vocal stem, pYIN tracks its pitch, and without a gate that melody would be measured as the
+    singer's intonation. In that frame the vocal stem is far quieter than the accompaniment
+    (e.g. -30 dB), so the gate (default -15 dB) removes it.
+    """
+
+    def __init__(self, settings: VocalConfig = DEFAULT.vocal) -> None:
+        self.settings = settings
+
+    def mask(self, voiced: np.ndarray, voiced_probability: np.ndarray, vocals: np.ndarray,
+             accompaniment: np.ndarray | None) -> tuple[np.ndarray, GateReport]:
+        s = self.settings
+        frames = len(voiced)
+        rms = lambda y: librosa.feature.rms(y=y, frame_length=1024, hop_length=s.hop)[0][:frames]  # noqa: E731
+        vocal_rms = rms(vocals)
+        rules = {
+            'quiet_vocal': 20 * np.log10(vocal_rms + 1e-9) < s.gate_min_vocal_dbfs,
+            'low_voicing_probability': voiced_probability < s.gate_min_voicing_probability,
+        }
+        if accompaniment is not None:
+            ratio_db = 20 * np.log10((vocal_rms + 1e-9) / (rms(accompaniment) + 1e-9))
+            rules['buried_under_accompaniment'] = ratio_db < s.gate_min_vocal_to_accompaniment_db
+        keep = voiced.copy()
+        reasons = {}
+        for name, rejected in rules.items():
+            reasons[name] = int((keep & rejected).sum())
+            keep &= ~rejected
+        return keep, GateReport(int(voiced.sum()), int(keep.sum()), reasons)
+
+
 class VocalPitchAnalyzer:
     """pYIN pitch tracking and per-window pitch-contour descriptors, configured by `VocalConfig`."""
 
     def __init__(self, settings: VocalConfig = DEFAULT.vocal) -> None:
         self.settings = settings
 
-    def track(self, vocals: np.ndarray, sample_rate: int) -> PitchContour:
-        """pYIN contour of a mono vocal stem."""
+    def track(self, vocals: np.ndarray, sample_rate: int, accompaniment: np.ndarray | None = None) -> PitchContour:
+        """pYIN contour of a mono vocal stem, singing-gated when `vocal.gate_enabled`.
+
+        accompaniment: the rest of the mix at the same rate (mix minus vocals). Without it only the
+        loudness and voicing rules apply. The gate's result is on `self.last_gate`.
+        """
         s = self.settings
         if sample_rate != s.sample_rate:
             vocals = librosa.resample(np.asarray(vocals, dtype=np.float32), orig_sr=sample_rate, target_sr=s.sample_rate)
-        f0, voiced, _ = librosa.pyin(vocals, fmin=s.fmin_hz, fmax=s.fmax_hz, sr=s.sample_rate,
-                                     frame_length=1024, hop_length=s.hop, resolution=s.pitch_resolution_cents / 100)
-        semitones = np.where(voiced, librosa.hz_to_midi(np.nan_to_num(f0, nan=1.0)), np.nan)
+            if accompaniment is not None:
+                accompaniment = librosa.resample(np.asarray(accompaniment, dtype=np.float32), orig_sr=sample_rate, target_sr=s.sample_rate)
+        f0, voiced, probability = librosa.pyin(vocals, fmin=s.fmin_hz, fmax=s.fmax_hz, sr=s.sample_rate, frame_length=1024,
+                                               hop_length=s.hop, resolution=s.pitch_resolution_cents / 100)
+        keep = voiced
+        self.last_gate = GateReport(int(voiced.sum()), int(voiced.sum()), {})
+        if s.gate_enabled:
+            keep, self.last_gate = SingingGate(s).mask(voiced, probability, vocals, accompaniment)
+        semitones = np.where(keep, librosa.hz_to_midi(np.nan_to_num(f0, nan=1.0)), np.nan)
         return PitchContour.from_semitones(semitones, s)
 
     def describe(self, contour: PitchContour, start_sec: float, end_sec: float) -> VocalDescriptors:

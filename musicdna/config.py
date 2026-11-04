@@ -63,6 +63,14 @@ class VocalConfig:
     # Pitch grid of the tracker. Never snapped to piano keys: 2 cents keeps the shape of slides and
     # vibrato (at 10 cents a held, vibrating note collapsed to 6 distinct values; at 2 cents, 28).
     pitch_resolution_cents: float = 2.0
+    # Singing gate: a frame counts as singing only if the vocal stem is not buried under the
+    # accompaniment. Instruments leaking into the stem (harmonium, sarangi) are otherwise read as voice.
+    # Calibrated on Garaj Baras 60-120 s: sung frames median -5 dB vocal-to-accompaniment, silent -51 dB;
+    # -15 dB drops the weakest 9% of frames the tracker called sung.
+    gate_enabled: bool = True
+    gate_min_vocal_to_accompaniment_db: float = -15.0
+    gate_min_vocal_dbfs: float = -50.0
+    gate_min_voicing_probability: float = 0.0   # off: pYIN gave median 0.21 even on real singing
 
 
 @dataclass(frozen=True)

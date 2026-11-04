@@ -60,7 +60,16 @@ class R02Experiment(R01Experiment):
         report = super().run(pairs)
         songs = sorted({p['corpus_video_id'] for p in pairs if p.get('corpus_video_id')})
         report['tonic'] = self.tonic_reliability(songs)
+        report['singing_gate'] = self.gate_summary(songs)
         return report
+
+    def gate_summary(self, songs: list[str]) -> dict[str, Any]:
+        """Share of tracked pitch frames kept as singing. Example: 0.91 means 9% of frames pYIN called
+        voiced were dropped as likely accompaniment leaking into the vocal stem."""
+        kept = [self.store.load_json(s, 'vocal_gate')['kept_fraction'] for s in songs if self.store.has(s, 'vocal_gate')]
+        return {'songs': len(kept),
+                'median_kept_fraction': round(float(np.median(kept)), 3) if kept else None,
+                'lowest_kept_fraction': round(float(np.min(kept)), 3) if kept else None}
 
     def tonic_reliability(self, songs: list[str]) -> dict[str, Any]:
         """Detection confidence, and error against hand-annotated tonics where they exist."""
