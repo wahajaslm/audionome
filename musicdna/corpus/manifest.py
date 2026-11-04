@@ -70,15 +70,16 @@ class CorpusManifest:
             raise FileNotFoundError(f'{entry.video_id} has not been downloaded')
         return audio_directory / entry.audio_file
 
-    def download(self, audio_directory: Path = AUDIO_DIRECTORY) -> list[str]:
+    def download(self, audio_directory: Path = AUDIO_DIRECTORY, ydl_options: dict[str, Any] | None = None) -> list[str]:
         """Fetches each entry's original audio stream with yt-dlp (no re-encoding) and records its
-        checksum. Returns failures."""
+        checksum. Returns failures. `ydl_options` adds yt-dlp options (e.g. browser cookies)."""
         import yt_dlp
         audio_directory.mkdir(parents=True, exist_ok=True)
         options = {
             'format': 'bestaudio[ext=m4a]/bestaudio',
             'outtmpl': str(audio_directory / '%(id)s.%(ext)s'),
             'quiet': True, 'no_warnings': True, 'noprogress': True,
+            **(ydl_options or {}),
         }
         failures: list[str] = []
         with yt_dlp.YoutubeDL(options) as client:

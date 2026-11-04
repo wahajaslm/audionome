@@ -20,3 +20,4 @@ data/coke_studio/features/
 research-output/
 data/genre_mix/audio/
 data/genre_mix/features/
+data/genre_mix/likes_cache.json

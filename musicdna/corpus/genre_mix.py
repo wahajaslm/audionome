@@ -21,8 +21,9 @@ Generic loading, saving, download and checksums live in `musicdna.corpus.manifes
 """
 from __future__ import annotations
 import argparse
+import json
 import re
-from concurrent.futures import ThreadPoolExecutor
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from statistics import median
@@ -34,7 +35,13 @@ from musicdna.paths import PROJECT_ROOT
 GENRE_MIX_DIR = PROJECT_ROOT / 'data' / 'genre_mix'
 MANIFEST_PATH = GENRE_MIX_DIR / 'manifest.json'
 AUDIO_DIRECTORY = GENRE_MIX_DIR / 'audio'
+LIKES_CACHE = GENRE_MIX_DIR / 'likes_cache.json'
 MANIFEST_VERSION = 1
+# RATE LIMIT FIX - 4 parallel like lookups for ~60 songs per genre made YouTube answer "Sign in
+# to confirm you're not a bot" after two genres, and every later song was silently dropped
+# ("0 songs found"). Lookups now run one at a time with a pause, are saved to LIKES_CACHE so a
+# re-run only looks up new songs, and a block stops the run with a clear message.
+LOOKUP_PAUSE_SEC = 2.0
 
 TIERS = ('top', 'middle', 'low', 'underrated')
 
@@ -104,8 +111,8 @@ class GenreMixManifest(CorpusManifest):
     def save(self, path=MANIFEST_PATH) -> None:  # type: ignore[override]
         super().save(path)
 
-    def download(self, audio_directory=AUDIO_DIRECTORY) -> list[str]:  # type: ignore[override]
-        return super().download(audio_directory)
+    def download(self, audio_directory=AUDIO_DIRECTORY, ydl_options=None) -> list[str]:  # type: ignore[override]
+        return super().download(audio_directory, ydl_options)
 
     def verify(self, audio_directory=AUDIO_DIRECTORY) -> list[str]:  # type: ignore[override]
         return super().verify(audio_directory)
@@ -158,8 +165,17 @@ def assign_tiers(pool: list[GenreMixEntry], per_tier: int) -> list[GenreMixEntry
     return sorted(picked, key=lambda e: TIERS.index(e.tier))
 
 
+class YouTubeBlocked(RuntimeError):
+    """YouTube asked to sign in ("not a bot"): stop instead of dropping every song."""
+
+
 class GenreMixCatalog:
     """Searches YouTube per genre, keeps single songs, looks up likes and assigns tiers."""
+
+    def __init__(self, ydl_options: dict[str, Any] | None = None) -> None:
+        # Extra yt-dlp options, e.g. {'cookiesfrombrowser': ('chrome',)} (--cookies-from-browser).
+        self.ydl_options = ydl_options or {}
+        self.likes: dict[str, int | None] = json.loads(LIKES_CACHE.read_text()) if LIKES_CACHE.exists() else {}
 
     def build_manifest(self, per_tier: int, genres: list[str] | None = None) -> GenreMixManifest:
         names = genres or list(GENRES)
@@ -192,9 +208,14 @@ class GenreMixCatalog:
                     continue
                 seen_titles.add(key)
                 found[video['id']] = (video, query)
-        # Likes are not in search results: one lookup per song, a few at a time.
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            likes = dict(zip(found, pool.map(self.like_count, found)))
+        # Likes are not in search results: one lookup per new song, one at a time (RATE LIMIT FIX).
+        for video_id in found:
+            if video_id not in self.likes:
+                self.likes[video_id] = self.like_count(video_id)
+                LIKES_CACHE.parent.mkdir(parents=True, exist_ok=True)
+                LIKES_CACHE.write_text(json.dumps(self.likes))
+                time.sleep(LOOKUP_PAUSE_SEC)
+        likes = {video_id: self.likes[video_id] for video_id in found}
         entries = []
         for video_id, (video, query) in found.items():
             if likes[video_id] is None:
@@ -208,21 +229,24 @@ class GenreMixCatalog:
             ))
         return entries
 
-    @staticmethod
-    def search(query: str) -> list[dict[str, Any]]:
+    def search(self, query: str) -> list[dict[str, Any]]:
         import yt_dlp
-        with yt_dlp.YoutubeDL({'extract_flat': 'in_playlist', 'quiet': True, 'no_warnings': True}) as client:
+        options = {'extract_flat': 'in_playlist', 'quiet': True, 'no_warnings': True, **self.ydl_options}
+        with yt_dlp.YoutubeDL(options) as client:
             info = client.extract_info(f'ytsearch{SEARCH_RESULTS_PER_QUERY}:{query}', download=False)
         return [e for e in info.get('entries') or [] if e and e.get('id')]
 
-    @staticmethod
-    def like_count(video_id: str) -> int | None:
+    def like_count(self, video_id: str) -> int | None:
+        """Like count, or None when the video is gone (private, removed, region-blocked)."""
         import yt_dlp
         try:
-            with yt_dlp.YoutubeDL({'quiet': True, 'no_warnings': True, 'skip_download': True}) as client:
+            options = {'quiet': True, 'no_warnings': True, 'skip_download': True, **self.ydl_options}
+            with yt_dlp.YoutubeDL(options) as client:
                 info = client.extract_info(f'https://www.youtube.com/watch?v={video_id}', download=False)
             return int(info.get('like_count') or 0)
-        except Exception:
+        except Exception as error:
+            if 'not a bot' in str(error) or 'Sign in to confirm' in str(error):
+                raise YouTubeBlocked(str(error)) from error
             return None
 
 
@@ -232,12 +256,21 @@ def main() -> None:
     select_parser = commands.add_parser('select', help='Build the manifest from YouTube search results')
     select_parser.add_argument('--per-tier', type=int, default=2)
     select_parser.add_argument('--genres', nargs='*', choices=list(GENRES), help='Default: all genres')
-    commands.add_parser('download', help='Fetch audio for every manifest entry')
+    download_parser = commands.add_parser('download', help='Fetch audio for every manifest entry')
+    for sub in (select_parser, download_parser):
+        sub.add_argument('--cookies-from-browser', metavar='BROWSER',
+                         help="Use this browser's YouTube sign-in (chrome, safari, firefox, ...) if YouTube blocks requests")
     commands.add_parser('verify', help='Check every file exists and matches its checksum')
     arguments = parser.parse_args()
 
+    browser = getattr(arguments, 'cookies_from_browser', None)
+    ydl_options = {'cookiesfrombrowser': (browser,)} if browser else {}
     if arguments.command == 'select':
-        manifest = GenreMixCatalog().build_manifest(arguments.per_tier, arguments.genres)
+        try:
+            manifest = GenreMixCatalog(ydl_options).build_manifest(arguments.per_tier, arguments.genres)
+        except YouTubeBlocked:
+            raise SystemExit('YouTube is blocking requests ("not a bot"). Lookups done so far are saved in '
+                             f'{LIKES_CACHE}. Wait a few hours, or re-run with --cookies-from-browser chrome.')
         manifest.save()
         for e in manifest.entries:
             assert isinstance(e, GenreMixEntry)
@@ -245,7 +278,7 @@ def main() -> None:
         print(f'{len(manifest.entries)} songs -> {MANIFEST_PATH}')
     elif arguments.command == 'download':
         manifest = GenreMixManifest.load()
-        failures = manifest.download()
+        failures = manifest.download(ydl_options=ydl_options)
         manifest.save()
         print('\n'.join(failures) or 'All downloads complete.')
     else:
