@@ -38,6 +38,9 @@ export function withTags(m: Moment, feel: string[], love: string[], note: string
 /** One-line description used in lists: "Vocals · Melody", or "Saved moment". */
 export const describeMoment = (m: Pick<Moment, 'qualities'>) => (m.qualities || []).join(' · ') || 'Saved moment';
 
+/** The three automatic collections (classic COLLS), filled from what the listener said. */
+export const COLLECTIONS = ['Moments that give me chills', 'Moments that remind me of home', 'Beautiful melodies'];
+
 /** Collections a moment belongs to: 0 chills, 1 nostalgia/home, 2 melodies. */
 export function collectionsOf(m: Pick<Moment, 'feelings' | 'qualities'>): number[] {
   return [
@@ -46,6 +49,27 @@ export function collectionsOf(m: Pick<Moment, 'feelings' | 'qualities'>): number
     ...(m.qualities || []).includes('Melody') ? [2] : [],
   ];
 }
+
+/**
+ * My Moments tab filter: tab 0 is "All moments", tab i is collection i - 1.
+ * Example: a moment felt as 'Chills' shows under tab 0 and tab 1.
+ */
+export function inTab(m: Pick<Moment, 'feelings' | 'qualities'>, tab: number): boolean {
+  return tab === 0 || collectionsOf(m).includes(tab - 1);
+}
+
+/**
+ * Editing a saved moment from My Moments: unlike withTags (which only adds, for the ask row),
+ * an edit replaces feelings, qualities and note with exactly what the listener left pressed.
+ * Example: unpressing 'Vocals' on ['Vocals', 'Melody'] saves ['Melody'] — and the DNA ring
+ * loses that vocal moment, because the ring only counts what you labelled.
+ */
+export function withEdits(m: Moment, feelings: string[], qualities: string[], note: string): Moment {
+  return { ...m, feelings: [...new Set(feelings)], qualities: [...new Set(qualities)], note: note.trim() };
+}
+
+/** Total seconds of a list of moments ("Play 4 moments · 1:12"). */
+export const totalSeconds = (list: Pick<Moment, 'startSec' | 'endSec'>[]) => list.reduce((s, m) => s + (m.endSec - m.startSec), 0);
 
 export interface SavedRange extends Range { id: string }
 

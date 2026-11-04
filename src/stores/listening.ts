@@ -2,7 +2,9 @@ import { defineStore } from 'pinia';
 import { markRaw, ref } from 'vue';
 import type { EventKind, ListeningEvent } from '../data/types';
 import { ListeningLog, readMediaTime, type ExtraFields } from '../core/listening';
-import { eventSink, getSetting, putSetting } from '../core/repository';
+import { clearListeningEvents, downloadProfile, eventSink, getSetting, putSetting } from '../core/repository';
+import { useMomentFlowStore } from './momentFlow';
+import { useUiStore } from './ui';
 import { usePlaybackStore } from './playback';
 import { useIntelligenceStore } from './intelligence';
 
@@ -38,10 +40,31 @@ export const useListeningStore = defineStore('listening', () => {
     learning.value = pref === undefined ? true : pref === true;
   }
 
+  /**
+   * The Learning / private listening switch (Settings and My Music DNA). Both keys are written so
+   * the classic player reads the same answer. Pausing also closes any open question.
+   * Example: off → no seek / loop / volume events are stored and no attention hints are shown.
+   */
   async function setLearning(on: boolean): Promise<void> {
     learning.value = on;
     await putSetting('learning', on);
+    await putSetting('privateListening', on);
+    if (!on) { const flow = useMomentFlowStore(); flow.ask = null; flow.nudge = false; }
+    useUiStore().notify(on ? 'Private listening insights enabled' : 'Private listening insights paused');
   }
 
-  return { learning, log, mediaTime, emit, openSpan, flushSpan, loadSettings, setLearning };
+  /** Erases the listening log (saved moments stay) and recomputes attention hints. */
+  async function clearHistory(): Promise<void> {
+    await clearListeningEvents();
+    await useIntelligenceStore().refresh();
+    useUiStore().notify('Listening event history cleared');
+  }
+
+  /** Downloads the profile JSON (no audio). */
+  async function exportProfile(): Promise<void> {
+    await downloadProfile();
+    useUiStore().notify('Profile exported; audio files are not included.');
+  }
+
+  return { learning, log, mediaTime, emit, openSpan, flushSpan, loadSettings, setLearning, clearHistory, exportProfile };
 });

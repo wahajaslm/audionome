@@ -8,15 +8,17 @@ import { useLibraryStore } from '../../stores/library';
 import Icon, { type IconName } from '../../ui/Icon.vue';
 import NavItem from '../../ui/NavItem.vue';
 import ProgressRail from '../../ui/ProgressRail.vue';
+import { COLLECTIONS } from '../../core/moments';
+import { useListeningStore } from '../../stores/listening';
 
 // NavItem rule: the five places in README order (Now playing, Library, My Moments, Discover,
-// My Music DNA). "Stream & Web" sits in Discover's slot with the compass icon until the
-// Discover screen is ported (phase 2). `short` is the tab-bar label (< 820px).
+// My Music DNA), then Collections. `short` is the tab-bar label (< 820px). Settings and Feature
+// analysis are secondary links on desktop; on phones they are reached from My Music DNA.
 const navItems: { to: string; label: string; short: string; icon: IconName }[] = [
   { to: '/', label: 'Now playing', short: 'Playing', icon: 'wave' },
   { to: '/library', label: 'Library', short: 'Library', icon: 'library' },
   { to: '/moments', label: 'My Moments', short: 'Moments', icon: 'heart' },
-  { to: '/stream', label: 'Stream & Web', short: 'Stream', icon: 'compass' },
+  { to: '/discover', label: 'Discover', short: 'Discover', icon: 'compass' },
   { to: '/dna', label: 'My Music DNA', short: 'DNA', icon: 'dna' },
 ];
 
@@ -26,6 +28,8 @@ const playback = usePlaybackStore();
 const library = useLibraryStore();
 const { moments } = storeToRefs(useMomentsStore());
 const onPlayer = computed(() => route.path === '/');
+const { learning } = storeToRefs(useListeningStore());
+const collectionCurrent = (i: number) => route.path === '/moments' && Number(route.query.c) === i + 1;
 const badge = (to: string) => (to === '/moments' ? moments.value.length : to === '/library' ? library.tracks.length : undefined);
 </script>
 
@@ -44,6 +48,25 @@ const badge = (to: string) => (to === '/moments' ? moments.value.length : to ===
         :badge="badge(item.to)"
         @click="router.push(item.to)"
       />
+    </nav>
+
+    <!-- Shell rule: Collections follow the five places (desktop only). -->
+    <nav class="secondary" aria-label="Collections">
+      <div class="sec-title caption">Collections</div>
+      <button
+        v-for="(c, i) in COLLECTIONS"
+        :key="c"
+        type="button"
+        class="sec-link label"
+        :aria-current="collectionCurrent(i) ? 'page' : undefined"
+        @click="router.push({ path: '/moments', query: { c: String(i + 1) } })"
+      >{{ c }}</button>
+    </nav>
+    <nav class="secondary" aria-label="More">
+      <button type="button" class="sec-link label" :aria-current="route.path === '/settings' ? 'page' : undefined" @click="router.push('/settings')">
+        Settings<span v-if="!learning" class="paused caption">Learning paused</span>
+      </button>
+      <button type="button" class="sec-link label" :aria-current="route.path === '/admin' ? 'page' : undefined" @click="router.push('/admin')">Feature analysis</button>
     </nav>
 
     <!-- NavItem rule: the mini player shows only when away from the player and returns to
@@ -100,6 +123,15 @@ const badge = (to: string) => (to === '/moments' ? moments.value.length : to ===
   flex-direction: column;
   gap: calc(var(--space-1) / 2);
 }
+.secondary { display: flex; flex-direction: column; gap: 2px; }
+.sec-title { color: var(--ink-mute); padding: 0 var(--space-3) var(--space-1); }
+.sec-link {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+  min-height: 34px; padding: 0 var(--space-3); border: 0; border-radius: var(--radius-sm);
+  background: none; color: var(--ink-sub); text-align: left; cursor: pointer;
+}
+.sec-link:hover, .sec-link[aria-current='page'] { background: var(--bg-raise); color: var(--ink); }
+.paused { color: var(--ink-mute); }
 .mini {
   margin-top: auto;
   display: flex;
@@ -198,7 +230,7 @@ const badge = (to: string) => (to === '/moments' ? moments.value.length : to ===
     gap: 0;
     flex-direction: column-reverse;
   }
-  .brand {
+  .brand, .secondary {
     display: none;
   }
   .nav-menu {

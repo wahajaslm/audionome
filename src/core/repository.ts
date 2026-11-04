@@ -2,12 +2,39 @@
  * Data access for the Vue app. Stores call these; components never touch Dexie directly.
  * Same database ('music-dna-v1') and row shapes as index.html, so both UIs share data.
  */
-import { db, ensureDemo } from '../data/db';
+import { db, ensureDemo, exportProfile, importFiles } from '../data/db';
+import { deleteTrackFromSQLite } from '../intelligence/client';
 import type { ListeningEvent, Moment, MomentRating, Track, TrackAnalysis } from '../data/types';
 import { SERVICE } from './library';
 import { toDbMoment } from './moments';
 
 export { ensureDemo };
+
+/** Imports audio files into Dexie `tracks` (same rows as the classic importer). Non-audio files are skipped. */
+export const importAudioFiles = (files: FileList | File[]): Promise<Track[]> => importFiles(files);
+
+/**
+ * Downloads the profile JSON ('music-dna-profile.json'): tracks without audio, moments, events,
+ * settings, ratings, analyses. Audio files are never included.
+ */
+export const downloadProfile = (): Promise<void> => exportProfile();
+
+/**
+ * Removes a song and everything derived from it: its analyses and saved moments here, and the
+ * service's copy (silently skipped when the service is off). Same as the classic 'deltrack'.
+ */
+export async function deleteTrackEverywhere(id: string): Promise<void> {
+  await db.tracks.delete(id);
+  await db.analyses.where('trackId').equals(id).delete();
+  await db.moments.where('trackId').equals(id).delete();
+  await deleteTrackFromSQLite(id);
+}
+
+/** "I like it" / "Not for me" on a suggestion. */
+export const putRating = (r: MomentRating) => db.ratings.put(r);
+
+/** Erases the private listening log; saved moments, ratings and settings are kept. */
+export const clearListeningEvents = () => db.events.clear();
 
 /** Newest first, like the classic Library. */
 export const loadTracks = (): Promise<Track[]> => db.tracks.orderBy('addedAt').reverse().toArray();

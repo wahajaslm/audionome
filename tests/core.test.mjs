@@ -250,3 +250,79 @@ test('moments: tags merge without losing earlier ones; rows keep index.html\'s f
   assert.equal(row.updatedAt, 99);
   assert.deepEqual(savedRanges([row], 't1'), [{ id: 'm1', a: 10, b: 20 }]);
 });
+
+// ---------- phase 2: rules behind Library, My Moments, Discover, My Music DNA, Feature analysis ----------
+import { computeTraits, traitShare, traitLevel, levelWord, ringLayout, portraitParts, evidenceNote, withoutTrait } from '../src/core/dna.ts';
+import { suggestionFamily, whyLine, ratingRow, ratingOf, DISCOVER_TABS } from '../src/core/discover.ts';
+import { visibleWindows, slopeTag, windowSummary, dmerRows, studioUrl } from '../src/core/diagnostics.ts';
+import { inTab, withEdits, totalSeconds, COLLECTIONS } from '../src/core/moments.ts';
+
+const mo = (id, qualities = [], feelings = [], trackId = 't1', startSec = 10, endSec = 20) =>
+  ({ id, trackId, startSec, endSec, qualities, feelings, note: '', createdAt: 1, updatedAt: 1 });
+
+test('dna: traits count only labelled qualities; shares and levels follow the classic rules', () => {
+  const traits = computeTraits([mo('a', ['Vocals', 'Melody']), mo('b', ['Lyrics']), mo('c', ['Vocals']), mo('d', [])]);
+  assert.deepEqual(traits.map(t => t.n), [3, 1, 0, 0]);
+  const total = traits.reduce((n, t) => n + t.n, 0);
+  assert.equal(traitShare(traits[0].n, total), 75);
+  assert.equal(traitShare(0, 0), 0, 'empty portrait is 0 %, never invented');
+  assert.deepEqual([0, 1, 2, 5, 8].map(traitLevel), [0, 1, 2, 3, 4]);
+  assert.equal(levelWord(8), 'Strong match');
+  assert.equal(levelWord(0), 'Not heard yet');
+});
+
+test('dna: ring geometry — 3 ticks per moment (min 2) plus 3-tick gaps; label sits at arc midpoint', () => {
+  const traits = computeTraits([mo('a', ['Vocals'])]);
+  const { ticks, labels } = ringLayout(traits, 0);
+  assert.equal(ticks.length, 3 + 2 + 2 + 2 + 4 * 3);
+  assert.equal(ticks.filter(t => t.tone === 'selected').length, 3);
+  assert.equal(labels[0].pct, 100);
+  assert.equal(ringLayout(traits, -1).ticks.filter(t => t.tone === 'idle').length, 3, 'nothing selected → idle tone');
+});
+
+test('dna: portrait repeats what you labelled and asks; correction removes only that trait', () => {
+  const traits = computeTraits([mo('a', ['Vocals']), mo('b', ['Vocals']), mo('c', ['Harmony'])]);
+  const text = portraitParts(traits).map(p => p.text).join('');
+  assert.equal(text, 'In your saved moments, you often mention vocals and harmony. Is that what draws you in?');
+  assert.equal(portraitParts(computeTraits([])).length, 1);
+  assert.equal(evidenceNote(mo('x', ['Vocals', 'Melody'], ['Chills']), traits[0]), 'You marked vocals · felt: Chills');
+  assert.deepEqual(withoutTrait(mo('x', ['Vocals', 'Lyrics', 'Melody']), traits[0]).qualities, ['Melody']);
+});
+
+test('discover: family from the anchoring moment, honest why line, rating id replaces earlier answer', () => {
+  const moments = [mo('a', ['Melody'], [], 't1', 10, 20)];
+  assert.equal(suggestionFamily({ matchingMoment: { trackId: 't1', startSec: 12, endSec: 18 } }, moments), 1);
+  assert.equal(suggestionFamily({}, moments), -1);
+  assert.equal(DISCOVER_TABS.length, 5);
+  assert.match(whyLine('First Light'), /one of your saved passages in First Light/);
+  const r = ratingRow({ trackId: 't2', startSec: 12, endSec: 24 }, 'like', 5);
+  assert.deepEqual(r, { id: 't2:12', trackId: 't2', startSec: 12, endSec: 24, value: 'like', createdAt: 5 });
+  assert.equal(ratingOf({ trackId: 't2', startSec: 12 }, [r]), 'like');
+});
+
+test('moments: collections tabs, edits replace tags, total length', () => {
+  assert.equal(COLLECTIONS.length, 3);
+  assert.ok(inTab(mo('a', [], ['Chills']), 1));
+  assert.ok(!inTab(mo('a', [], ['Chills']), 2));
+  assert.ok(inTab(mo('a', ['Melody']), 3));
+  const e = withEdits(mo('a', ['Vocals', 'Melody'], ['Calm']), [], ['Melody'], '  riff ');
+  assert.deepEqual([e.feelings, e.qualities, e.note], [[], ['Melody'], 'riff']);
+  assert.equal(totalSeconds([mo('a'), mo('b')]), 20);
+});
+
+test('diagnostics: windows follow the selection, slope words, summary values, offline-safe baselines', () => {
+  const seg = (i) => ({ startSec: i * 4, endSec: i * 4 + 4, descriptors: { energy: 0.1, brightness_hz: 1500.4, onset_activity: 0.2, noisiness: 0.01, zero_crossing_rate: 0.05, energy_slope: 0.12, vocal_presence: 0.456 }, embedding: [0.1, -0.2] });
+  const segs = Array.from({ length: 30 }, (_, i) => seg(i));
+  assert.deepEqual(visibleWindows(segs, { a: 10, b: 18 }, false).map(x => x.i), [2, 3, 4]);
+  assert.equal(visibleWindows(segs, { a: 500, b: 510 }, false).length, 6, 'no overlap → first six');
+  assert.equal(visibleWindows(segs, { a: 0, b: 1 }, true).length, 30);
+  assert.equal(slopeTag(0.12), 'Intensifying (+0.12/s)');
+  assert.equal(slopeTag(-0.05), 'Decaying (-0.05/s)');
+  assert.equal(slopeTag(0.01), 'Steady (0.01/s)');
+  const s = windowSummary(segs[0]);
+  assert.equal(s.vocalPct, 46);
+  assert.equal(s.brightnessHz, 1500);
+  assert.equal(s.chroma.length, 12);
+  assert.deepEqual(dmerRows(undefined), []);
+  assert.match(studioUrl('original-demo'), /\/api\/studio\/demo$/);
+});

@@ -2,7 +2,9 @@ import { defineStore } from 'pinia';
 import { computed, shallowRef } from 'vue';
 import type { Moment } from '../data/types';
 import { deleteMoment, loadMoments, putMoment } from '../core/repository';
-import { newMoment, savedRanges, withTags } from '../core/moments';
+import { newMoment, savedRanges, withEdits, withTags } from '../core/moments';
+import { withoutTrait, type TraitDefinition } from '../core/dna';
+import { useUiStore } from './ui';
 import type { Range } from '../core/playback';
 import { useIntelligenceStore } from './intelligence';
 import { useLibraryStore } from './library';
@@ -57,11 +59,49 @@ export const useMomentsStore = defineStore('moments', () => {
     return updated.qualities;
   }
 
+  /** My Moments "Edit": replaces feelings, qualities and note with what was left pressed. */
+  function edit(id: string, feelings: string[], qualities: string[], note: string): void {
+    const m = moments.value.find(x => x.id === id);
+    if (!m) return;
+    const updated = withEdits(m, feelings, qualities, note);
+    moments.value = moments.value.map(x => (x.id === id ? updated : x));
+    persist(updated);
+    useUiStore().notify('Moment updated' + (updated.qualities.length ? ' · ' + updated.qualities.join(', ') : ''));
+  }
+
+  /**
+   * My Music DNA "Correct": this moment no longer counts for that trait. Only the trait's
+   * labels are removed; the moment, its feelings and its other qualities stay.
+   */
+  function correctTrait(id: string, trait: Pick<TraitDefinition, 'keys' | 'short'>): void {
+    const m = moments.value.find(x => x.id === id);
+    if (!m) return;
+    const updated = withoutTrait(m, trait);
+    moments.value = moments.value.map(x => (x.id === id ? updated : x));
+    persist(updated);
+    useUiStore().notify('Removed ' + trait.short + ' from this moment.');
+  }
+
+  /** Plays one moment: opens it in the player with the passage selected and plays it once. */
+  async function play(m: Moment, toggle = true): Promise<void> {
+    const playback = usePlaybackStore();
+    if (!useLibraryStore().track(m.trackId)) { useUiStore().notify('This song is no longer in your library.'); return; }
+    playback.queue = [];
+    await playback.openRange(m.startSec, m.endSec, m.trackId, toggle);
+  }
+
+  /** "Play N moments": the passages play back to back (the preview end of each starts the next). */
+  async function playAll(list: Moment[]): Promise<void> {
+    const playable = list.filter(m => useLibraryStore().track(m.trackId));
+    if (!playable.length) { useUiStore().notify('Save a moment first.'); return; }
+    await usePlaybackStore().playQueue(playable.map(m => ({ a: m.startSec, b: m.endSec, trackId: m.trackId })));
+  }
+
   async function remove(id: string): Promise<void> {
     await deleteMoment(id);
     await load();
     await useIntelligenceStore().refresh();
   }
 
-  return { moments, savedForCurrent, load, add, addForTrack, applyTags, remove };
+  return { moments, savedForCurrent, load, add, addForTrack, applyTags, edit, correctTrait, play, playAll, remove };
 });
