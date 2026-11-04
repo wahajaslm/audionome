@@ -114,6 +114,66 @@ def resolve_stream(url: str) -> dict[str, Any]:
         ) from exc
 
 
+# PLAYLIST IMPORT - a playlist link used to open only its first song (noplaylist). This lists
+# every song of a YouTube or SoundCloud playlist without downloading anything (a "flat"
+# extraction is one request), so the app can add them all to Library at once. Each song is
+# resolved and downloaded later, when it is played or analysed (GET /api/stream/audio/{id}).
+# Example: https://www.youtube.com/playlist?list=PL… with 25 videos -> 25 entries, ids
+# 'youtube-<videoId>', the same ids resolve_stream() gives those videos one by one.
+PLAYLIST_LIMIT = 200
+_UNAVAILABLE_TITLES = ('[private video]', '[deleted video]', '[unavailable video]')
+
+
+def expand_playlist(url: str) -> dict[str, Any]:
+    """Lists the songs of a playlist link. `entries` is empty when the link is a single song."""
+    if detect_source(url) == 'direct':
+        return {'title': '', 'entries': []}
+    opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': 'in_playlist',
+        'skip_download': True,
+        'socket_timeout': 10,
+        'playlistend': PLAYLIST_LIMIT,
+    }
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False) or {}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Unable to read playlist '{url}': {exc}") from exc
+    if info.get('_type') != 'playlist':
+        return {'title': '', 'entries': []}
+
+    entries: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for e in info.get('entries') or []:
+        if not e or not e.get('id'):
+            continue
+        title = e.get('title') or 'Unknown Title'
+        if title.lower() in _UNAVAILABLE_TITLES:
+            continue
+        link = e.get('webpage_url') or e.get('url') or ''
+        if not link.startswith('http'):
+            if detect_source(url) != 'youtube':
+                continue
+            link = f"https://www.youtube.com/watch?v={e['id']}"
+        source = detect_source(link)
+        track_id = f"{source}-{e['id']}"
+        if track_id in seen:
+            continue
+        seen.add(track_id)
+        entries.append({
+            'id': track_id,
+            'source': source,
+            'title': title,
+            'artist': e.get('uploader') or e.get('channel') or e.get('artist') or info.get('uploader') or 'Online Artist',
+            # 0 = not known yet; the player corrects it once the song loads.
+            'durationSec': float(e.get('duration') or 0),
+            'originalUrl': link,
+        })
+    return {'title': info.get('title') or 'Playlist', 'entries': entries}
+
+
 # STREAM CACHE FIX - analysis reads audio from the service's cache, but a streamed song was
 # never written there, so "Analyze" failed with "audio not found". Resolving a link now saves
 # the audio to the cache in the background, and analysis waits for that download.

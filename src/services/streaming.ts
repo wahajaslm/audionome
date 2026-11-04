@@ -52,6 +52,30 @@ export async function resolveStreamUrl(url: string): Promise<StreamResolvedMetad
   return res.json();
 }
 
+export interface PlaylistEntry {
+  id: string;
+  source: StreamResolvedMetadata['source'];
+  title: string;
+  artist: string;
+  /** 0 when the playlist did not say; the player corrects it once the song loads. */
+  durationSec: number;
+  originalUrl: string;
+}
+
+/**
+ * Lists the songs of a YouTube or SoundCloud playlist (PLAYLIST IMPORT, see
+ * musicdna/service/streaming.py). Nothing is downloaded. `entries` is empty for a single song.
+ */
+export async function expandPlaylist(url: string): Promise<{ title: string; entries: PlaylistEntry[] }> {
+  const res = await fetch(`${ENDPOINT}/api/stream/playlist`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: url.trim() })
+  });
+  if (!res.ok) throw new Error(`Playlist listing failed (${res.status})`);
+  return res.json();
+}
+
 /**
  * The one URL a streamed song plays from (ONE DOWNLOAD FIX, see musicdna/service/app.py):
  * the service's cached copy when it has one, else the live stream while it caches.

@@ -24,7 +24,7 @@ const intelligence = useIntelligenceStore();
 const playback = usePlaybackStore();
 const ui = useUiStore();
 const router = useRouter();
-const { tracks, analyzing, rightsAsk, autoAnalyze } = storeToRefs(library);
+const { tracks, analyzing, rightsAsk, autoAnalyze, analysisQueue } = storeToRefs(library);
 
 const fileInput = ref<HTMLInputElement | null>(null);
 const showStream = ref(false);
@@ -108,7 +108,7 @@ async function remove(id: string) {
     </p>
 
     <template v-if="jobs.length">
-      <h2 class="sh heading">Analysis in progress</h2>
+      <h2 class="sh heading">Analysis in progress<template v-if="analysisQueue.length"> · {{ analysisQueue.length }} queued</template></h2>
       <ol class="list">
         <li v-for="j in jobs" :key="j.id" class="lrow" role="status">
           <div class="info">
@@ -161,6 +161,7 @@ async function remove(id: string) {
             </div>
           </div>
           <span v-if="analyzing[t.id]" class="state label">Analysing…</span>
+          <span v-else-if="analysisQueue.includes(t.id)" class="state label">Queued</span>
           <template v-else-if="analysisOf(t.id)">
             <span class="state label">Analysed</span>
             <Button size="sm" class="hide-phone" @click="router.push({ path: '/admin', query: { track: t.id } })">Anatomy →</Button>

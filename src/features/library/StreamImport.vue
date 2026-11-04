@@ -23,10 +23,11 @@ async function open() {
   const url = streamUrl.value.trim();
   if (!url) { ui.notify('Paste a YouTube, SoundCloud or audio link first.'); return; }
   try {
-    await library.openStream(url);
+    const kind = await library.openLink(url);
     streamUrl.value = '';
     emit('close');
-    router.push('/');
+    // One song opens in the player; a playlist stays in Library, where its songs just appeared.
+    if (kind === 'song') router.push('/');
   } catch { /* the store already showed the error toast */ }
 }
 </script>
@@ -34,16 +35,16 @@ async function open() {
 <template>
   <section class="stream" aria-label="Add from a link">
     <p class="lead label">
-      Paste a YouTube, SoundCloud or direct audio link. It opens in the player with its waveform, so
-      you can save moments from it. Streams are not assumed to be analysable.
+      Paste a YouTube, SoundCloud or direct audio link. A song opens in the player with its waveform,
+      so you can save moments from it. A playlist adds all its songs to Library at once.
     </p>
     <div class="input-row">
       <input
         v-model="streamUrl"
         type="url"
         class="in body"
-        aria-label="Audio or video link"
-        placeholder="Paste a YouTube, SoundCloud or audio link…"
+        aria-label="Song or playlist link"
+        placeholder="Paste a song or playlist link…"
         :disabled="isResolvingStream"
         @keyup.enter="open"
       />

@@ -9,13 +9,20 @@ import type { PlayableTrack } from '../core/library';
 import { useUiStore } from './ui';
 import { useIntelligenceStore } from './intelligence';
 import { usePlaybackStore } from './playback';
-import { listenToAnalysisStream, resolveStreamUrl, streamAudioUrl } from '../services/streaming';
+import { expandPlaylist, listenToAnalysisStream, resolveStreamUrl, streamAudioUrl } from '../services/streaming';
 
 /** Tracks in the library and the local analysis jobs running on them. */
 /** Model id of the quick analysis a link gets while it plays; the full analysis replaces it. */
 const QUICK_STREAM_MODEL = 'streaming-progressive-dsp';
 /** True for the quick pass (made here, or saved by the service with a ':quick' model id). */
 const isQuick = (a: { modelId: string }) => a.modelId === QUICK_STREAM_MODEL || a.modelId.endsWith(':quick');
+/**
+ * How many songs the background queue analyses at once. Each full analysis can separate stems
+ * and run CLAP, so more than 2 at a time risks running the service out of memory.
+ */
+const ANALYSIS_WORKERS = 2;
+/** The queue stops after this many failures in a row: the service is most likely off. */
+const QUEUE_MAX_FAILS = 3;
 
 export const useLibraryStore = defineStore('library', () => {
   const tracks = shallowRef<PlayableTrack[]>([]);
@@ -145,11 +152,45 @@ export const useLibraryStore = defineStore('library', () => {
     return added;
   }
 
-  /** Sends imported songs to the service one by one, then runs the window analysis one by one. */
+  /** Sends imported songs to the service one by one, then queues their analysis. */
   async function syncImported(ids: string[]): Promise<void> {
     for (const id of ids) { const t = track(id); if (t) await uploadAudioToCache(t).catch(() => { }); }
-    if (!autoAnalyze.value) return;
-    for (const id of ids) if (!(await analyze(id, true))) break;   // first failure: the service is off
+    if (autoAnalyze.value) queueAnalysis(ids);
+  }
+
+  /**
+   * BACKGROUND QUEUE - songs waiting for analysis, run ANALYSIS_WORKERS at a time while you keep
+   * using the app. Library shows waiting songs as "Queued". One failing song (a video that is
+   * region-blocked) no longer stops the rest; QUEUE_MAX_FAILS failures in a row do.
+   * Example: import a 25-song playlist → songs 1 and 2 analyse, 23 are queued; each finished
+   * song frees a worker for the next one.
+   */
+  const analysisQueue = ref<string[]>([]);
+  let workers = 0;
+
+  function queueAnalysis(ids: string[]): void {
+    const intelligence = useIntelligenceStore();
+    const add = ids.filter((id, i) => ids.indexOf(id) === i && !analysisQueue.value.includes(id) && !analyzing[id] && !intelligence.analysisFor(id));
+    analysisQueue.value = [...analysisQueue.value, ...add];
+    // runWorker takes its first song before its first await, so this loop always ends.
+    while (workers < ANALYSIS_WORKERS && analysisQueue.value.length) runWorker();
+  }
+
+  async function runWorker(): Promise<void> {
+    workers++;
+    let failsInARow = 0;
+    try {
+      while (analysisQueue.value.length) {
+        const [id, ...rest] = analysisQueue.value;
+        analysisQueue.value = rest;
+        if (await analyze(id, true)) { failsInARow = 0; continue; }
+        if (++failsInARow < QUEUE_MAX_FAILS) continue;
+        if (analysisQueue.value.length) useUiStore().notify('Analysis queue stopped: the local service is not answering. Analyse the rest from Library later.');
+        analysisQueue.value = [];
+      }
+    } finally {
+      workers--;
+    }
   }
 
   /** Deletes a song with its analyses and moments. If it was loaded, the next song is loaded. */
@@ -157,6 +198,7 @@ export const useLibraryStore = defineStore('library', () => {
     if (id === 'original-demo') return;
     // The row leaves the list at once; the database and service work follows.
     tracks.value = tracks.value.filter(t => t.id !== id);
+    analysisQueue.value = analysisQueue.value.filter(x => x !== id);
     await deleteTrackEverywhere(id);
     await load();
     await useMomentsStore().load();
@@ -207,6 +249,47 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
+  /**
+   * "Add from a link": a playlist adds all its songs to Library (PLAYLIST IMPORT) and queues
+   * their analysis; any other link opens as one song (openStream). Returns which it was.
+   * Nothing is downloaded on import: each song is fetched when played or analysed.
+   * Example: a 25-song YouTube playlist → 25 Library rows at once, 2 analysing, 23 queued.
+   */
+  async function openLink(url: string): Promise<'song' | 'playlist'> {
+    const ui = useUiStore();
+    isResolvingStream.value = true;
+    ui.notify('Reading the link…');
+    let list: Awaited<ReturnType<typeof expandPlaylist>> | null = null;
+    try {
+      list = await expandPlaylist(url);
+    } catch (err) {
+      // An older service has no playlist endpoint: open the link as one song, as before.
+      console.info('Playlist listing skipped:', (err as Error).message);
+    } finally {
+      isResolvingStream.value = false;
+    }
+    if (!list?.entries.length) { await openStream(url); return 'song'; }
+
+    const fresh = list.entries.filter(e => !track(e.id));
+    for (const e of fresh) {
+      const t: PlayableTrack = {
+        id: e.id, title: e.title, artist: e.artist, durationSec: e.durationSec,
+        mimeType: 'audio/mp4', source: 'external-reference', analysisRight: 'cleared', addedAt: Date.now(),
+        streamPlaybackUrl: streamAudioUrl(e.id, e.originalUrl), originalUrl: e.originalUrl,
+      };
+      await forgetDeleted(t.id);
+      await putTrack(t);
+    }
+    await load();
+    const known = list.entries.length - fresh.length;
+    ui.notify(`Added ${fresh.length} song${fresh.length === 1 ? '' : 's'} from "${list.title}"`
+      + (known ? ` · ${known} already in Library` : '')
+      + (autoAnalyze.value ? ' · analysing in the background' : ''));
+    // Songs already in Library but never analysed are queued too.
+    if (autoAnalyze.value) queueAnalysis(list.entries.map(e => e.id));
+    return 'playlist';
+  }
+
   /** Streams analysis windows from the service as they are computed (the quick pass). */
   function startProgressiveAnalysis(trackId: string, originalUrl?: string): void {
     const intelligence = useIntelligenceStore();
@@ -243,7 +326,8 @@ export const useLibraryStore = defineStore('library', () => {
 
   return {
     tracks, analyzing, autoAnalyze, rightsAsk, isResolvingStream, isStreamingAnalysis, streamProgress,
+    analysisQueue,
     track, load, loadSettings, correctDuration, setAutoAnalyze, analyze, analyzeAll, autoAnalyzeLibrary, upsert, openStream,
-    importFiles, deleteTrack,
+    openLink, queueAnalysis, importFiles, deleteTrack,
   };
 });
