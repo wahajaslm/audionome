@@ -25,9 +25,10 @@ export const useIntelligenceStore = defineStore('intelligence', () => {
   /**
    * Discover suggestions: the personal ranker over analysed windows, trained only on what the
    * listener saved and rated. Empty until at least one song is analysed and one moment saved.
+   * Ranked best first; Discover shows them a page of 12 at a time ("New suggestions").
    */
   const suggestions = computed<PreferenceSuggestion[]>(() =>
-    personalRecommendations(analyses.value, useMomentsStore().moments, ratings.value, 12));
+    personalRecommendations(analyses.value, useMomentsStore().moments, ratings.value, 60));
   /** The DNA portrait's model sentence; only used when its status is 'verified'. */
   const insight = computed(() => synthesizeMusicDnaInsight(analyses.value, useMomentsStore().moments, ratings.value, events.value));
   /** Held-out preference ranking accuracy (Feature Analysis). */

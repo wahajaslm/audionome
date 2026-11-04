@@ -5,7 +5,7 @@
  * moments you saved and the answers you gave here. Each answer is stored in Dexie `ratings`
  * and the list re-ranks straight away.
  */
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRoute, useRouter } from 'vue-router';
 import type { PreferenceSuggestion } from '../../intelligence/personalize';
@@ -15,6 +15,7 @@ import { useIntelligenceStore } from '../../stores/intelligence';
 import { useLibraryStore } from '../../stores/library';
 import { useMomentsStore } from '../../stores/moments';
 import { usePlaybackStore } from '../../stores/playback';
+import { useUiStore } from '../../stores/ui';
 import Button from '../../ui/Button.vue';
 import Icon from '../../ui/Icon.vue';
 import MomentRow from '../../ui/MomentRow.vue';
@@ -25,6 +26,7 @@ import AttentionList from './AttentionList.vue';
 const intelligence = useIntelligenceStore();
 const library = useLibraryStore();
 const playback = usePlaybackStore();
+const ui = useUiStore();
 const route = useRoute();
 const router = useRouter();
 const { moments } = storeToRefs(useMomentsStore());
@@ -41,8 +43,26 @@ const same = (a: PreferenceSuggestion, b: PreferenceSuggestion) => a.trackId ===
  * on this visit now stay where they were, showing the pressed answer, until you leave the page.
  */
 const answered = ref<{ s: PreferenceSuggestion; at: number }[]>([]);
+
+/**
+ * NEW SUGGESTIONS - the ranker is deterministic, so the list only changed when your data did.
+ * "New suggestions" reloads analyses and ratings, then shows the next 12 ranked passages,
+ * wrapping to the top after the last page. Example: 40 suggestions → 1–12, 13–24, 25–36, 37–40, 1–12.
+ */
+const PAGE = 12;
+const page = ref(0);
+const pageCount = computed(() => Math.max(1, Math.ceil(suggestions.value.filter(inTab).length / PAGE)));
+async function newSuggestions() {
+  await intelligence.refresh();
+  answered.value = [];
+  page.value = (page.value + 1) % pageCount.value;
+  ui.notify(pageCount.value === 1 ? 'Updated. These are all the suggestions for now.'
+    : page.value === 0 ? 'Back to your top suggestions.' : `Suggestions ${page.value * PAGE + 1}–${Math.min((page.value + 1) * PAGE, suggestions.value.filter(inTab).length)}.`);
+}
+// The list can shrink (answers, deleted songs): a page past the end falls back to the first.
+watch(pageCount, n => { if (page.value >= n) page.value = 0; });
 const rows = computed(() => {
-  const list = suggestions.value.filter(inTab);
+  const list = suggestions.value.filter(inTab).slice(page.value * PAGE, (page.value + 1) * PAGE);
   for (const a of answered.value) if (inTab(a.s) && !list.some(x => same(x, a.s))) list.splice(Math.min(a.at, list.length), 0, a.s);
   return list;
 });
@@ -95,6 +115,7 @@ async function playAll() {
 const emptyAction = computed(() => (!analyses.value.length ? { text: 'Open Library', to: '/library' } : { text: 'Open the player', to: '/' }));
 function selectTab(i: number) {
   tab.value = i;
+  page.value = 0;
   router.replace({ query: i ? { t: String(i) } : {} });
 }
 </script>
@@ -107,10 +128,13 @@ function selectTab(i: number) {
         <h1 class="page-title">Discover</h1>
         <p class="lead body">Passages you might enjoy, found by comparing your songs with the moments you saved. Tell us what connects so suggestions can improve.</p>
       </div>
-      <Button v-if="suggestions.length" variant="outline" :disabled="!rows.length" @click="playAll">
-        <Icon name="play" :size="14" />
-        Play {{ rows.length }} {{ rows.length === 1 ? 'suggestion' : 'suggestions' }} · {{ formatTime(totalSeconds(rows)) }}
-      </Button>
+      <div v-if="suggestions.length" class="actions">
+        <Button @click="newSuggestions">New suggestions</Button>
+        <Button variant="outline" :disabled="!rows.length" @click="playAll">
+          <Icon name="play" :size="14" />
+          Play {{ rows.length }} {{ rows.length === 1 ? 'suggestion' : 'suggestions' }} · {{ formatTime(totalSeconds(rows)) }}
+        </Button>
+      </div>
     </div>
 
     <div v-if="!suggestions.length" class="empty">
@@ -154,6 +178,7 @@ function selectTab(i: number) {
   /* One screen tall: header and tabs stay put, only .list scrolls (see SCROLL FIX in App.vue). */
   height: 100%; display: flex; flex-direction: column; }
 .head, .tabs, .empty, .att-slot { flex: none; }
+.actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--space-4); }
 h1 { margin: 0; color: var(--ink); }
 .lead { color: var(--ink-sub); margin: var(--space-2) 0 0; max-width: 70ch; }
