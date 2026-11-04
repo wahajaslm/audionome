@@ -15,7 +15,6 @@ import { useIntelligenceStore } from '../../stores/intelligence';
 import { useLibraryStore } from '../../stores/library';
 import { useListeningStore } from '../../stores/listening';
 import { useWaveform } from '../../composables/useWaveform';
-import { useKeyboardShortcuts } from '../../composables/useKeyboardShortcuts';
 import { ASK_DEFAULT_CHIPS, FEELINGS, QUALITIES } from '../../core/moments';
 import { overlaps } from '../../core/playback';
 import Cover from '../../ui/Cover.vue';
@@ -43,7 +42,6 @@ const timelineStore = useTimelineStore();
 const { sel, loop, loops, t, duration, playing, currentTrack } = storeToRefs(playback);
 const { ask, describe, feel, love, note, nudge, explore } = storeToRefs(flow);
 
-useKeyboardShortcuts({ ' ': () => { playback.togglePlay(); } });
 
 const analyzingStep = computed(() => (currentTrack.value ? library.analyzing[currentTrack.value.id] : undefined));
 const analysis = computed(() => intelligence.currentAnalysis);

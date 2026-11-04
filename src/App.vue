@@ -5,6 +5,7 @@ import { useUiStore } from './stores/ui';
 import { useAudioEngine } from './composables/useAudioEngine';
 import { useAppBootstrap } from './composables/useAppBootstrap';
 import { useMediaSession } from './composables/useMediaSession';
+import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts';
 import AppSidebar from './features/shell/AppSidebar.vue';
 import Toast from './ui/Toast.vue';
 import PlaybackBar from './ui/PlaybackBar.vue';
@@ -22,6 +23,8 @@ const ui = useUiStore();
 const { toast } = storeToRefs(ui);
 const router = useRouter();
 const playback = usePlaybackStore();
+// Space plays / pauses on every screen, as in Spotify (not while typing).
+useKeyboardShortcuts({ ' ': () => { playback.togglePlay(); } });
 const flow = useMomentFlowStore();
 const library = useLibraryStore();
 
