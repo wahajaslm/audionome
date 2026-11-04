@@ -124,16 +124,32 @@ export const useLibraryStore = defineStore('library', () => {
    */
   async function importFiles(files: FileList | File[]): Promise<Track[]> {
     const ui = useUiStore();
+    const list = Array.from(files);   // a FileList empties when its input is reset
     ui.notify('Importing audio files…');
-    const added = await importAudioFiles(files);
-    if (!added.length) { ui.notify('No supported audio files.'); return added; }
+    const { added, failed } = await importAudioFiles(list, (done, total, name) => {
+      if (total > 1 && done < total) ui.notify(`Importing ${done + 1} of ${total} · ${name}`);
+    });
+    if (!added.length) {
+      ui.notify(failed.length ? `Could not import ${failed[0].name} (${failed[0].reason})${failed.length > 1 ? ` and ${failed.length - 1} more` : ''}.` : 'No supported audio files.');
+      return added;
+    }
     await load();
-    ui.notify('Added ' + added.length + ' song' + (added.length > 1 ? 's' : '') + ' · loading into player…');
+    const skipped = failed.length ? ` · ${failed.length} could not be imported: ${failed.map(f => f.name).join(', ').slice(0, 80)}` : '';
+    ui.notify('Added ' + added.length + ' song' + (added.length > 1 ? 's' : '') + skipped);
     const first = track(added[0].id) || added[0];
-    uploadAudioToCache(first).catch(() => { });
     await usePlaybackStore().changeTrack(first, true);
-    if (autoAnalyze.value) for (const t of added) analyze(t.id, true).catch(console.warn);
+    // MANY FILES FIX - only the first song was sent to the service, so the others had no beats,
+    // chords or stems until the next start-up; and every song started its full analysis at
+    // once. Now each song is sent in turn (its timeline queues as it lands), then analysed in turn.
+    syncImported(added.map(t => t.id)).catch(console.warn);
     return added;
+  }
+
+  /** Sends imported songs to the service one by one, then runs the window analysis one by one. */
+  async function syncImported(ids: string[]): Promise<void> {
+    for (const id of ids) { const t = track(id); if (t) await uploadAudioToCache(t).catch(() => { }); }
+    if (!autoAnalyze.value) return;
+    for (const id of ids) if (!(await analyze(id, true))) break;   // first failure: the service is off
   }
 
   /** Deletes a song with its analyses and moments. If it was loaded, the next song is loaded. */

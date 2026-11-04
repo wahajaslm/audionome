@@ -46,7 +46,7 @@ const isCurrent = (t: PlayableTrack) => playback.trackId === t.id;
 async function onFiles(e: Event) {
   const input = e.target as HTMLInputElement;
   try {
-    const added = await library.importFiles(input.files || []);
+    const added = await library.importFiles(Array.from(input.files || []));
     if (added.length) router.push('/');
   } catch (err) {
     console.error(err);

@@ -11,7 +11,7 @@ import { toDbMoment } from './moments';
 export { ensureDemo };
 
 /** Imports audio files into Dexie `tracks` (same rows as the classic importer). Non-audio files are skipped. */
-export const importAudioFiles = (files: FileList | File[]): Promise<Track[]> => importFiles(files);
+export const importAudioFiles = (files: FileList | File[], onProgress?: (done: number, total: number, name: string) => void) => importFiles(files, onProgress);
 
 /**
  * Downloads the profile JSON ('music-dna-profile.json'): tracks without audio, moments, events,

@@ -37,14 +37,41 @@ export class MusicDatabase extends Dexie {
   }
 }
 export const db = new MusicDatabase();
-export async function importFiles(files: FileList | File[]): Promise<Track[]> {
-  const added: Track[] = [];
-  for (const file of Array.from(files)) {
-    if (!file.type.startsWith('audio/') && !/\.(mp3|wav|flac|ogg|m4a|aac|opus)$/i.test(file.name)) continue;
-    let durationSec = await audioDuration(file).catch(() => 0);
+/**
+ * MANY FILES FIX - importing many files stopped at the first bad one ("Import failed." and the
+ * rest skipped), and each file could wait 18 s for its duration, one after another.
+ * Now every file is tried on its own (failures are listed, the rest still import), the duration
+ * probe waits at most 4 s and runs while the file is read, and `onProgress` reports each file.
+ * Example: 12 files, one broken .m4a → 11 imported, "1 could not be imported: x.m4a (Unsupported audio)".
+ */
+export interface ImportResult { added: Track[]; failed: { name: string; reason: string }[] }
+export async function importFiles(files: FileList | File[], onProgress?: (done: number, total: number, name: string) => void): Promise<ImportResult> {
+  const added: Track[] = [], failed: ImportResult['failed'] = [];
+  const audio = Array.from(files).filter(file => file.type.startsWith('audio/') || /\.(mp3|wav|flac|ogg|m4a|aac|opus)$/i.test(file.name));
+  for (const [i, file] of audio.entries()) {
+    onProgress?.(i, audio.length, file.name);
+    try {
+      added.push(await importOne(file));
+    } catch (err) {
+      const reason = (err as Error)?.name === 'QuotaExceededError' ? 'browser storage is full' : String((err as Error)?.message || err).slice(0, 60);
+      failed.push({ name: file.name, reason });
+    }
+  }
+  onProgress?.(audio.length, audio.length, '');
+  return { added, failed };
+}
+
+async function importOne(file: File): Promise<Track> {
+  {
+    // A file the browser cannot decode is refused (it would be a song that never plays);
+    // a slow metadata read only falls back to a placeholder duration.
+    const [probed, buf] = await Promise.all([
+      audioDuration(file, 4000).catch((err: Error) => { if (err.message === 'Unsupported audio') throw new Error('not playable audio'); return 0; }),
+      file.arrayBuffer(),
+    ]);
+    let durationSec = probed;
     if (!durationSec || !Number.isFinite(durationSec)) durationSec = 180;
     const title = file.name.replace(/\.[^.]+$/, '').replaceAll('_', ' ');
-    const buf = await file.arrayBuffer();
     const sha256 = await sha256Hex(buf);
     const nameLower = file.name.toLowerCase();
     const mimeType = file.type || (
@@ -69,9 +96,8 @@ export async function importFiles(files: FileList | File[]): Promise<Track[]> {
       sha256
     };
     await db.tracks.add(trackItem);
-    added.push(trackItem);
+    return trackItem;
   }
-  return added;
 }
 /** Hex SHA-256 of a file, or undefined where WebCrypto is unavailable (pages served over plain http from a LAN address). */
 async function sha256Hex(buf: ArrayBuffer): Promise<string | undefined> {
@@ -79,13 +105,13 @@ async function sha256Hex(buf: ArrayBuffer): Promise<string | undefined> {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
   return Array.from(digest, b => b.toString(16).padStart(2, '0')).join('');
 }
-export async function audioDuration(blob: Blob): Promise<number> {
+export async function audioDuration(blob: Blob, timeoutMs = 18000): Promise<number> {
   const url = URL.createObjectURL(blob);
   try {
     const audio = new Audio();
     audio.preload = 'metadata';
     const duration = await new Promise<number>((resolve, reject) => {
-      const timeout = window.setTimeout(() => reject(new Error('Audio metadata timeout')), 18000);
+      const timeout = window.setTimeout(() => reject(new Error('Audio metadata timeout')), timeoutMs);
       audio.onloadedmetadata = () => { clearTimeout(timeout); resolve(audio.duration); };
       audio.onerror = () => { clearTimeout(timeout); reject(new Error('Unsupported audio')); };
       audio.src = url;
