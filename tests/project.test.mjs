@@ -30,8 +30,8 @@ test('No fabricated listener traits or demo song data in the live app',()=>{
  assert.match(live,/percentages are shares of the qualities you labelled/);
 });
 test('M2 research and safe original sample remain available',()=>{
- assert.ok(existsSync(new URL('services/intelligence/features.py',root)));
- assert.ok(existsSync(new URL('services/intelligence/deep.py',root)));
+ assert.ok(existsSync(new URL('musicdna/features/dsp.py',root)));
+ assert.ok(existsSync(new URL('musicdna/features/embeddings.py',root)));
  const wav=readFileSync(new URL('public/demo.wav',root));
  assert.equal(wav.toString('ascii',0,4),'RIFF');
  assert.ok(wav.length>1000000);

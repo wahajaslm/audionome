@@ -8,6 +8,6 @@ The actual live `index.html` is a lightly adapted version of the user's original
 
 **Product intelligence:** `src/intelligence/personalize.ts` supplies candidate detection and a baseline personalized ranker. Listening events are **attention signals**, and only confirmed/saved/rated passages become preference labels. The My DNA circular ring reflects explicitly selected *musical qualities*, not speculative emotions or raw embedding scores.
 
-**Research boundary:** `services/intelligence` contains librosa analysis and optional checkpoint-gated deep embeddings. `research/explore.py` saves feature data and plots separately for technical exploration. The player displays only listener-relevant insight text and playable evidence. Local rights confirmation is required before analyzing imported music.
+**Research boundary:** All Python lives in the `musicdna` package (see `musicdna/README.md`): `audio` and `features` analyse recordings, `preference` learns from listening, `corpus` and `experiments` hold research data and studies, and `service` is the localhost API the player calls. The player displays only listener-relevant insight text and playable evidence. Local rights confirmation is required before analyzing imported music.
 
 **Limitations:** This is an early local-first consumer prototype. Music rights and license conditions still apply, preference predictions have not been clinically or scientifically validated, and full Vite/browser E2E operation is pending verification.

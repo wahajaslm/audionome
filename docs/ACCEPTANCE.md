@@ -24,7 +24,7 @@
 - [ ] Export profile JSON; metadata/ratings included, original music audio excluded.
 
 ## D. Research and legal boundaries
-- [ ] Python `research.explore` exports actual librosa feature CSV/JSON/plots from a local recording.
+- [ ] Python `musicdna.experiments.acoustic_explorer` exports actual librosa feature CSV/JSON/plots from a local recording.
 - [ ] No Spotify/Apple/YouTube audio is scraped or analyzed under a playback-only right.
 - [ ] Optional pretrained deep encoder cannot silently download weights; DSP and neural model IDs never mix.
 

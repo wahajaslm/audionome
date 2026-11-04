@@ -12,8 +12,8 @@ data/coke_studio/audio/
 .pytest_cache/
 *_visualizer/sources/
 *_visualizer/renders/
-services/intelligence/audio_cache/
+musicdna/service/audio_cache/
 *.sqlite
 *.db
-services/intelligence/cache/
+musicdna/service/cache/
 data/coke_studio/features/

@@ -18,8 +18,8 @@ For authorized local music analysis, run the Python service in a second terminal
 ```bash
 python -m venv .venv
 source .venv/bin/activate       # Windows: .venv\\Scripts\\activate
-pip install -r services/intelligence/requirements.txt
-python -m uvicorn services.intelligence.app:app --host 127.0.0.1 --port 8765
+pip install -r requirements.txt
+python -m uvicorn musicdna.service.app:app --host 127.0.0.1 --port 8765
 ```
 
 In **Library**, import MP3/WAV or other browser-supported audio; press **Analyze locally** only if you have the necessary analysis rights. Analysis is opt-in. Original recordings remain in the browser's IndexedDB; temporary analysis copies sent to your own localhost Python service are removed after processing. Streamed tracks are **not** assumed to be analyzable.
@@ -38,7 +38,7 @@ Detailed audio features, spectrogram-like analysis, acoustic plots, embeddings a
 
 ```bash
 pip install matplotlib  # optional, for images
-python -m research.acoustic_explorer public/demo.wav --out research-output
+python -m musicdna.experiments.acoustic_explorer public/demo.wav --out research-output
 ```
 
 Outputs: `features.csv`, `segments.json`, and optional time-aligned acoustic plots. This uses the same `librosa` extractor as the API. The M3 contrastive personal ranker resides at `src/intelligence/personalize.ts`; the optional deep CLAP encoder requires **separately licensed local checkpoint weights**.
@@ -48,7 +48,7 @@ Outputs: `features.csv`, `segments.json`, and optional time-aligned acoustic plo
 ```bash
 npm test
 npm run test:model
-python -m pytest -q services/intelligence/tests
+python -m pytest -q tests/python
 npm run build
 ```
 
