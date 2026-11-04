@@ -3,7 +3,9 @@
  * MomentRow (design system): a saved passage in a list.
  * Props: song, artist; start / end (seconds); what (e.g. "Vocals · Melody"); note; tags;
  * fresh (shows "New"); playing (play button shows pause); songDuration (for the mini waveform);
- * editable (shows Edit, for My Moments) and editing (Edit's aria-expanded).
+ * editable (shows Edit, for My Moments) and editing (Edit's aria-expanded); removable (shows the
+ * remove cross, default true). Default slot: extra actions after the duration, e.g. Discover's
+ * "Not for me" / "I like it" (they wrap to their own line below 600px).
  * Emits: play, remove, edit, open (the text column: opens the moment in the player).
  * Layout: round play · mini waveform (40 bars, the moment in accent) · song — artist · what and
  * note · tags · range · duration · remove. Below 600px the mini waveform and range are hidden.
@@ -14,8 +16,8 @@ import { formatTime } from './format';
 
 const props = withDefaults(defineProps<{
   song: string; artist?: string; start: number; end: number; what?: string; note?: string;
-  tags?: string[]; fresh?: boolean; playing?: boolean; songDuration?: number; editable?: boolean; editing?: boolean;
-}>(), { artist: '', what: '', note: '', tags: () => [], fresh: false, playing: false, songDuration: 0, editable: false, editing: false });
+  tags?: string[]; fresh?: boolean; playing?: boolean; songDuration?: number; editable?: boolean; editing?: boolean; removable?: boolean;
+}>(), { artist: '', what: '', note: '', tags: () => [], fresh: false, playing: false, songDuration: 0, editable: false, editing: false, removable: true });
 const emit = defineEmits<{ play: []; remove: []; edit: []; open: [] }>();
 
 /** Seeded bar heights (same formula as the classic list), so a row never flickers. */
@@ -46,7 +48,8 @@ const bars = computed(() => {
     <span class="r label rng">{{ formatTime(start) }} – {{ formatTime(end) }}</span>
     <span class="r label dur">{{ formatTime(end - start) }}</span>
     <button v-if="editable" type="button" class="ed label" :aria-expanded="editing" :aria-label="'Edit tags and note for ' + song + ' moment'" @click="emit('edit')">Edit</button>
-    <button type="button" class="rm" aria-label="Remove moment" title="Remove moment" @click="emit('remove')">
+    <div v-if="$slots.default" class="act"><slot /></div>
+    <button v-if="removable" type="button" class="rm" aria-label="Remove moment" title="Remove moment" @click="emit('remove')">
       <Icon name="close" :size="14" />
     </button>
   </li>
@@ -71,5 +74,6 @@ const bars = computed(() => {
 .dur { color: var(--ink); }
 .rm { width: var(--hit-target); height: var(--hit-target); flex: none; background: none; border: 0; border-radius: var(--radius-sm); color: var(--ink-mute); display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .rm:hover { background: var(--bg-raise); color: var(--ink); }
-@media (max-width: 600px) { .mw, .rng { display: none; } }
+.act { display: flex; gap: var(--space-1); flex: none; }
+@media (max-width: 600px) { .mw, .rng { display: none; } .row:has(.act) { flex-wrap: wrap; } .act { width: 100%; justify-content: flex-end; } }
 </style>

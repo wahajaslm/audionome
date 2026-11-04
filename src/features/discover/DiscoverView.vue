@@ -10,12 +10,14 @@ import { storeToRefs } from 'pinia';
 import { useRoute, useRouter } from 'vue-router';
 import type { PreferenceSuggestion } from '../../intelligence/personalize';
 import { DISCOVER_TABS, ratingOf, suggestionFamily, whyLine } from '../../core/discover';
+import { totalSeconds } from '../../core/moments';
 import { useIntelligenceStore } from '../../stores/intelligence';
 import { useLibraryStore } from '../../stores/library';
 import { useMomentsStore } from '../../stores/moments';
 import { usePlaybackStore } from '../../stores/playback';
 import Button from '../../ui/Button.vue';
 import Icon from '../../ui/Icon.vue';
+import MomentRow from '../../ui/MomentRow.vue';
 import Tabs from '../../ui/Tabs.vue';
 import { formatTime } from '../../ui/format';
 import AttentionList from './AttentionList.vue';
@@ -58,6 +60,12 @@ async function open(s: PreferenceSuggestion) {
   await playback.openRange(s.startSec, s.endSec, s.trackId, false);
   router.push('/');
 }
+/** Same as My Moments' Play all: the shown suggestions back to back, in list order. */
+async function playAll() {
+  await playback.playQueue(rows.value.map(s => ({ a: s.startSec, b: s.endSec, trackId: s.trackId })));
+}
+/** Empty state button: points at the missing input. Example: nothing analysed → Library. */
+const emptyAction = computed(() => (!analyses.value.length ? { text: 'Open Library', to: '/library' } : { text: 'Open the player', to: '/' }));
 function selectTab(i: number) {
   tab.value = i;
   router.replace({ query: i ? { t: String(i) } : {} });
@@ -65,32 +73,50 @@ function selectTab(i: number) {
 </script>
 
 <template>
+  <!-- Same page layout as My Moments: head with Play all, tabs, MomentRow list. -->
   <div class="page">
-    <h1 class="page-title">Discover</h1>
-    <p class="lead body">Passages you might enjoy, found by comparing your songs with the moments you saved. Tell us what connects so suggestions can improve.</p>
+    <div class="head">
+      <div>
+        <h1 class="page-title">Discover</h1>
+        <p class="lead body">Passages you might enjoy, found by comparing your songs with the moments you saved. Tell us what connects so suggestions can improve.</p>
+      </div>
+      <Button v-if="suggestions.length" variant="outline" :disabled="!rows.length" @click="playAll">
+        <Icon name="play" :size="14" />
+        Play {{ rows.length }} {{ rows.length === 1 ? 'suggestion' : 'suggestions' }} · {{ formatTime(totalSeconds(rows)) }}
+      </Button>
+    </div>
 
-    <Tabs class="tabs" :items="DISCOVER_TABS" :selected="tab" label="Preference type" @select="selectTab" />
+    <div v-if="!suggestions.length" class="empty">
+      <p class="body">{{ emptyText }}</p>
+      <Button variant="primary" @click="router.push(emptyAction.to)">{{ emptyAction.text }}</Button>
+    </div>
 
-    <ol class="list">
-      <li v-if="!rows.length" class="none body">{{ emptyText }}</li>
-      <li v-for="s in rows" :key="s.trackId + ':' + s.startSec" class="row">
-        <button type="button" class="cp" :aria-label="(isPlaying(s) ? 'Pause ' : 'Listen to ') + title(s) + ' ' + formatTime(s.startSec)" @click="preview(s)">
-          <Icon :name="isPlaying(s) ? 'pause' : 'play'" :size="12" />
-        </button>
-        <div class="info" @click="open(s)">
-          <div class="item s">
-            {{ title(s) }} <span class="mute">— {{ artist(s) }}</span>
-            <!-- Voice rule: inferences are hedged and labelled as such. -->
-            <span class="tag caption">Suggested</span>
-          </div>
-          <div class="label w">{{ formatTime(s.startSec) }} – {{ formatTime(s.endSec) }} · {{ why(s) }}</div>
-        </div>
-        <div class="btns">
-          <Button size="sm" :aria-pressed="answer(s) === 'dislike'" :class="{ on: answer(s) === 'dislike' }" @click="intelligence.rate(s, 'dislike')">Not for me</Button>
-          <Button size="sm" variant="outline" :aria-pressed="answer(s) === 'like'" :class="{ on: answer(s) === 'like' }" @click="intelligence.rate(s, 'like')">I like it</Button>
-        </div>
-      </li>
-    </ol>
+    <template v-else>
+      <Tabs class="tabs" :items="DISCOVER_TABS" :selected="tab" label="Preference type" @select="selectTab" />
+
+      <ol class="list">
+        <li v-if="!rows.length" class="none body">{{ emptyText }}</li>
+        <!-- Voice rule: inferences are hedged and labelled as such, hence the "Suggested" tag. -->
+        <MomentRow
+          v-for="s in rows"
+          :key="s.trackId + ':' + s.startSec"
+          :song="title(s)"
+          :artist="artist(s)"
+          :start="s.startSec"
+          :end="s.endSec"
+          :what="why(s)"
+          :tags="['Suggested']"
+          :playing="isPlaying(s)"
+          :song-duration="library.track(s.trackId)?.durationSec"
+          :removable="false"
+          @play="preview(s)"
+          @open="open(s)"
+        >
+          <Button size="sm" class="ans" :aria-pressed="answer(s) === 'dislike'" :class="{ on: answer(s) === 'dislike' }" @click="intelligence.rate(s, 'dislike')">Not for me</Button>
+          <Button size="sm" variant="outline" class="ans" :aria-pressed="answer(s) === 'like'" :class="{ on: answer(s) === 'like' }" @click="intelligence.rate(s, 'like')">I like it</Button>
+        </MomentRow>
+      </ol>
+    </template>
 
     <AttentionList />
   </div>
@@ -98,20 +124,15 @@ function selectTab(i: number) {
 
 <style scoped>
 .page { max-width: var(--content-max); margin: 0 auto; padding: var(--space-6) var(--space-4); font-variant-numeric: tabular-nums; }
+.head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--space-4); }
 h1 { margin: 0; color: var(--ink); }
 .lead { color: var(--ink-sub); margin: var(--space-2) 0 0; max-width: 70ch; }
 .tabs { margin: var(--space-5) 0 var(--space-4); }
 .list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
 .none { padding: var(--space-4) 0; color: var(--ink-sub); border-bottom: 1px solid var(--line); }
-.row { display: flex; align-items: center; gap: var(--space-4); padding: 14px 0; border-bottom: 1px solid var(--line); }
-.cp { width: 40px; height: 40px; flex: none; border: 1px solid var(--line-strong); border-radius: var(--radius-pill); background: none; color: var(--ink); display: flex; align-items: center; justify-content: center; cursor: pointer; }
-.info { flex: 1; min-width: 0; cursor: pointer; }
-.s { color: var(--ink); }
-.mute { color: var(--ink-mute); }
-.tag { color: var(--ink-sub); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 1px 6px; margin-left: 6px; }
-.w { color: var(--ink-sub); margin-top: 3px; }
-.btns { display: flex; gap: var(--space-1); flex: none; }
-/* A given answer stays visible as a pressed state (chip-on), not as accent. */
-.btns .on { background: var(--chip-on); color: var(--ink); border: 1px solid var(--chip-on-line); }
-@media (max-width: 600px) { .row { flex-wrap: wrap; } .btns { width: 100%; justify-content: flex-end; } }
+.empty { margin-top: var(--space-5); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: var(--space-6) 0; text-align: center; color: var(--ink-sub); }
+.empty p { margin: 0 0 var(--space-4); }
+/* A given answer stays visible as a pressed state (chip-on), not as accent. Scoped to .ans so it
+   does not hit MomentRow's waveform bars, which also use .on. */
+.ans.on { background: var(--chip-on); color: var(--ink); border: 1px solid var(--chip-on-line); }
 </style>
