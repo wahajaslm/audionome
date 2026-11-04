@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { computed, reactive, ref, shallowRef } from 'vue';
 import type { Track } from '../data/types';
 import { deleteTrackEverywhere, forgetDeleted, getSetting, importAudioFiles, loadTracks, putAnalysis, putSetting, putTrack, syncFromAnalysisService, updateTrackDuration } from '../core/repository';
-import { uploadAudioToCache } from '../intelligence/client';
+import { intelligenceHealth, uploadAudioToCache } from '../intelligence/client';
 import { useMomentsStore } from './moments';
 import { runLocalAnalysis } from '../core/intelligence';
 import type { PlayableTrack } from '../core/library';
@@ -23,6 +23,8 @@ const isQuick = (a: { modelId: string }) => a.modelId === QUICK_STREAM_MODEL || 
 const ANALYSIS_WORKERS = 2;
 /** The queue stops after this many failures in a row: the service is most likely off. */
 const QUEUE_MAX_FAILS = 3;
+/** While the queue is paused, how often to check whether the service is back. */
+const SERVICE_RETRY_MS = 10_000;
 
 export const useLibraryStore = defineStore('library', () => {
   const tracks = shallowRef<PlayableTrack[]>([]);
@@ -177,9 +179,36 @@ export const useLibraryStore = defineStore('library', () => {
     return add.length;
   }
 
+  /**
+   * AUTO RESUME - songs the queue gave up on because the service stopped answering. The app
+   * checks the service every SERVICE_RETRY_MS and queues them again once it answers.
+   * Example: the service crashes at song 10 of 25 → Library says "waiting for the local
+   * service"; restart it → within 10 s the 15 songs (plus the ones that failed) resume.
+   */
+  const waitingForService = ref<string[]>([]);
+  let retryTimer: ReturnType<typeof setInterval> | null = null;
+
+  function waitForService(ids: string[]): void {
+    waitingForService.value = [...new Set([...waitingForService.value, ...ids])];
+    if (retryTimer) return;
+    let checking = false;
+    retryTimer = setInterval(async () => {
+      if (checking) return;   // a slow health check must not overlap the next one
+      checking = true;
+      try { await intelligenceHealth(); } catch { return; } finally { checking = false; }
+      clearInterval(retryTimer!);
+      retryTimer = null;
+      const resume = waitingForService.value.filter(id => track(id));
+      waitingForService.value = [];
+      const n = queueAnalysis(resume);
+      if (n) useUiStore().notify('Local service is back · resuming analysis of ' + n + ' song' + (n > 1 ? 's' : ''));
+    }, SERVICE_RETRY_MS);
+  }
+
   async function runWorker(): Promise<void> {
     workers++;
     let failsInARow = 0;
+    const failed: string[] = [];
     try {
       while (analysisQueue.value.length) {
         // NOW PLAYING FIRST - the song you are listening to is analysed next, wherever it sits
@@ -187,9 +216,12 @@ export const useLibraryStore = defineStore('library', () => {
         const playing = usePlaybackStore().trackId;
         const id = playing && analysisQueue.value.includes(playing) ? playing : analysisQueue.value[0];
         analysisQueue.value = analysisQueue.value.filter(x => x !== id);
-        if (await analyze(id, true)) { failsInARow = 0; continue; }
+    waitingForService.value = waitingForService.value.filter(x => x !== id);
+        if (await analyze(id, true)) { failsInARow = 0; failed.length = 0; continue; }
+        failed.push(id);
         if (++failsInARow < QUEUE_MAX_FAILS) continue;
-        if (analysisQueue.value.length) useUiStore().notify('Analysis queue stopped: the local service is not answering. Analyse the rest from Library later.');
+        useUiStore().notify('Analysis paused: the local service is not answering. It resumes by itself when the service is back.');
+        waitForService([...failed, ...analysisQueue.value]);
         analysisQueue.value = [];
       }
     } finally {
@@ -330,7 +362,7 @@ export const useLibraryStore = defineStore('library', () => {
 
   return {
     tracks, analyzing, autoAnalyze, rightsAsk, isResolvingStream, isStreamingAnalysis, streamProgress,
-    analysisQueue,
+    analysisQueue, waitingForService,
     track, load, loadSettings, correctDuration, setAutoAnalyze, analyze, analyzeAll, autoAnalyzeLibrary, upsert, openStream,
     openLink, queueAnalysis, importFiles, deleteTrack,
   };

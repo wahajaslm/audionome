@@ -24,7 +24,7 @@ const intelligence = useIntelligenceStore();
 const playback = usePlaybackStore();
 const ui = useUiStore();
 const router = useRouter();
-const { tracks, analyzing, rightsAsk, autoAnalyze, analysisQueue } = storeToRefs(library);
+const { tracks, analyzing, rightsAsk, autoAnalyze, analysisQueue, waitingForService } = storeToRefs(library);
 
 const fileInput = ref<HTMLInputElement | null>(null);
 const showStream = ref(false);
@@ -107,6 +107,10 @@ async function remove(id: string) {
       {{ autoAnalyze ? 'New songs are analysed automatically by your local service (turn this off in Settings).' : 'Analysis runs only when you ask for it.' }}
     </p>
 
+    <p v-if="waitingForService.length" class="local label" role="status">
+      Analysis paused for {{ waitingForService.length }} {{ waitingForService.length === 1 ? 'song' : 'songs' }}: waiting for the local service. It resumes by itself.
+    </p>
+
     <template v-if="jobs.length">
       <h2 class="sh heading">Analysis in progress<template v-if="analysisQueue.length"> · {{ analysisQueue.length }} queued</template></h2>
       <ol class="list">
@@ -161,7 +165,7 @@ async function remove(id: string) {
             </div>
           </div>
           <span v-if="analyzing[t.id]" class="state label">Analysing…</span>
-          <span v-else-if="analysisQueue.includes(t.id)" class="state label">Queued</span>
+          <span v-else-if="analysisQueue.includes(t.id) || waitingForService.includes(t.id)" class="state label">Queued</span>
           <template v-else-if="analysisOf(t.id)">
             <span class="state label">Analysed</span>
             <Button size="sm" class="hide-phone" @click="router.push({ path: '/admin', query: { track: t.id } })">Anatomy →</Button>
