@@ -36,6 +36,23 @@ export const putRating = (r: MomentRating) => db.ratings.put(r);
 /** Erases the private listening log; saved moments, ratings and settings are kept. */
 export const clearListeningEvents = () => db.events.clear();
 
+/**
+ * Deletes everything this app stored on this device: imported songs, saved moments, ratings,
+ * listening history, analyses and settings. The built-in demo recording is put back afterwards.
+ * Also asks the local analysis service to drop its copies of those songs (skipped if it is off).
+ * Example: after a reset the Library shows only "First Light", My Moments is empty, and
+ * Settings are back to their defaults.
+ */
+export async function deleteAllUserData(): Promise<number> {
+  const trackIds = (await db.tracks.toArray()).map(t => t.id).filter(id => id !== 'original-demo');
+  await db.transaction('rw', db.tables, async () => {
+    await Promise.all(db.tables.map(table => table.clear()));
+  });
+  await Promise.all(trackIds.map(id => deleteTrackFromSQLite(id)));
+  await ensureDemo();
+  return trackIds.length;
+}
+
 /** Newest first, like the classic Library. */
 export const loadTracks = (): Promise<Track[]> => db.tracks.orderBy('addedAt').reverse().toArray();
 export const loadMoments = (): Promise<Moment[]> => db.moments.orderBy('createdAt').reverse().toArray();

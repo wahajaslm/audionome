@@ -9,6 +9,7 @@ import { computed, ref } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRouter } from 'vue-router';
 import { STUDIO_URL } from '../../core/diagnostics';
+import { deleteAllUserData } from '../../core/repository';
 import { openStudio } from '../../core/studioLink';
 import { useIntelligenceStore } from '../../stores/intelligence';
 import { useLibraryStore } from '../../stores/library';
@@ -33,6 +34,15 @@ const volumePct = computed(() => Math.round(playback.volume * 100));
 async function clear() {
   confirmClear.value = false;
   await listening.clearHistory();
+}
+
+/** Full reset asks once, in place, like clearing history. */
+const confirmReset = ref(false);
+async function resetAll() {
+  confirmReset.value = false;
+  await deleteAllUserData();
+  // Reload so every store starts from the empty database instead of patching each one.
+  window.location.reload();
 }
 </script>
 
@@ -89,6 +99,20 @@ async function clear() {
           </div>
         </div>
         <Button variant="outline" :disabled="!eventsCount" @click="confirmClear = true"><Icon name="trash" :size="14" />Clear history</Button>
+      </li>
+      <li class="row">
+        <div class="info">
+          <div class="item s">Delete all my data</div>
+          <div class="label meta">Removes imported songs, saved moments, ratings, listening history, analyses and settings from this device, and the local service's copies of those songs. The demo recording stays. Export first if you want a copy.</div>
+          <div v-if="confirmReset" class="ask" role="group" aria-label="Delete all my data">
+            <p class="label">Delete everything Music DNA stored on this device? This cannot be undone.</p>
+            <div class="btns">
+              <Button size="sm" variant="primary" @click="resetAll">Delete everything</Button>
+              <Button size="sm" @click="confirmReset = false">Keep my data</Button>
+            </div>
+          </div>
+        </div>
+        <Button variant="outline" @click="confirmReset = true"><Icon name="trash" :size="14" />Delete all</Button>
       </li>
       <li class="row">
         <div class="info">
