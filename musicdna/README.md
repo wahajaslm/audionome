@@ -70,7 +70,7 @@ Add `--allow-nc-weights` to include MERT and `--lyrics` for Whisper transcripts.
 | Vocal stem | `corpus.feature_store` `stems` | Demucs `htdemucs` vocals, 16 kHz FLAC |
 | DSP | `features.dsp` | 25-D vector + loudness per 10 s window |
 | Spatial | `features.spatial` | width, correlation, balance, per-band width, width movement |
-| Vocal pitch | `features.vocal` | voicing, range, glide, velocity, sustain, vibrato, ornaments |
+| Vocal pitch | `features.vocal.VocalPitchAnalyzer` | voicing, range, glide, velocity, sustain, vibrato, ornaments |
 | CLAP | `features.embeddings` | 512-D LAION-CLAP |
 | MERT | `features.embeddings` | 768-D MERT-v1-95M (CC BY-NC weights, opt-in) |
 | Lyrics | `corpus.feature_store` `lyrics` | Whisper transcript of the vocal stem (optional) |
@@ -119,10 +119,10 @@ The player's service reads the same config (`MUSIC_DNA_CONFIG` or `configs/defau
 | Job | Module | Replaced |
 | :--- | :--- | :--- |
 | Decode audio | `audio.io.load_audio` | `load_audio_safely`, corpus ffmpeg loader, 4 direct `librosa.load` calls |
-| Window grid | `audio.windows.window_grid` | 12 s/6 s in DSP and the stream endpoint, 10 s in pairs, 5 s bins in evaluation |
-| Listening evidence | `preference.signals.collect_evidence` | separate parsers in `evaluation` and `implicit_pairs` |
-| Vocal pitch | `features.vocal` | rough pitch-spread in `structure`, estimated pitch in `spectral` |
-| Preference model comparison | `experiments.r01` | A-D ablation in `evaluation`, synthetic `benchmark_suite` |
+| Window grid | `audio.windows.WindowGrid` | 12 s/6 s in DSP and the stream endpoint, 10 s in pairs, 5 s bins in evaluation |
+| Listening evidence | `preference.signals.ListeningEvidenceCollector` | separate parsers in `evaluation` and `implicit_pairs` |
+| Vocal pitch | `features.vocal.VocalPitchAnalyzer` | rough pitch-spread in `structure`, estimated pitch in `spectral` |
+| Preference model comparison | `experiments.r01.R01Experiment` | A-D ablation in `evaluation`, synthetic `benchmark_suite` |
 
 `src/intelligence/personalize.ts` still reads listening events itself: it runs in the browser and
 cannot call Python.

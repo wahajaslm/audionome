@@ -1,15 +1,15 @@
 """The one reading of listening behaviour: events, moments and ratings -> evidence per window.
 
 Used by preference pairs (`implicit_pairs`), the behaviour aggregator and insight synthesizer
-(`evaluation`). Windows come from the shared grid (`audio.windows`); rules and weights from
-`SignalConfig`. Only user actions count as evidence; automatic loop repeats are recorded but are
+(`evaluation`) through `ListeningEvidenceCollector`. Windows come from `WindowGrid`; rules and
+weights from `SignalConfig`. Only user actions count as evidence; automatic loop repeats are recorded but are
 never preference on their own.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
-from musicdna.audio.windows import overlap, window_grid
+from musicdna.audio.windows import WindowGrid
 from musicdna.config import DEFAULT, Config, SignalConfig
 
 
@@ -67,85 +67,96 @@ class WindowEvidence:
                 - signals.weight_left_early * self.left_early)
 
 
-def durations_from_events(events: Iterable[dict[str, Any]], windows_sec: float) -> dict[str, float]:
-    """Track lengths implied by the furthest position any event reached (when real durations are unknown)."""
-    durations: dict[str, float] = {}
-    for event in events:
-        track = event.get('trackId')
-        if not track:
-            continue
-        reach = max(float(event.get(k) or 0.0) for k in ('positionSec', 'fromSec', 'toSec', 'momentEndSec'))
-        durations[track] = max(durations.get(track, 0.0), reach + windows_sec)
-    return durations
+class ListeningEvidenceCollector:
+    """Turns events, saved moments and ratings into `WindowEvidence` on the shared grid."""
 
+    def __init__(self, config: Config = DEFAULT) -> None:
+        self.config = config
+        self.grid = WindowGrid(config.windows)
 
-def collect_evidence(
-    durations: dict[str, float],
-    events: Iterable[dict[str, Any]] = (),
-    moments: Iterable[dict[str, Any]] = (),
-    ratings: Iterable[dict[str, Any]] = (),
-    config: Config = DEFAULT,
-) -> dict[str, list[WindowEvidence]]:
-    """Evidence for every grid window of every track in `durations`."""
-    signals = config.signals
-    by_track = {track: [WindowEvidence(track, start, end) for start, end in window_grid(duration, config.windows)]
-                for track, duration in durations.items() if duration > 0}
+    @staticmethod
+    def durations_from_events(events: Iterable[dict[str, Any]], padding_sec: float) -> dict[str, float]:
+        """Track lengths implied by the furthest position any event reached (when real durations are unknown)."""
+        durations: dict[str, float] = {}
+        for event in events:
+            track = event.get('trackId')
+            if not track:
+                continue
+            reach = max(float(event.get(k) or 0.0) for k in ('positionSec', 'fromSec', 'toSec', 'momentEndSec'))
+            durations[track] = max(durations.get(track, 0.0), reach + padding_sec)
+        return durations
 
-    def covered(windows: list[WindowEvidence], start: float, end: float) -> list[WindowEvidence]:
-        return [w for w in windows if overlap(w.start_sec, w.end_sec, start, end)
-                >= signals.min_overlap_fraction * min(w.end_sec - w.start_sec, max(end - start, 1e-9))]
+    def collect(
+        self,
+        durations: dict[str, float],
+        events: Iterable[dict[str, Any]] = (),
+        moments: Iterable[dict[str, Any]] = (),
+        ratings: Iterable[dict[str, Any]] = (),
+    ) -> dict[str, list[WindowEvidence]]:
+        """Evidence for every grid window of every track in `durations`."""
+        by_track = {track: [WindowEvidence(track, start, end) for start, end in self.grid.windows(duration)]
+                    for track, duration in durations.items() if duration > 0}
+        for moment in moments:
+            for window in self._covered(by_track.get(moment['trackId'], []), float(moment['startSec']), float(moment['endSec'])):
+                window.saved_moment = True
+        for rating in ratings:
+            for window in self._covered(by_track.get(rating['trackId'], []), float(rating['startSec']), float(rating['endSec'])):
+                if rating['value'] == 'like':
+                    window.liked = True
+                else:
+                    window.disliked = True
+        loop_sessions: set[tuple[str, str]] = set()
+        for event in sorted(events, key=lambda e: e.get('at', 0)):
+            windows = by_track.get(event.get('trackId', ''))
+            if windows:
+                self._apply_event(event, windows, loop_sessions)
+        return by_track
 
-    def containing(windows: list[WindowEvidence], position: float) -> list[WindowEvidence]:
-        return [w for w in windows if w.start_sec <= position < w.end_sec]
-
-    for moment in moments:
-        for window in covered(by_track.get(moment['trackId'], []), float(moment['startSec']), float(moment['endSec'])):
-            window.saved_moment = True
-    for rating in ratings:
-        for window in covered(by_track.get(rating['trackId'], []), float(rating['startSec']), float(rating['endSec'])):
-            if rating['value'] == 'like':
-                window.liked = True
-            else:
-                window.disliked = True
-
-    loop_sessions: set[tuple[str, str]] = set()
-    for event in sorted(events, key=lambda e: e.get('at', 0)):
-        windows = by_track.get(event.get('trackId', ''))
-        if not windows:
-            continue
+    def _apply_event(self, event: dict[str, Any], windows: list[WindowEvidence], loop_sessions: set[tuple[str, str]]) -> None:
+        signals = self.config.signals
         kind, by_user = event.get('kind'), event.get('origin', 'user') == 'user'
         session = str(event.get('sessionId', 'default'))
         from_sec, to_sec = float(event.get('fromSec') or 0.0), float(event.get('toSec') or 0.0)
+        moment_span = (float(event.get('momentStartSec') or 0.0), float(event.get('momentEndSec') or 0.0))
         if kind == 'listen_span':
             for window in windows:
-                heard = overlap(window.start_sec, window.end_sec, from_sec, to_sec)
+                heard = self.grid.overlap(window.start_sec, window.end_sec, from_sec, to_sec)
                 if heard > 0:
                     window.heard_sec += heard
                     window.listen_passes += 1
                     window.sessions.add(session)
         elif kind == 'seek' and by_user:
             if from_sec - to_sec >= signals.rewind_min_sec:
-                for window in covered(windows, to_sec, from_sec):
+                for window in self._covered(windows, to_sec, from_sec):
                     window.rewound_into += 1
                     window.sessions.add(session)
             elif to_sec - from_sec >= signals.forward_seek_min_sec:
-                for window in containing(windows, from_sec):
+                for window in self._containing(windows, from_sec):
                     window.left_early += 1
-                for window in containing(windows, to_sec):
+                for window in self._containing(windows, to_sec):
                     window.seek_arrivals += 1
                     window.sessions.add(session)
         elif kind == 'skip' and by_user:
-            for window in containing(windows, float(event.get('positionSec') or 0.0)):
+            for window in self._containing(windows, float(event.get('positionSec') or 0.0)):
                 window.left_early += 1
         elif kind == 'volume' and by_user:
-            for window in containing(windows, float(event.get('positionSec') or 0.0)):
+            for window in self._containing(windows, float(event.get('positionSec') or 0.0)):
                 window.volume_changes += 1
         elif kind == 'loop_enabled' and by_user:
             loop_sessions.add((event['trackId'], session))
-            for window in covered(windows, float(event.get('momentStartSec') or 0.0), float(event.get('momentEndSec') or 0.0)):
+            for window in self._covered(windows, *moment_span):
                 window.loop_starts += 1
                 window.sessions.add(session)
         elif kind == 'loop_cycle' and (event['trackId'], session) in loop_sessions:
-            for window in covered(windows, float(event.get('momentStartSec') or 0.0), float(event.get('momentEndSec') or 0.0)):
+            for window in self._covered(windows, *moment_span):
                 window.loop_cycles += 1
-    return by_track
+
+    def _covered(self, windows: list[WindowEvidence], start: float, end: float) -> list[WindowEvidence]:
+        """Windows a span covers enough of: the threshold scales with the shorter of window and span."""
+        fraction = self.config.signals.min_overlap_fraction
+        return [w for w in windows if self.grid.overlap(w.start_sec, w.end_sec, start, end)
+                >= fraction * min(w.end_sec - w.start_sec, max(end - start, 1e-9))]
+
+    @staticmethod
+    def _containing(windows: list[WindowEvidence], position: float) -> list[WindowEvidence]:
+        return [w for w in windows if w.start_sec <= position < w.end_sec]

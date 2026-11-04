@@ -16,10 +16,10 @@ import numpy as np
 from musicdna.audio.beats import BeatTracker, _DEFAULT_BEAT_TRACKER
 from musicdna.audio.io import load_audio
 from musicdna.audio.stems import StemSeparator
-from musicdna.audio.windows import window_grid
+from musicdna.audio.windows import WindowGrid
 from musicdna.config import DEFAULT, Config
 from musicdna.features.structure import MusicalStructureAnalyzer
-from musicdna.features.vocal import PitchContour, VocalDescriptors, describe_window
+from musicdna.features.vocal import PitchContour, VocalDescriptors, VocalPitchAnalyzer
 
 # Defaults, kept for callers that only need the numbers. Pass a Config to change them.
 SAMPLE_RATE: int = DEFAULT.audio.analysis_sr
@@ -110,6 +110,8 @@ class AcousticFeatureExtractor:
         dsp_reference: tuple[np.ndarray, np.ndarray] | None | bool = True,
     ) -> None:
         self.config = config
+        self.grid = WindowGrid(config.windows)
+        self.vocal_analyzer = VocalPitchAnalyzer(config.vocal)
         self.sample_rate = config.audio.analysis_sr
         self.window_seconds = config.windows.window_sec
         self.hop_seconds = config.windows.hop_sec
@@ -223,7 +225,7 @@ class AcousticFeatureExtractor:
     ) -> dict[str, Any]:
         """Performs feature extraction and window analysis directly on an in-memory waveform.
 
-        pitch_contour: from `features.vocal.track_pitch` on a real vocal stem. Without it, windows
+        pitch_contour: from `VocalPitchAnalyzer.track` on a real vocal stem. Without it, windows
         report no vocal pitch rather than an estimate from the mix.
         """
         if not len(audio_waveform):
@@ -241,7 +243,7 @@ class AcousticFeatureExtractor:
         beat_grid = np.asarray(rhythm['beats'], dtype=np.float64)
 
         analysis_segments: list[AudioAnalysisSegment] = []
-        for start_time, end_time in window_grid(duration_seconds, self.config.windows):
+        for start_time, end_time in self.grid.windows(duration_seconds):
             clip_waveform = audio_waveform[int(start_time * sample_rate):int(end_time * sample_rate)]
             clip_stems = None
             if separated_stems:
@@ -250,7 +252,7 @@ class AcousticFeatureExtractor:
                     for name, stem_waveform in separated_stems.items()
                 }
             window_beats = beat_grid[(beat_grid >= start_time) & (beat_grid < end_time)] - start_time
-            window_pitch = (describe_window(pitch_contour, start_time, end_time, self.config.vocal)
+            window_pitch = (self.vocal_analyzer.describe(pitch_contour, start_time, end_time)
                             if pitch_contour is not None else None)
             descriptors_dict, embedding_vector = self.extract_window_features(
                 clip_waveform, sample_rate, separated_clip_stems=clip_stems, beat_times=window_beats,
@@ -266,7 +268,7 @@ class AcousticFeatureExtractor:
         if not analysis_segments:
             raise ValueError('No usable windows extracted')
 
-        track_pitch = (describe_window(pitch_contour, 0.0, duration_seconds, self.config.vocal)
+        track_pitch = (self.vocal_analyzer.describe(pitch_contour, 0.0, duration_seconds)
                        if pitch_contour is not None else None)
         track_dimensions = self.structure_analyzer.analyze_dimensions(
             audio_waveform, sample_rate, stems=separated_stems, beat_times=beat_grid, vocal_pitch=track_pitch
@@ -320,7 +322,7 @@ def compute_dsp_reference(audio_paths: list[str | Path], out_path: Path = DSP_RE
     raw_rows: list[np.ndarray] = []
     for audio_path in audio_paths:
         waveform = load_audio(audio_path, sample_rate, duration_sec=config.audio.max_duration_sec)
-        for start_time, end_time in window_grid(len(waveform) / sample_rate, config.windows):
+        for start_time, end_time in extractor.grid.windows(len(waveform) / sample_rate):
             clip = waveform[int(start_time * sample_rate):int(end_time * sample_rate)]
             extractor.extract_window_features(clip, sample_rate)
             raw_rows.append(extractor.last_raw_vector)

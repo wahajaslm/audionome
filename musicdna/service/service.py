@@ -13,7 +13,7 @@ import librosa
 import numpy as np
 
 from musicdna.audio.io import load_audio
-from musicdna.config import load_config
+from musicdna.config import Config
 from musicdna.features.dsp import AcousticFeatureExtractor
 from musicdna.audio.stems import StemSeparator
 from musicdna.features.structure import MusicalStructureAnalyzer
@@ -41,7 +41,7 @@ class AudioIntelligenceService:
         active_learning_engine: ActiveLearningEngine | None = None,
     ) -> None:
         self.repository = repository or AnalysisRepository()
-        self.feature_extractor = feature_extractor or AcousticFeatureExtractor(load_config())
+        self.feature_extractor = feature_extractor or AcousticFeatureExtractor(Config.load())
         self.stem_separator = stem_separator or StemSeparator()
         self.structure_analyzer = structure_analyzer or MusicalStructureAnalyzer()
         self.deep_encoder = deep_encoder or DeepAudioEncoder()

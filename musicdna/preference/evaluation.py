@@ -1,7 +1,8 @@
 """Listening-behaviour summaries and evidence-backed insights for the player.
 
 1. `ListeningBehaviorAggregator`: per-window behaviour counts, read from `preference.signals`.
-2. `behavior_only_auc`: does implicit attention alone rank saved moments above other windows?
+2. `ListeningBehaviorAggregator.saved_moment_auc`: does implicit attention alone rank saved
+   moments above other windows?
 3. `EvidenceInsightSynthesizer`: explanations linking saved moments, repeat listening and acoustics.
 
 Model comparisons (DSP vs CLAP vs MERT vs vocal features) live in `experiments.r01`, which tests
@@ -12,7 +13,7 @@ from typing import Any
 import numpy as np
 from musicdna.config import DEFAULT, Config
 from musicdna.preference.favorite_passages import FavoritePassageTaxonomy, AcousticContrastAnalyzer
-from musicdna.preference.signals import collect_evidence, durations_from_events
+from musicdna.preference.signals import ListeningEvidenceCollector
 
 
 class ListeningBehaviorAggregator:
@@ -20,15 +21,16 @@ class ListeningBehaviorAggregator:
 
     def __init__(self, config: Config = DEFAULT) -> None:
         self.config = config
+        self.collector = ListeningEvidenceCollector(config)
 
     def extract_passage_behaviors(
         self,
         events: list[dict[str, Any]],
         durations: dict[str, float] | None = None,
     ) -> dict[str, dict[str, Any]]:
-        durations = durations or durations_from_events(events, self.config.windows.window_sec)
+        durations = durations or self.collector.durations_from_events(events, self.config.windows.window_sec)
         result: dict[str, dict[str, Any]] = {}
-        for track_id, windows in collect_evidence(durations, events, config=self.config).items():
+        for track_id, windows in self.collector.collect(durations, events).items():
             for w in windows:
                 if not w.active:
                     continue
@@ -52,30 +54,28 @@ class ListeningBehaviorAggregator:
     def calculate_behavior_score(passage_bin: dict[str, Any]) -> float:
         return float(passage_bin.get('attentionScore', 0.0))
 
-
-def behavior_only_auc(events: list[dict[str, Any]], moments: list[dict[str, Any]],
-                      config: Config = DEFAULT) -> dict[str, Any]:
-    """Probability that a window inside a saved moment has higher implicit attention than one outside."""
-    behavior_map = ListeningBehaviorAggregator(config).extract_passage_behaviors(events) if events else {}
-    if not behavior_map or not moments:
-        return {'status': 'insufficient_data', 'auc': None, 'samples': 0}
-    scores, labels = [], []
-    for passage in behavior_map.values():
-        inside = any(m['trackId'] == passage['trackId'] and max(m['startSec'], passage['startSec']) < min(m['endSec'], passage['endSec'])
-                     for m in moments)
-        scores.append(passage['attentionScore'])
-        labels.append(inside)
-    positives = [s for s, inside in zip(scores, labels) if inside]
-    negatives = [s for s, inside in zip(scores, labels) if not inside]
-    if not positives or not negatives:
-        return {'status': 'need_both_classes', 'positives': len(positives), 'negatives': len(negatives)}
-    concordant = sum(1.0 if p > n else 0.5 if p == n else 0.0 for p in positives for n in negatives)
-    auc = concordant / (len(positives) * len(negatives))
-    return {
-        'status': 'evaluated', 'auc': round(auc, 4), 'positives': len(positives), 'negatives': len(negatives),
-        'note': (f'Implicit attention ranks saved-moment windows above other windows {auc:.0%} of the time '
-                 '(50% = chance). Single-listener descriptive figure, no confidence interval.'),
-    }
+    def saved_moment_auc(self, events: list[dict[str, Any]], moments: list[dict[str, Any]]) -> dict[str, Any]:
+        """Probability that a window inside a saved moment has higher implicit attention than one outside."""
+        behavior_map = self.extract_passage_behaviors(events) if events else {}
+        if not behavior_map or not moments:
+            return {'status': 'insufficient_data', 'auc': None, 'samples': 0}
+        scores, labels = [], []
+        for passage in behavior_map.values():
+            inside = any(m['trackId'] == passage['trackId'] and max(m['startSec'], passage['startSec']) < min(m['endSec'], passage['endSec'])
+                         for m in moments)
+            scores.append(passage['attentionScore'])
+            labels.append(inside)
+        positives = [s for s, inside in zip(scores, labels) if inside]
+        negatives = [s for s, inside in zip(scores, labels) if not inside]
+        if not positives or not negatives:
+            return {'status': 'need_both_classes', 'positives': len(positives), 'negatives': len(negatives)}
+        concordant = sum(1.0 if p > n else 0.5 if p == n else 0.0 for p in positives for n in negatives)
+        auc = concordant / (len(positives) * len(negatives))
+        return {
+            'status': 'evaluated', 'auc': round(auc, 4), 'positives': len(positives), 'negatives': len(negatives),
+            'note': (f'Implicit attention ranks saved-moment windows above other windows {auc:.0%} of the time '
+                     '(50% = chance). Single-listener descriptive figure, no confidence interval.'),
+        }
 
 
 class EvidenceInsightSynthesizer:
@@ -232,6 +232,5 @@ class EvidenceInsightSynthesizer:
 
 __all__ = [
     'ListeningBehaviorAggregator',
-    'behavior_only_auc',
     'EvidenceInsightSynthesizer',
 ]

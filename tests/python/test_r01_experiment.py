@@ -1,10 +1,10 @@
 import numpy as np
 
-from musicdna.config import load_config
+from musicdna.config import Config
 
 from musicdna.corpus.coke_studio import CorpusEntry, CorpusManifest
 from musicdna.corpus.feature_store import FeatureStore
-from musicdna.experiments.r01 import primary_artist, run
+from musicdna.experiments.r01 import PairRow, R01Experiment
 
 
 def entry(video_id: str, artists: str) -> CorpusEntry:
@@ -14,7 +14,7 @@ def entry(video_id: str, artists: str) -> CorpusEntry:
 
 def build_store(tmp_path, songs: list[str]) -> FeatureStore:
     """Preference is planted in vocal feature 5 (sustain); loudness is unrelated noise."""
-    store = FeatureStore(load_config(overrides=['windows.window_sec=10', 'windows.hop_sec=10']), tmp_path)
+    store = FeatureStore(Config.load(overrides=['windows.window_sec=10', 'windows.hop_sec=10']), tmp_path)
     rng = np.random.default_rng(1)
     for song in songs:
         vocal = rng.standard_normal((20, 9))
@@ -33,7 +33,7 @@ def pairs_for(songs: list[str]) -> list[dict]:
 def test_vocal_ranker_finds_planted_signal_on_held_out_songs(tmp_path) -> None:
     songs = ['s1', 's2', 's3', 's4']
     corpus = CorpusManifest(1, '', {}, [entry(s, f'Artist {s}') for s in songs])
-    report = run(pairs_for(songs), build_store(tmp_path, songs), corpus)
+    report = R01Experiment(build_store(tmp_path, songs), corpus).run(pairs_for(songs))
     assert report['status'] == 'evaluated'
     vocal = report['systems']['vocal_only']['held_out_song']
     assert vocal['song_macro_accuracy'] > 0.9
@@ -44,11 +44,11 @@ def test_vocal_ranker_finds_planted_signal_on_held_out_songs(tmp_path) -> None:
 
 def test_too_few_pairs_reports_insufficient_data(tmp_path) -> None:
     corpus = CorpusManifest(1, '', {}, [entry('s1', 'A')])
-    report = run(pairs_for(['s1'])[:3], build_store(tmp_path, ['s1']), corpus)
+    report = R01Experiment(build_store(tmp_path, ['s1']), corpus).run(pairs_for(['s1'])[:3])
     assert report['status'] == 'insufficient_data'
 
 
 def test_primary_artist_groups_collaborations() -> None:
-    assert primary_artist('Abida Parveen & Rahat Fateh Ali Khan') == 'abida parveen'
-    assert primary_artist('Ali Sethi x Shae Gill') == 'ali sethi'
-    assert primary_artist('Ali Pervez Mehdi ft. Meesha Shafi') == 'ali pervez mehdi'
+    assert PairRow.primary_artist('Abida Parveen & Rahat Fateh Ali Khan') == 'abida parveen'
+    assert PairRow.primary_artist('Ali Sethi x Shae Gill') == 'ali sethi'
+    assert PairRow.primary_artist('Ali Pervez Mehdi ft. Meesha Shafi') == 'ali pervez mehdi'

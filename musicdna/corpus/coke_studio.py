@@ -49,13 +49,6 @@ MIN_DURATION_SEC = 150
 MAX_DURATION_SEC = 900
 
 
-def era_for_season(season: int) -> str:
-    """Classic = Rohail Hyatt (S1-6), middle = Strings (S7-10), modern = S11 onward."""
-    if season <= 6:
-        return 'classic'
-    return 'middle' if season <= 10 else 'modern'
-
-
 @dataclass
 class CorpusEntry:
     video_id: str
@@ -76,10 +69,17 @@ class CorpusEntry:
 
 @dataclass
 class CorpusManifest:
+    """The versioned song list, and the local audio files it points to."""
     manifest_version: int
     created_at: str
     selection: dict[str, Any]
     entries: list[CorpusEntry] = field(default_factory=list)
+
+    @classmethod
+    def load(cls, path: Path = MANIFEST_PATH) -> CorpusManifest:
+        raw = json.loads(path.read_text(encoding='utf8'))
+        entries = [CorpusEntry(**entry) for entry in raw.pop('entries')]
+        return cls(**raw, entries=entries)
 
     def save(self, path: Path = MANIFEST_PATH) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -88,128 +88,139 @@ class CorpusManifest:
     def song_index(self) -> dict[str, str]:
         return {entry.song: entry.video_id for entry in self.entries}
 
-    @classmethod
-    def load(cls, path: Path = MANIFEST_PATH) -> CorpusManifest:
-        raw = json.loads(path.read_text(encoding='utf8'))
-        entries = [CorpusEntry(**entry) for entry in raw.pop('entries')]
-        return cls(**raw, entries=entries)
+    @staticmethod
+    def audio_path(entry: CorpusEntry, audio_directory: Path = AUDIO_DIRECTORY) -> Path:
+        """Local file for a corpus song; decode it with `musicdna.audio.io.load_audio`."""
+        if not entry.audio_file:
+            raise FileNotFoundError(f'{entry.video_id} has not been downloaded')
+        return audio_directory / entry.audio_file
 
-
-def parse_season(title: str) -> int | None:
-    match = SEASON_PATTERN.search(title)
-    if not match:
-        return None
-    value = int(next(group for group in match.groups() if group))
-    return 13 if value == 2020 else value
-
-
-def parse_song_and_artists(title: str) -> tuple[str, str]:
-    """Strips branding segments from a pipe-delimited title; the first two remaining are song, artists."""
-    parts = [re.sub(SEASON_PATTERN, '', part).strip(' -|') if 'coke studio' in part.lower() else part.strip()
-             for part in title.split('|')]
-    content = [part for part in parts if part and not BRANDING_PATTERN.search(part)]
-    song = content[0] if content else title
-    artists = content[1] if len(content) > 1 else ''
-    return song, artists
-
-
-def is_song_performance(title: str, duration_sec: int | None) -> bool:
-    if duration_sec is None or not MIN_DURATION_SEC <= duration_sec <= MAX_DURATION_SEC:
-        return False
-    return not EXCLUDED_TITLE_PATTERN.search(title)
-
-
-def list_channel(channel_url: str) -> list[dict[str, Any]]:
-    import yt_dlp
-    options = {'extract_flat': 'in_playlist', 'quiet': True, 'no_warnings': True}
-    with yt_dlp.YoutubeDL(options) as client:
-        info = client.extract_info(channel_url, download=False)
-    return [entry for entry in info.get('entries') or [] if entry]
-
-
-def select_entries(listings: dict[str, list[dict[str, Any]]], per_season: int) -> list[CorpusEntry]:
-    """Keeps the top `per_season` song performances by view count in every season."""
-    candidates: dict[int, list[CorpusEntry]] = {}
-    for channel_name, videos in listings.items():
-        for video in videos:
-            title = str(video.get('title') or '')
-            season = parse_season(title)
-            if season is None or season not in SEASON_YEARS:
-                continue
-            if not is_song_performance(title, video.get('duration')):
-                continue
-            song, artists = parse_song_and_artists(title)
-            candidates.setdefault(season, []).append(CorpusEntry(
-                video_id=video['id'], title=title, song=song, artists=artists, season=season,
-                year=SEASON_YEARS[season], era=era_for_season(season), source_channel=channel_name,
-                view_count=int(video.get('view_count') or 0), duration_sec=int(video['duration']),
-                url=f"https://www.youtube.com/watch?v={video['id']}",
-            ))
-    selected: list[CorpusEntry] = []
-    for season in sorted(candidates):
-        seen_songs: set[str] = set()
-        for entry in sorted(candidates[season], key=lambda e: e.view_count, reverse=True):
-            key = entry.song.lower()
-            if key in seen_songs:
-                continue
-            seen_songs.add(key)
-            selected.append(entry)
-            if len(seen_songs) == per_season:
-                break
-    return selected
-
-
-def sha256_of(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open('rb') as handle:
-        for block in iter(lambda: handle.read(1 << 20), b''):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def download_audio(manifest: CorpusManifest, audio_directory: Path = AUDIO_DIRECTORY) -> list[str]:
-    """Fetches the original audio stream (no re-encoding) and records its checksum. Returns failures."""
-    import yt_dlp
-    audio_directory.mkdir(parents=True, exist_ok=True)
-    options = {
-        'format': 'bestaudio[ext=m4a]/bestaudio',
-        'outtmpl': str(audio_directory / '%(id)s.%(ext)s'),
-        'quiet': True, 'no_warnings': True, 'noprogress': True,
-    }
-    failures: list[str] = []
-    with yt_dlp.YoutubeDL(options) as client:
-        for entry in manifest.entries:
-            existing = sorted(audio_directory.glob(f'{entry.video_id}.*'))
-            if not existing:
-                try:
-                    client.download([entry.url])
-                except yt_dlp.utils.DownloadError as error:
-                    failures.append(f'{entry.video_id} {entry.song}: {error}')
-                    continue
+    def download(self, audio_directory: Path = AUDIO_DIRECTORY) -> list[str]:
+        """Fetches the original audio stream (no re-encoding) and records its checksum. Returns failures."""
+        import yt_dlp
+        audio_directory.mkdir(parents=True, exist_ok=True)
+        options = {
+            'format': 'bestaudio[ext=m4a]/bestaudio',
+            'outtmpl': str(audio_directory / '%(id)s.%(ext)s'),
+            'quiet': True, 'no_warnings': True, 'noprogress': True,
+        }
+        failures: list[str] = []
+        with yt_dlp.YoutubeDL(options) as client:
+            for entry in self.entries:
                 existing = sorted(audio_directory.glob(f'{entry.video_id}.*'))
-            entry.audio_file = existing[0].name
-            entry.sha256 = sha256_of(existing[0])
-            print(f'S{entry.season:>2} {entry.song} -> {entry.audio_file}')
-    return failures
+                if not existing:
+                    try:
+                        client.download([entry.url])
+                    except yt_dlp.utils.DownloadError as error:
+                        failures.append(f'{entry.video_id} {entry.song}: {error}')
+                        continue
+                    existing = sorted(audio_directory.glob(f'{entry.video_id}.*'))
+                entry.audio_file = existing[0].name
+                entry.sha256 = self._sha256(existing[0])
+                print(f'S{entry.season:>2} {entry.song} -> {entry.audio_file}')
+        return failures
+
+    def verify(self, audio_directory: Path = AUDIO_DIRECTORY) -> list[str]:
+        problems: list[str] = []
+        for entry in self.entries:
+            if not entry.audio_file or not entry.sha256:
+                problems.append(f'{entry.video_id} {entry.song}: not downloaded')
+            elif not (audio_directory / entry.audio_file).exists():
+                problems.append(f'{entry.video_id} {entry.song}: file missing')
+            elif self._sha256(audio_directory / entry.audio_file) != entry.sha256:
+                problems.append(f'{entry.video_id} {entry.song}: checksum mismatch')
+        return problems
+
+    @staticmethod
+    def _sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open('rb') as handle:
+            for block in iter(lambda: handle.read(1 << 20), b''):
+                digest.update(block)
+        return digest.hexdigest()
 
 
-def verify(manifest: CorpusManifest, audio_directory: Path = AUDIO_DIRECTORY) -> list[str]:
-    problems: list[str] = []
-    for entry in manifest.entries:
-        if not entry.audio_file or not entry.sha256:
-            problems.append(f'{entry.video_id} {entry.song}: not downloaded')
-        elif not (audio_directory / entry.audio_file).exists():
-            problems.append(f'{entry.video_id} {entry.song}: file missing')
-        elif sha256_of(audio_directory / entry.audio_file) != entry.sha256:
-            problems.append(f'{entry.video_id} {entry.song}: checksum mismatch')
-    return problems
+class CokeStudioCatalog:
+    """Reads the official channel listings and picks the most-viewed song performances per season."""
 
+    def __init__(self, channels: dict[str, str] = SOURCE_CHANNELS) -> None:
+        self.channels = channels
 
-def audio_path(entry: CorpusEntry, audio_directory: Path = AUDIO_DIRECTORY) -> Path:
-    """Local file for a corpus song; decode it with `musicdna.audio.io.load_audio`."""
-    if not entry.audio_file:
-        raise FileNotFoundError(f'{entry.video_id} has not been downloaded')
-    return audio_directory / entry.audio_file
+    def build_manifest(self, per_season: int) -> CorpusManifest:
+        listings = {name: self.list_channel(url) for name, url in self.channels.items()}
+        return CorpusManifest(
+            manifest_version=MANIFEST_VERSION,
+            created_at=datetime.now(timezone.utc).isoformat(timespec='seconds'),
+            selection={'per_season': per_season, 'ranking': 'view_count at listing time',
+                       'channels': self.channels, 'duration_sec': [MIN_DURATION_SEC, MAX_DURATION_SEC]},
+            entries=self.select(listings, per_season),
+        )
+
+    @staticmethod
+    def list_channel(channel_url: str) -> list[dict[str, Any]]:
+        import yt_dlp
+        options = {'extract_flat': 'in_playlist', 'quiet': True, 'no_warnings': True}
+        with yt_dlp.YoutubeDL(options) as client:
+            info = client.extract_info(channel_url, download=False)
+        return [entry for entry in info.get('entries') or [] if entry]
+
+    @classmethod
+    def select(cls, listings: dict[str, list[dict[str, Any]]], per_season: int) -> list[CorpusEntry]:
+        """Keeps the top `per_season` song performances by view count in every season."""
+        candidates: dict[int, list[CorpusEntry]] = {}
+        for channel_name, videos in listings.items():
+            for video in videos:
+                title = str(video.get('title') or '')
+                season = cls.parse_season(title)
+                if season is None or season not in SEASON_YEARS or not cls.is_song_performance(title, video.get('duration')):
+                    continue
+                song, artists = cls.parse_song_and_artists(title)
+                candidates.setdefault(season, []).append(CorpusEntry(
+                    video_id=video['id'], title=title, song=song, artists=artists, season=season,
+                    year=SEASON_YEARS[season], era=cls.era_for_season(season), source_channel=channel_name,
+                    view_count=int(video.get('view_count') or 0), duration_sec=int(video['duration']),
+                    url=f"https://www.youtube.com/watch?v={video['id']}",
+                ))
+        selected: list[CorpusEntry] = []
+        for season in sorted(candidates):
+            seen_songs: set[str] = set()
+            for entry in sorted(candidates[season], key=lambda e: e.view_count, reverse=True):
+                if entry.song.lower() in seen_songs:
+                    continue
+                seen_songs.add(entry.song.lower())
+                selected.append(entry)
+                if len(seen_songs) == per_season:
+                    break
+        return selected
+
+    @staticmethod
+    def era_for_season(season: int) -> str:
+        """Classic = Rohail Hyatt (S1-6), middle = Strings (S7-10), modern = S11 onward."""
+        if season <= 6:
+            return 'classic'
+        return 'middle' if season <= 10 else 'modern'
+
+    @staticmethod
+    def parse_season(title: str) -> int | None:
+        match = SEASON_PATTERN.search(title)
+        if not match:
+            return None
+        value = int(next(group for group in match.groups() if group))
+        return 13 if value == 2020 else value
+
+    @staticmethod
+    def parse_song_and_artists(title: str) -> tuple[str, str]:
+        """Strips branding segments from a pipe-delimited title; the first two remaining are song, artists."""
+        parts = [re.sub(SEASON_PATTERN, '', part).strip(' -|') if 'coke studio' in part.lower() else part.strip()
+                 for part in title.split('|')]
+        content = [part for part in parts if part and not BRANDING_PATTERN.search(part)]
+        return (content[0] if content else title), (content[1] if len(content) > 1 else '')
+
+    @staticmethod
+    def is_song_performance(title: str, duration_sec: int | None) -> bool:
+        if duration_sec is None or not MIN_DURATION_SEC <= duration_sec <= MAX_DURATION_SEC:
+            return False
+        return not EXCLUDED_TITLE_PATTERN.search(title)
 
 
 def main() -> None:
@@ -222,25 +233,18 @@ def main() -> None:
     arguments = parser.parse_args()
 
     if arguments.command == 'select':
-        listings = {name: list_channel(url) for name, url in SOURCE_CHANNELS.items()}
-        manifest = CorpusManifest(
-            manifest_version=MANIFEST_VERSION,
-            created_at=datetime.now(timezone.utc).isoformat(timespec='seconds'),
-            selection={'per_season': arguments.per_season, 'ranking': 'view_count at listing time',
-                       'channels': SOURCE_CHANNELS, 'duration_sec': [MIN_DURATION_SEC, MAX_DURATION_SEC]},
-            entries=select_entries(listings, arguments.per_season),
-        )
+        manifest = CokeStudioCatalog().build_manifest(arguments.per_season)
         manifest.save()
         for entry in manifest.entries:
             print(f'S{entry.season:>2} {entry.era:<7} {entry.view_count:>12,}  {entry.song} | {entry.artists}')
         print(f'{len(manifest.entries)} songs -> {MANIFEST_PATH}')
     elif arguments.command == 'download':
         manifest = CorpusManifest.load()
-        failures = download_audio(manifest)
+        failures = manifest.download()
         manifest.save()
         print('\n'.join(failures) or 'All downloads complete.')
     else:
-        problems = verify(CorpusManifest.load())
+        problems = CorpusManifest.load().verify()
         print('\n'.join(problems) or 'All files present and checksums match.')
         raise SystemExit(1 if problems else 0)
 

@@ -1,8 +1,8 @@
-from musicdna.audio.windows import overlap, window_grid
-from musicdna.config import DEFAULT, load_config
-from musicdna.preference.implicit_pairs import ImplicitPairBuilder, match_song
+from musicdna.audio.windows import WindowGrid
+from musicdna.config import DEFAULT, Config
+from musicdna.preference.implicit_pairs import ImplicitPairBuilder
 
-TEN_SECOND = load_config(overrides=['windows.window_sec=10', 'windows.hop_sec=10'])
+TEN_SECOND = Config.load(overrides=['windows.window_sec=10', 'windows.hop_sec=10'])
 
 
 def event(kind: str, origin: str = 'user', **fields: float) -> dict:
@@ -55,15 +55,15 @@ def test_overlapping_windows_are_never_paired() -> None:
     assert (DEFAULT.windows.window_sec, DEFAULT.windows.hop_sec) == (12.0, 6.0)
     pairs = ImplicitPairBuilder(DEFAULT).build_pairs(profile(moments=[{'trackId': 't1', 'startSec': 24, 'endSec': 36}]))
     assert pairs
-    assert all(overlap(*p.preferred, *p.passed_over) == 0 for p in pairs)
+    assert all(WindowGrid.overlap(*p.preferred, *p.passed_over) == 0 for p in pairs)
 
 
 def test_window_grid_follows_config() -> None:
-    assert window_grid(30, DEFAULT.windows) == [(0, 12), (6, 18), (12, 24), (18, 30), (24, 30)]
-    assert window_grid(25, TEN_SECOND.windows) == [(0, 10), (10, 20), (20, 25)]
+    assert WindowGrid(DEFAULT.windows).windows(30) == [(0, 12), (6, 18), (12, 24), (18, 30), (24, 30)]
+    assert WindowGrid(TEN_SECOND.windows).windows(25) == [(0, 10), (10, 20), (20, 25)]
 
 
 def test_matches_imported_track_to_corpus_song() -> None:
     songs = {'Chaap Tilak': 'v1', 'Tilak': 'v2'}
-    assert match_song('Chaap-Tilak-Sab-Cheeni-Abida-Parveen', songs) == 'v1'
-    assert match_song('Pasoori', songs) is None
+    assert ImplicitPairBuilder.match_song('Chaap-Tilak-Sab-Cheeni-Abida-Parveen', songs) == 'v1'
+    assert ImplicitPairBuilder.match_song('Pasoori', songs) is None

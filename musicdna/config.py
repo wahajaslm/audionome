@@ -1,7 +1,8 @@
 """Every tunable analysis parameter, in one place.
 
 Defaults live in the dataclasses below. A TOML file (``configs/default.toml``, ``--config``, or
-``MUSIC_DNA_CONFIG``) overrides them, and ``--set section.field=value`` overrides the file:
+``MUSIC_DNA_CONFIG``) overrides them, and ``--set section.field=value`` overrides the file.
+In code: ``Config.load()``, ``Config.load(overrides=['windows.window_sec=10'])``.
 
     python -m musicdna.experiments.pipeline --profile p.json --set windows.window_sec=10 --set windows.hop_sec=5
 
@@ -100,6 +101,57 @@ class Config:
     signals: SignalConfig = field(default_factory=SignalConfig)
     ranker: RankerConfig = field(default_factory=RankerConfig)
 
+    @classmethod
+    def load(cls, path: Path | str | None = None, overrides: list[str] | None = None) -> Config:
+        """Defaults, then the TOML file (explicit path, MUSIC_DNA_CONFIG, or configs/default.toml), then overrides."""
+        config = cls()
+        env_path = os.getenv('MUSIC_DNA_CONFIG')
+        chosen = Path(path) if path else Path(env_path) if env_path else DEFAULT_CONFIG_FILE
+        if chosen.is_file():
+            config = config.updated(tomllib.loads(chosen.read_text(encoding='utf8')))
+        elif path:
+            raise FileNotFoundError(chosen)
+        return config.with_overrides(overrides or [])
+
+    @classmethod
+    def from_arguments(cls, arguments: argparse.Namespace) -> Config:
+        return cls.load(arguments.config, arguments.overrides)
+
+    @staticmethod
+    def add_arguments(parser: argparse.ArgumentParser) -> None:
+        parser.add_argument('--config', type=Path, default=None, help='TOML file with analysis parameters')
+        parser.add_argument('--set', dest='overrides', action='append', default=[], metavar='SECTION.FIELD=VALUE',
+                            help='Override one parameter, e.g. --set windows.window_sec=10 (repeatable)')
+
+    def with_overrides(self, assignments: list[str]) -> Config:
+        """Applies 'section.field=value' strings."""
+        parsed: dict[str, dict[str, Any]] = {}
+        for assignment in assignments:
+            key, separator, value = assignment.partition('=')
+            section, dot, name = key.strip().partition('.')
+            if not separator or not dot:
+                raise ValueError(f"Override '{assignment}' must look like section.field=value")
+            parsed.setdefault(section, {})[name] = value.strip()
+        return self.updated(parsed)
+
+    def updated(self, values: dict[str, dict[str, Any]]) -> Config:
+        """A copy with the given section fields replaced; unknown names and invalid grids are rejected."""
+        changes = {}
+        for section_name, section_values in values.items():
+            section = getattr(self, section_name, None)
+            if not is_dataclass(section):
+                raise KeyError(f"Unknown config section '{section_name}'. Sections: {[f.name for f in fields(self)]}")
+            known = {f.name for f in fields(section)}
+            unknown = set(section_values) - known
+            if unknown:
+                raise KeyError(f"Unknown {section_name} parameter(s) {sorted(unknown)}. Known: {sorted(known)}")
+            changes[section_name] = replace(section, **{
+                key: _coerce(value, getattr(section, key)) for key, value in section_values.items()})
+        result = replace(self, **changes)
+        if result.windows.hop_sec <= 0 or result.windows.window_sec <= 0:
+            raise ValueError('windows.window_sec and windows.hop_sec must be positive')
+        return result
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -109,10 +161,8 @@ class Config:
         return hashlib.sha1(payload.encode()).hexdigest()[:8]
 
 
-DEFAULT = Config()
-
-
 def _coerce(value: Any, like: Any) -> Any:
+    """Converts a TOML or command-line value to the type of the field's default."""
     if isinstance(like, bool):
         return value if isinstance(value, bool) else str(value).lower() in ('1', 'true', 'yes')
     if isinstance(like, tuple):
@@ -121,51 +171,4 @@ def _coerce(value: Any, like: Any) -> Any:
     return type(like)(value)
 
 
-def _apply(config: Config, values: dict[str, dict[str, Any]]) -> Config:
-    updated = {}
-    for section_name, section_values in values.items():
-        section = getattr(config, section_name, None)
-        if not is_dataclass(section):
-            raise KeyError(f"Unknown config section '{section_name}'. Sections: {[f.name for f in fields(Config)]}")
-        known = {f.name for f in fields(section)}
-        unknown = set(section_values) - known
-        if unknown:
-            raise KeyError(f"Unknown {section_name} parameter(s) {sorted(unknown)}. Known: {sorted(known)}")
-        updated[section_name] = replace(section, **{
-            key: _coerce(value, getattr(section, key)) for key, value in section_values.items()})
-    result = replace(config, **updated)
-    if result.windows.hop_sec <= 0 or result.windows.window_sec <= 0:
-        raise ValueError('windows.window_sec and windows.hop_sec must be positive')
-    return result
-
-
-def parse_overrides(assignments: list[str]) -> dict[str, dict[str, Any]]:
-    parsed: dict[str, dict[str, Any]] = {}
-    for assignment in assignments:
-        key, separator, value = assignment.partition('=')
-        section, dot, name = key.strip().partition('.')
-        if not separator or not dot:
-            raise ValueError(f"Override '{assignment}' must look like section.field=value")
-        parsed.setdefault(section, {})[name] = value.strip()
-    return parsed
-
-
-def load_config(path: Path | str | None = None, overrides: list[str] | None = None) -> Config:
-    """Defaults, then the TOML file (explicit path, MUSIC_DNA_CONFIG, or configs/default.toml), then overrides."""
-    config = DEFAULT
-    chosen = Path(path) if path else Path(os.environ['MUSIC_DNA_CONFIG']) if os.getenv('MUSIC_DNA_CONFIG') else DEFAULT_CONFIG_FILE
-    if chosen.is_file():
-        config = _apply(config, tomllib.loads(chosen.read_text(encoding='utf8')))
-    elif path:
-        raise FileNotFoundError(chosen)
-    return _apply(config, parse_overrides(overrides or []))
-
-
-def add_config_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument('--config', type=Path, default=None, help='TOML file with analysis parameters')
-    parser.add_argument('--set', dest='overrides', action='append', default=[], metavar='SECTION.FIELD=VALUE',
-                        help='Override one parameter, e.g. --set windows.window_sec=10 (repeatable)')
-
-
-def config_from_arguments(arguments: argparse.Namespace) -> Config:
-    return load_config(arguments.config, arguments.overrides)
+DEFAULT = Config()

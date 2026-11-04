@@ -15,7 +15,7 @@ from musicdna.features.structure import MusicalStructureAnalyzer
 from musicdna.preference.favorite_passages import FavoritePassageTaxonomy, AcousticContrastAnalyzer, FavoritePassageEvaluator
 from musicdna.preference.active_learning import ActiveLearningEngine
 from musicdna.preference.emotion import DynamicEmotionModel
-from musicdna.preference.evaluation import ListeningBehaviorAggregator, EvidenceInsightSynthesizer, behavior_only_auc
+from musicdna.preference.evaluation import ListeningBehaviorAggregator, EvidenceInsightSynthesizer
 
 from musicdna.paths import DEMO_WAV as DEMO_AUDIO_PATH
 
@@ -133,7 +133,7 @@ def test_passive_listening_research_evaluation():
     assert window['relativeVolumeChanges'] == 1
     assert window['attentionScore'] > 0
 
-    eval_result = behavior_only_auc(events, moments)
+    eval_result = aggregator.saved_moment_auc(events, moments)
     assert eval_result['status'] in ('evaluated', 'need_both_classes')
 
 
