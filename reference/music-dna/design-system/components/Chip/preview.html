@@ -1,0 +1,17 @@
+<!-- @dsCard group="Controls" height=150 subtitle="Round = feelings and tabs, square = musical qualities" -->
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="../../tokens.css">
+<style>
+body{margin:0;background:var(--bg);font-family:var(--font-sans);color:var(--ink)}
+.wrap{padding:24px;display:flex;flex-direction:column;gap:14px}
+.row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.lbl{width:70px;font-size:12px;color:var(--ink-mute)}
+.chip{height:32px;padding:0 12px;border-radius:var(--radius-pill);border:1px solid var(--line-strong);background:none;color:#b4b4b9;font:13px var(--font-sans);cursor:pointer}
+.chip.sq{border-radius:var(--radius-sm)}
+.chip.tab{height:36px;padding:0 14px;font-size:14px}
+.chip[aria-pressed="true"],.chip[aria-selected="true"]{background:var(--chip-on);border-color:var(--chip-on-line);color:var(--ink)}
+</style>
+<div class="wrap">
+  <div class="row"><span class="lbl">Feeling</span><button class="chip">Calm</button><button class="chip" aria-pressed="true">Chills</button><button class="chip">Nostalgia</button></div>
+  <div class="row"><span class="lbl">Quality</span><button class="chip sq" aria-pressed="true">Vocals</button><button class="chip sq">Melody</button><button class="chip sq">Build-up</button></div>
+  <div class="row"><span class="lbl">Tab</span><button class="chip tab" aria-selected="true">All moments</button><button class="chip tab">Moments that give me chills</button></div>
+</div>

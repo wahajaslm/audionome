@@ -1,0 +1,42 @@
+<!-- @dsCard height=288 -->
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="../../tokens.css">
+<style>
+html,body{margin:0;background:var(--bg)}
+.cover{position:relative;width:960px;height:288px;overflow:hidden;background:var(--bg);font-family:var(--font-sans)}
+.cover svg{position:absolute;left:480px;top:0}
+.acc{fill:var(--accent)}
+.ink{fill:var(--ink)}
+.pan{fill:var(--bg-panel)}
+.rim{fill:var(--line-strong)}
+.tk{stroke:var(--ink);stroke-width:2;stroke-linecap:round}
+.tka{stroke:var(--accent);stroke-width:2;stroke-linecap:round}
+.txt{position:absolute;left:48px;bottom:44px;max-width:440px}
+.name{margin:0;font-size:80px;line-height:.95;font-weight:300;color:var(--ink);letter-spacing:-.01em}
+.tag{margin:16px 0 0;font-size:14px;color:var(--ink-mute)}
+</style>
+<div class="cover">
+  <svg width="480" height="288" viewBox="0 0 480 288" aria-hidden="true">
+    <!-- blocks: accent (240x288 slab, bleeds right) · bg-panel (pill 168x64, radius-pill) · ink (disc 64) · line-strong (pill 96x32) -->
+    <!-- arrangement: one tall slab bleeding off the right edge with satellites to its left -->
+    <!-- pattern: arcs of ring ticks (the TraitRing motif) — "a ring of fine ticks where each arc is one trait"; accent ticks on the ground, ink ticks over the slab -->
+    <!-- scales: steps space-5 24 / space-6 32 / space-7 48 / space-8 64; radii radius-pill, radius-xs ticks -->
+    <rect class="acc" x="272" y="0" width="240" height="288"/>
+    <rect class="pan" x="48" y="40" width="168" height="64" rx="32"/>
+    <circle class="ink" cx="208" cy="216" r="32"/>
+    <rect class="rim" x="64" y="200" width="96" height="32" rx="16"/>
+    <g id="ticks"></g>
+  </svg>
+  <div class="txt"><h1 class="name">Music DNA</h1><p class="tag">Quiet when you listen. Personal when you're curious.</p></div>
+</div>
+<script>
+(function(){
+  var g=document.getElementById('ticks'),cx=272,cy=144,R=104,ns='http://www.w3.org/2000/svg',h='';
+  for(var i=0;i<36;i++){
+    var a=(-150+i*(300/35))*Math.PI/180,len=10+18*Math.abs(Math.sin(i*0.7));
+    var x1=cx+Math.cos(a)*R,y1=cy+Math.sin(a)*R,x2=cx+Math.cos(a)*(R+len),y2=cy+Math.sin(a)*(R+len);
+    var cls=(x1>=272&&x2>=272)?'tk':'tka';
+    h+='<line class="'+cls+'" x1="'+x1.toFixed(1)+'" y1="'+y1.toFixed(1)+'" x2="'+x2.toFixed(1)+'" y2="'+y2.toFixed(1)+'"/>';
+  }
+  g.innerHTML=h;
+})();
+</script>

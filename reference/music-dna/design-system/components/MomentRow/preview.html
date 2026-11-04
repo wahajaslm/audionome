@@ -1,0 +1,23 @@
+<!-- @dsCard group="Lists" height=180 subtitle="My Moments and Discover rows" -->
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="../../tokens.css">
+<style>
+body{margin:0;background:var(--bg);font-family:var(--font-sans);color:var(--ink);font-variant-numeric:tabular-nums}
+.list{margin:12px 24px;border-top:1px solid var(--line)}
+.row{display:flex;align-items:center;gap:18px;padding:14px 0;border-bottom:1px solid var(--line)}
+.cp{width:40px;height:40px;flex:none;border:1px solid var(--line-strong);border-radius:50%;background:none;color:var(--ink);display:flex;align-items:center;justify-content:center}
+.mw{width:150px;height:30px;display:flex;align-items:center;justify-content:space-between;flex:none}
+.mw i{display:block;width:2px;border-radius:1px}
+.info{flex:1;min-width:0}.s{font-size:16px}.s span{color:var(--ink-mute)}
+.w{font-size:13px;color:var(--ink-sub);margin-top:3px}
+.tags{display:flex;gap:4px;margin-top:6px}.tags span{font-size:12px;color:var(--ink-sub);border:1px solid var(--line-strong);border-radius:6px;padding:2px 7px}
+.r{font-size:13px;color:var(--ink-mute)}
+.new{color:var(--accent);font-size:12px;margin-left:6px}
+</style>
+<ol class="list" style="list-style:none;padding:0">
+  <li class="row"><button class="cp" aria-label="Play"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 5v14l12-7z" fill="currentColor"/></svg></button><div class="mw" id="mw" aria-hidden="true"></div>
+    <div class="info"><div class="s">Halflight <span>— Ines Moreau</span><span class="new">New</span></div><div class="w">Vocals · “The way her voice rises over the strings”</div><div class="tags"><span>Chills</span><span>Vocals</span></div></div>
+    <span class="r">1:18 – 1:42</span><span class="r" style="color:var(--ink)">0:24</span></li>
+</ol>
+<script>
+(function(){var s=3,h='';for(var i=0;i<40;i++){s=(s*9301+49297)%233280;var t=i/39,v=Math.max(2,Math.round(Math.pow(Math.sin(Math.PI*t),.5)*(.3+.7*s/233280)*28));h+='<i style="height:'+v+'px;background:'+((i>=13&&i<19)?'var(--accent)':'var(--wave-off)')+'"></i>';}document.getElementById('mw').innerHTML=h;})();
+</script>

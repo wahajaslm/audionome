@@ -1,0 +1,18 @@
+<!-- @dsCard group="Player" height=110 subtitle="One question, one-tap answers" -->
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="../../tokens.css">
+<style>
+body{margin:0;background:var(--bg);font-family:var(--font-sans);color:var(--ink)}
+.wrap{padding:28px 24px}
+.ask{display:flex;align-items:center;gap:8px;min-height:44px;padding:4px 10px;border:1px solid var(--line-strong);background:var(--bg-panel);border-radius:var(--radius-md);overflow-x:auto;scrollbar-width:none}
+.q{flex:none;font-size:14px;display:flex;align-items:center;gap:8px;margin-right:4px}
+.chip{flex:none;height:28px;padding:0 10px;border-radius:var(--radius-sm);border:1px solid var(--line-strong);background:none;color:#b4b4b9;font:12px var(--font-sans);cursor:pointer}
+.chip:hover{border-color:var(--chip-on-line);color:var(--ink)}
+.skip{flex:none;margin-left:auto;height:28px;padding:0 10px;border:0;background:none;color:var(--ink-sub);font:13px var(--font-sans);cursor:pointer}
+</style>
+<div class="wrap">
+  <section class="ask" aria-label="Quick question">
+    <span class="q"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg>Saved. What stood out?</span>
+    <button class="chip">Vocals</button><button class="chip">Melody</button><button class="chip">Instruments</button><button class="chip">Rhythm</button><button class="chip">Build-up</button><button class="chip">More…</button>
+    <button class="skip">Skip</button>
+  </section>
+</div>

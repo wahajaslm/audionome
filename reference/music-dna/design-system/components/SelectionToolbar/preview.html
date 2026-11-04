@@ -1,0 +1,20 @@
+<!-- @dsCard group="Player" height=110 subtitle="Opens under the selected passage" -->
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="../../tokens.css">
+<style>
+body{margin:0;background:var(--bg);font-family:var(--font-sans);color:var(--ink);font-variant-numeric:tabular-nums}
+.wrap{padding:28px 24px;display:flex;justify-content:center}
+.tb{height:44px;box-sizing:border-box;display:flex;align-items:center;gap:2px;padding:0 4px 0 14px;background:var(--bg-panel);border:1px solid var(--line-strong);border-radius:var(--radius-md);box-shadow:var(--shadow-pop);white-space:nowrap}
+.rng{font-size:13px;color:var(--ink-sub);padding-right:10px;margin-right:2px;border-right:1px solid var(--line-strong)}
+.b{height:36px;padding:0 10px;border:0;border-radius:var(--radius-sm);background:none;color:var(--ink);display:flex;align-items:center;gap:7px;font:14px var(--font-sans);cursor:pointer}
+.b:hover{background:var(--bg-raise)}
+.b[aria-pressed="true"]{background:var(--bg-raise);color:var(--accent)}
+.x{width:32px;height:36px;border:0;background:none;color:var(--ink-mute);border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center}
+</style>
+<div class="wrap">
+  <div class="tb" role="toolbar" aria-label="Selected moment">
+    <span class="rng">1:18 – 1:42</span>
+    <button class="b"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M12 20s-7.5-4.6-7.5-10.2A4.2 4.2 0 0 1 12 7.4a4.2 4.2 0 0 1 7.5 2.4C19.5 15.4 12 20 12 20z"/></svg>Save</button>
+    <button class="b" aria-pressed="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 2l3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h12"/><path d="M7 22l-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/></svg>Loop</button>
+    <button class="x" aria-label="Clear selection"><svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+  </div>
+</div>

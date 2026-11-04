@@ -1,0 +1,40 @@
+<!-- @dsCard group="Player" height=240 subtitle="Played, unplayed, selected and saved bars with playhead" -->
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="../../tokens.css">
+<style>
+body{margin:0;background:var(--bg);font-family:var(--font-sans);color:var(--ink);font-variant-numeric:tabular-nums}
+.wrap{padding:28px 24px}
+.wf{position:relative;height:120px}
+.bars{position:absolute;inset:0;display:flex;align-items:center;justify-content:space-between}
+.bars i{display:block;width:2px;border-radius:1px}
+.band{position:absolute;top:6px;bottom:6px;border-radius:8px;background:var(--accent-fill);border:1px solid var(--accent-line)}
+.ph{position:absolute;top:-6px;bottom:-6px;width:1px;background:var(--playhead)}
+.dots{position:relative;height:12px}
+.dots b{position:absolute;top:3px;width:5px;height:5px;margin-left:-2.5px;border-radius:50%;background:var(--accent)}
+.legend{display:flex;flex-wrap:wrap;gap:16px;margin-top:14px;font-size:12px;color:var(--ink-mute)}
+.legend span{display:flex;align-items:center;gap:6px}
+.legend i{width:8px;height:8px;border-radius:2px;display:block}
+</style>
+<div class="wrap">
+  <div class="wf" id="wf" role="slider" aria-label="Song position" aria-valuemin="0" aria-valuemax="252" aria-valuenow="84" tabindex="0">
+    <div class="band" id="band"></div><div class="bars" id="bars"></div><div class="ph" id="ph"></div>
+  </div>
+  <div class="dots" id="dots"></div>
+  <div class="legend">
+    <span><i style="background:var(--wave-played)"></i>Played</span>
+    <span><i style="background:var(--wave-off)"></i>Unplayed</span>
+    <span><i style="background:var(--accent)"></i>Selected</span>
+    <span><i style="background:var(--accent-saved)"></i>Saved moment</span>
+  </div>
+</div>
+<script>
+(function(){
+  var D=252,t=84,sel=[78,102],saved=[[171,190]],wf=document.getElementById('wf'),W=wf.clientWidth,N=Math.floor((W+3)/5),s=11,h='';
+  for(var i=0;i<N;i++){s=(s*9301+49297)%233280;var x=(i+.5)/N,ts=x*D,env=Math.pow(Math.sin(Math.PI*x),.45),sw=.55+.45*Math.sin(x*Math.PI*6+.8),a=Math.max(.03,Math.min(1,env*sw*(.35+.65*s/233280)));
+    var c=(ts>=sel[0]&&ts<=sel[1])?'var(--accent)':(saved.some(function(r){return ts>=r[0]&&ts<=r[1];})?'var(--accent-saved)':(ts<=t?'var(--wave-played)':'var(--wave-off)'));
+    h+='<i style="height:'+Math.max(2,Math.round(a*104))+'px;background:'+c+'"></i>';}
+  document.getElementById('bars').innerHTML=h;
+  var b=document.getElementById('band');b.style.left=(sel[0]/D*W-4)+'px';b.style.width=((sel[1]-sel[0])/D*W+8)+'px';
+  document.getElementById('ph').style.left=(t/D*W)+'px';
+  document.getElementById('dots').innerHTML=saved.map(function(r){return '<b style="left:'+((r[0]+r[1])/2/D*W)+'px"></b>';}).join('');
+})();
+</script>

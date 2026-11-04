@@ -1,0 +1,25 @@
+<!-- @dsCard group="Player" height=180 subtitle="Feels · Love · Note, three slim rows" -->
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="../../tokens.css">
+<style>
+body{margin:0;background:var(--bg);font-family:var(--font-sans);color:var(--ink)}
+.wrap{padding:24px}
+.strip{border:1px solid var(--line-strong);background:var(--bg-panel);border-radius:var(--radius-md);padding:2px 10px}
+.row{display:flex;align-items:center;gap:8px;min-height:40px}
+.row+.row{border-top:1px solid var(--line)}
+.lbl{flex:none;width:40px;font-size:12px;color:var(--ink-mute)}
+.chips{display:flex;align-items:center;gap:5px;overflow-x:auto;scrollbar-width:none;flex:1;min-width:0}
+.chip{flex:none;height:28px;padding:0 10px;border-radius:var(--radius-pill);border:1px solid var(--line-strong);background:none;color:#b4b4b9;font:12px var(--font-sans);cursor:pointer}
+.chip.sq{border-radius:var(--radius-sm)}
+.chip[aria-pressed="true"]{background:var(--chip-on);border-color:var(--chip-on-line);color:var(--ink)}
+.in{flex:1;min-width:0;height:30px;box-sizing:border-box;padding:0 12px;background:var(--bg);border:1px solid var(--line-strong);border-radius:var(--radius-sm);color:var(--ink);font:14px var(--font-sans)}
+.in::placeholder{color:var(--ink-mute)}
+.ghost{flex:none;height:30px;padding:0 12px;border:0;border-radius:var(--radius-pill);background:none;color:var(--ink-sub);font:13px var(--font-sans)}
+.primary{flex:none;height:30px;padding:0 14px;border:0;border-radius:var(--radius-pill);background:var(--ink);color:var(--on-ink);font:500 13px var(--font-sans)}
+</style>
+<div class="wrap">
+  <section class="strip" aria-label="Describe this moment">
+    <div class="row"><span class="lbl">Feels</span><div class="chips"><button class="chip">♡ Love</button><button class="chip" aria-pressed="true">Chills</button><button class="chip">Nostalgia</button><button class="chip">Excitement</button><button class="chip">Calm</button><button class="chip">Sadness</button><button class="chip">Other</button></div></div>
+    <div class="row"><span class="lbl">Love</span><div class="chips"><button class="chip sq" aria-pressed="true">Vocals</button><button class="chip sq">Melody</button><button class="chip sq">Harmony</button><button class="chip sq">Rhythm</button><button class="chip sq">Lyrics</button><button class="chip sq">Instruments</button><button class="chip sq">Build-up</button><button class="chip sq">Drop</button><button class="chip sq">Atmosphere</button></div></div>
+    <div class="row"><span class="lbl">Note</span><input class="in" type="text" aria-label="Optional note" placeholder="Optional — what did you notice?"><button class="ghost">Not now</button><button class="primary">Done</button></div>
+  </section>
+</div>

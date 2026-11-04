@@ -1,0 +1,3065 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>Music DNA Player</title>
+  <meta name="claude:viewport-fit-sides" content="cover">
+  <style>
+/* Layout: app shell — sidebar (desktop) or bottom tabs (phone); one player screen whose states unfold in place */
+:root{
+  --bg:#0E0E10; --side:#0B0B0D; --panel:#151518; --raise:#1B1B1F; --line:#1F1F23; --line2:#2C2C31;
+  --fg:#DCDCE0; --sub:#A1A1A6; --mute:#85858B; --off:#45454B; --accent:#8EC5B8;
+  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+  color-scheme:dark;
+}
+html,body{height:100%}
+[hidden]{display:none !important}
+body{background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:15px;margin:0;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+button{font-family:inherit;color:inherit}
+button:focus-visible,textarea:focus-visible{outline:1px solid var(--fg);outline-offset:2px}
+.app{display:flex;min-height:100%}
+
+/* sidebar */
+.side{width:244px;flex:none;box-sizing:border-box;height:100vh;position:sticky;top:0;background:var(--side);border-right:1px solid var(--line);padding:28px 14px 18px max(14px,env(safe-area-inset-left,0px));display:flex;flex-direction:column;gap:28px}
+.brand{font-size:13px;font-weight:600;letter-spacing:.14em;color:var(--sub);padding:0 10px}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nv{height:42px;border:0;background:none;border-radius:10px;padding:0 10px;display:flex;align-items:center;gap:12px;font-size:15px;color:var(--sub);cursor:pointer;text-align:left}
+.nv:hover{background:var(--raise);color:var(--fg)}
+.nv[aria-current="page"]{background:var(--raise);color:var(--fg)}
+.nv .badge{margin-left:auto;font-size:12px;color:var(--mute)}
+.sec{font-size:12px;color:var(--mute);letter-spacing:.06em;padding:0 10px;margin-bottom:6px}
+.coll{height:36px;font-size:14px}
+.mini-np{margin-top:auto;display:flex;align-items:center;gap:10px;padding:10px;border-radius:12px;background:var(--panel);border:1px solid var(--line);cursor:pointer;text-align:left;width:100%}
+.mini-np .tt{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.mini-np .tt span:first-child{font-size:14px}
+.mini-np .tt span:last-child{font-size:12px;color:var(--sub)}
+
+/* main */
+main{flex:1;min-width:0;box-sizing:border-box;padding-block:28px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.col{max-width:1000px;margin:0 auto;display:flex;flex-direction:column}
+
+/* flow steps */
+.steps{display:flex;flex-wrap:wrap;justify-content:center;gap:6px 18px;align-items:center;font-size:13px;color:var(--mute)}
+.step{display:flex;align-items:center;gap:8px}
+.step i{width:20px;height:20px;border-radius:50%;border:1px solid var(--line2);display:flex;align-items:center;justify-content:center;font-style:normal;font-size:11px}
+.step.on{color:var(--fg)}
+.step.on i{border-color:var(--accent);color:var(--accent)}
+.step.done i{background:var(--raise);color:var(--sub)}
+.guide{text-align:center;margin:10px 0 0;font-size:14px;color:var(--sub);min-height:20px}
+
+/* track */
+.track{display:flex;flex-direction:column;align-items:center;text-align:center;gap:16px;margin-top:40px}
+.track .t{font-size:26px;font-weight:400}
+.track .a{font-size:15px;color:var(--sub);margin-top:4px}
+
+/* waveform */
+.wfwrap{margin-top:48px;position:relative}
+.wcap{text-align:center;font-size:13px;color:var(--mute);min-height:18px;margin-top:10px;margin-bottom:40px}
+.pcol{min-height:calc(100vh - 100px)}
+.pbar{position:sticky;bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:8;margin-top:auto;box-sizing:border-box;background:var(--bg);display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;padding:8px 0}
+.pbar .pl{font-size:13px;color:var(--mute);white-space:nowrap}
+.pbar .pl .now{color:var(--fg)}
+.pbar .pr{display:flex;align-items:center;justify-content:flex-end;gap:10px;color:var(--sub)}
+.pbar .play{width:52px;height:52px}
+.pbar .tp{gap:14px}
+.ib[aria-pressed="true"]{color:var(--accent)}
+#wf{position:relative;height:160px;touch-action:none;cursor:crosshair;user-select:none;-webkit-user-select:none}
+#bars{position:absolute;inset:0;display:flex;align-items:center;justify-content:space-between}
+#bars i{display:block;width:2px;border-radius:1px;flex:none}
+.band{position:absolute;top:8px;bottom:8px;border-radius:8px;pointer-events:none}
+.band.sel{background:rgba(142,197,184,.06);border:1px solid rgba(142,197,184,.25)}
+.band.saved{background:rgba(142,197,184,.035)}
+#ph{position:absolute;top:-6px;bottom:-6px;width:1px;background:rgba(220,220,224,.5);pointer-events:none}
+.savedots{position:relative;height:12px}
+.savedots b{position:absolute;top:3px;width:5px;height:5px;margin-left:-2.5px;border-radius:50%;background:var(--accent)}
+#tbwrap{position:relative;height:0;transition:height .2s ease}
+#tbwrap.on{height:58px}
+.tb{position:absolute;top:10px;height:44px;box-sizing:border-box;display:flex;align-items:center;gap:2px;padding:0 4px 0 14px;background:var(--panel);border:1px solid var(--line2);border-radius:12px;white-space:nowrap;z-index:3;box-shadow:0 8px 24px rgba(0,0,0,.3)}
+.tb .rng{font-size:13px;color:var(--sub);padding-right:10px;margin-right:2px;border-right:1px solid var(--line2)}
+.tbb{height:36px;padding:0 10px;border:0;border-radius:8px;background:none;display:flex;align-items:center;gap:7px;font-size:14px;cursor:pointer}
+.tbb:hover{background:var(--raise)}
+.tbb[aria-pressed="true"]{background:var(--raise);color:var(--accent)}
+.tbx{width:32px;height:36px;border:0;background:none;color:var(--mute);cursor:pointer;display:flex;align-items:center;justify-content:center;border-radius:8px}
+
+/* time + controls */
+.timerow{display:flex;justify-content:space-between;margin-top:8px;font-size:13px;color:var(--mute)}
+.timerow .now{color:var(--fg)}
+.ctl{display:flex;justify-content:center;margin-top:22px}
+.tp{display:flex;align-items:center;justify-content:center;gap:20px}
+.tp .side-b{color:var(--sub)}
+.ib{width:44px;height:44px;border:0;background:none;display:flex;align-items:center;justify-content:center;cursor:pointer;border-radius:50%}
+.ib:hover{background:var(--raise)}
+.play{width:68px;height:68px;border:1px solid rgba(220,220,224,.45);border-radius:50%;background:none;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.right{display:flex;align-items:center;justify-content:flex-end;gap:10px}
+.vol{width:110px;accent-color:#A1A1A6}
+.loopflag{font-size:13px;color:var(--accent)}
+
+/* the slot below the controls: describe / suggestion */
+.slot{display:grid;grid-template-rows:0fr;transition:grid-template-rows .28s ease;margin-top:4px}
+.slot.open{grid-template-rows:1fr}
+.slot>div{overflow:hidden;min-height:0}
+.card{border:1px solid var(--line2);background:var(--panel);border-radius:16px;padding:20px 22px}
+.dhead{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
+.dhead h2{margin:0;font-size:17px;font-weight:500}
+.dhead .rng{font-size:13px;color:var(--sub);display:flex;align-items:center;gap:8px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--accent);display:inline-block}
+.dgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:22px}
+.dcol{display:flex;flex-direction:column;gap:10px;min-width:0}
+.lbl{font-size:13px;color:var(--sub)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{height:32px;padding:0 12px;border-radius:16px;border:1px solid var(--line2);background:none;color:#B4B4B9;font-size:13px;cursor:pointer}
+.chip.sq{border-radius:8px}
+.chip[aria-pressed="true"]{background:rgba(220,220,224,.12);color:var(--fg);border-color:rgba(220,220,224,.35)}
+textarea{box-sizing:border-box;width:100%;resize:none;padding:10px 12px;background:var(--bg);border:1px solid var(--line2);border-radius:10px;color:var(--fg);font:14px/1.45 var(--sans)}
+textarea::placeholder{color:var(--mute)}
+.dfoot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
+.note{font-size:13px;color:var(--mute)}
+.btns{display:flex;gap:8px}
+.primary{height:38px;padding:0 18px;border-radius:19px;border:0;background:var(--fg);color:#111113;font-size:14px;font-weight:500;cursor:pointer}
+.ghost{height:38px;padding:0 14px;border-radius:19px;border:0;background:none;color:var(--sub);font-size:14px;cursor:pointer}
+.ghost:hover{color:var(--fg)}
+.outline{height:38px;padding:0 16px;border-radius:19px;border:1px solid var(--line2);background:none;font-size:14px;cursor:pointer}
+.strip{border:1px solid var(--line2);background:var(--panel);border-radius:12px;padding:2px 10px;display:flex;flex-direction:column}
+.srow{display:flex;align-items:center;gap:8px;min-height:40px}
+.sdiv{flex:none;width:1px;height:18px;background:var(--line2);margin:0 6px}
+.srow+.srow{border-top:1px solid var(--line)}
+.slbl{flex:none;width:40px;font-size:12px;color:var(--mute)}
+.srow+.srow{border-top:1px solid var(--line)}
+.schips{display:flex;align-items:center;gap:5px;overflow-x:auto;scrollbar-width:none;min-width:0;flex:1}
+.schips::-webkit-scrollbar{display:none}
+.schips .chip{flex:none;height:28px;padding:0 10px;font-size:12px}
+.sin{flex:1;min-width:0;height:30px;box-sizing:border-box;padding:0 12px;background:var(--bg);border:1px solid var(--line2);border-radius:8px;color:var(--fg);font:14px var(--sans)}
+.sin::placeholder{color:var(--mute)}
+.srow .primary,.srow .ghost{height:30px;flex:none;font-size:13px;padding:0 12px}
+.nudge{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
+.nudge .q{display:flex;align-items:center;gap:12px}
+.nudge .q small{display:block;color:var(--sub);font-size:13px;margin-top:3px}
+
+/* pages */
+.ph1{font-size:30px;font-weight:400;margin:0}
+.lead{color:var(--sub);margin:8px 0 0;line-height:1.5;max-width:60ch}
+.tabs{display:flex;flex-wrap:wrap;gap:8px;margin-top:26px}
+.tab{height:36px;padding:0 14px;border-radius:18px;border:1px solid var(--line2);background:none;color:#B4B4B9;font-size:14px;cursor:pointer}
+.tab[aria-selected="true"]{background:rgba(220,220,224,.12);color:var(--fg);border-color:rgba(220,220,224,.35)}
+.list{list-style:none;margin:20px 0 0;padding:0;border-top:1px solid var(--line)}
+.row{display:flex;align-items:center;gap:18px;padding:14px 0;border-bottom:1px solid var(--line)}
+.row .mw{width:150px;height:30px;display:flex;align-items:center;justify-content:space-between;flex:none}
+.row .mw i{display:block;width:2px;border-radius:1px}
+.row .info{flex:1;min-width:0}
+.row .info .s{font-size:16px}
+.row .info .s span{color:var(--mute)}
+.row .info .w{font-size:13px;color:var(--sub);margin-top:3px}
+.tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.tags span{font-size:12px;color:var(--sub);border:1px solid var(--line2);border-radius:6px;padding:2px 7px}
+.row .r{font-size:13px;color:var(--mute);white-space:nowrap}
+.cplay{width:40px;height:40px;flex:none;border:1px solid var(--line2);border-radius:50%;background:none;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.cplay:hover{border-color:var(--sub)}
+.new{color:var(--accent);font-size:12px;margin-left:6px}
+.dnawrap{display:flex;flex-wrap:wrap;gap:40px;margin-top:30px;align-items:flex-start}
+#ring{position:relative;width:200px;height:200px;flex:none}
+#ring .rc{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:12px;color:var(--sub)}
+#ring .rn{font-size:40px;font-weight:300;line-height:1;color:var(--fg)}
+.dtop{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:16px}
+.sum{display:flex;flex-wrap:wrap;align-items:center;gap:20px 40px;margin-top:28px;padding:24px;border:1px solid var(--line);border-radius:16px}
+.sum .txt{flex:1 1 100%;border-top:1px solid var(--line);padding-top:18px}
+.legend{flex:1;min-width:220px;display:flex;flex-direction:column;gap:2px}
+.lg{display:flex;align-items:center;gap:12px;height:40px;border:0;background:none;border-radius:8px;padding:0 10px;cursor:pointer;font-size:15px;color:var(--sub);text-align:left}
+.lg:hover,.lg[aria-pressed="true"]{background:var(--raise);color:var(--fg)}
+.lg i{width:10px;height:10px;border-radius:3px;flex:none}
+.lg .ln{flex:1}
+.lg .lv{font-size:14px;color:var(--fg)}
+#ring svg{display:block}
+.eyebrow{font-size:12px;letter-spacing:.08em;color:var(--mute)}
+.sum .big{font-size:20px;line-height:1.45;margin:8px 0 14px;text-wrap:balance}
+.facts{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:13px;color:var(--sub)}
+.facts b{font-weight:500;color:var(--fg)}
+.sh{font-size:18px;font-weight:500;margin:52px 0 4px}
+.shs{font-size:13px;color:var(--mute);margin:0 0 12px}
+.trait .nm small{display:block;font-size:13px;color:var(--mute);margin-top:3px}
+.chk{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;padding:12px 0;border-bottom:1px solid var(--line);font-size:15px}
+.traits{border-top:1px solid var(--line)}
+.trait{width:100%;min-height:68px;border:0;background:none;display:flex;align-items:center;gap:14px;cursor:pointer;text-align:left;padding:0 2px;color:#B4B4B9}
+.trait .nm{flex:1;font-size:16px}
+.trait .bar{width:90px;height:2px;background:var(--line2);position:relative;flex:none}
+.trait .bar i{position:absolute;left:0;top:0;height:2px;background:var(--mute)}
+.trait .ct{width:96px;text-align:right;font-size:13px;color:var(--sub)}
+.trait .d{width:7px;height:7px;border-radius:50%;background:var(--off);flex:none}
+.trait[aria-expanded="true"]{color:var(--fg)}
+.trait[aria-expanded="true"] .d,.trait[aria-expanded="true"] .bar i{background:var(--accent)}
+.ev{padding:2px 0 16px 21px;display:flex;flex-direction:column}
+.evr{display:flex;align-items:center;gap:12px;min-height:46px;font-size:14px}
+.evr .x{flex:1;min-width:0}
+.evr .x span{color:var(--mute)}
+.disc{font-size:12px;color:var(--mute);margin-top:16px;text-align:center}
+
+/* library / discover / ask / signals */
+.pill{font-size:12px;border-radius:10px;padding:2px 8px;border:1px solid var(--line2);color:var(--sub);white-space:nowrap;background:none}
+.pill.ok{color:var(--accent);border-color:rgba(142,197,184,.3)}
+button.pill{cursor:pointer;margin:0 10px}
+.local{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--mute);margin:14px 0 0}
+.lrow{display:flex;align-items:center;gap:16px;padding:12px 0;border-bottom:1px solid var(--line)}
+.lrow .info{flex:1;min-width:0}
+.lrow .s{font-size:15px}.lrow .s span{color:var(--mute)}
+.lrow .meta{font-size:12px;color:var(--mute);margin-top:3px}
+.prog{width:80px;height:2px;background:var(--line2);position:relative;flex:none}.prog i{position:absolute;left:0;top:0;height:2px;background:var(--sub)}
+.interest{position:relative;height:6px}
+.interest b{position:absolute;top:2px;height:0;border-top:1px dashed var(--mute)}
+.ask{display:flex;align-items:center;gap:8px;min-height:44px;padding:4px 10px;border:1px solid var(--line2);background:var(--panel);border-radius:12px;overflow-x:auto;scrollbar-width:none}
+.ask::-webkit-scrollbar{display:none}
+.ask .qq{flex:none;font-size:14px;display:flex;align-items:center;gap:8px;margin-right:4px}
+.ask .chip{flex:none;height:28px;font-size:12px;padding:0 10px}
+.ask .ghost{flex:none;height:28px;font-size:13px;padding:0 10px;margin-left:auto}
+.drow{padding:16px 0;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;align-items:center;gap:12px 16px}
+.drow .info{flex:1;min-width:220px}
+.drow .why{font-size:13px;color:var(--sub);margin-top:4px;line-height:1.45}
+.drow .why b{font-weight:400;color:var(--accent)}
+.genre{font-size:12px;color:var(--mute);margin-left:8px;border:1px solid var(--line2);border-radius:6px;padding:1px 6px}
+.switch{display:flex;align-items:center;gap:10px;border:0;background:none;color:var(--sub);font-size:14px;cursor:pointer;padding:0;height:36px}
+.switch .k{width:34px;height:20px;border-radius:10px;background:var(--line2);position:relative}
+.switch .k::after{content:"";position:absolute;left:2px;top:2px;width:16px;height:16px;border-radius:50%;background:var(--sub);transition:left .2s}
+.switch[aria-checked="true"] .k{background:rgba(142,197,184,.35)}
+.switch[aria-checked="true"] .k::after{left:16px;background:var(--fg)}
+.sigs{list-style:none;margin:12px 0 0;padding:0;border-top:1px solid var(--line)}
+.sigs li{display:flex;gap:12px;align-items:baseline;font-size:14px;padding:10px 0;border-bottom:1px solid var(--line)}
+.sigs li span:first-child{flex:1}
+.sigs li span:last-child{font-size:12px;color:var(--mute);white-space:nowrap}
+.h2{font-size:18px;font-weight:500;margin:44px 0 0;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
+.trait .conf{font-size:12px;color:var(--mute);width:64px}
+.evr .an{display:block;font-size:12px;color:var(--mute);margin-top:2px}
+.across{font-size:13px;color:var(--sub);margin:2px 0 6px}
+@media (max-width:600px){.trait .bar,.trait .conf{display:none}.lrow .prog{display:none}}
+
+
+.ringstage{position:relative;height:420px;margin-top:8px}
+.ringstage #ring{position:absolute;left:50%;top:50%;width:300px;height:300px;margin:-150px 0 0 -150px}
+#ring .rc{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:12px;color:var(--mute);text-align:center}
+#ring .rn{font-size:52px;font-weight:300;line-height:1;color:var(--fg)}
+#ring .rt{font-size:15px;color:var(--fg);max-width:160px}
+.rlab{position:absolute;border:0;background:none;cursor:pointer;display:flex;flex-direction:column;gap:2px;padding:6px 8px;border-radius:8px;color:var(--sub);font-size:13px;white-space:nowrap}
+.rlab b{font-size:20px;font-weight:400;color:var(--fg)}
+.rlab:hover,.rlab.on{color:var(--fg)}
+.rlab.on b{color:var(--accent)}
+.rchips{display:none;flex-wrap:wrap;justify-content:center;gap:6px}
+.portrait{font-size:clamp(20px,2.6vw,26px);font-weight:300;line-height:1.5;text-align:center;max-width:760px;margin:18px auto 0;text-wrap:balance}
+.pw{font:inherit;color:var(--fg);background:none;border:0;padding:0;cursor:pointer;border-bottom:1px solid rgba(142,197,184,.45)}
+.pw:hover,.pw.on{color:var(--accent)}
+.pmeta{text-align:center;font-size:13px;color:var(--mute);margin:12px 0 0}
+.tgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:44px}
+.tcard{border:1px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:12px;background:var(--side)}
+.tcard.on{border-color:rgba(142,197,184,.45)}
+.thead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.thead h3{margin:0;font-size:17px;font-weight:500;line-height:1.3}
+.meter{display:flex;gap:3px;align-items:flex-end;flex:none;padding-top:4px}
+.meter i{width:4px;height:14px;border-radius:2px;background:var(--line2)}
+.meter i:nth-child(1){height:6px}.meter i:nth-child(2){height:9px}.meter i:nth-child(3){height:12px}
+.meter i.f{background:var(--accent)}
+.tdesc{margin:0;font-size:14px;color:var(--sub);line-height:1.45}
+.hear{display:flex;align-items:center;gap:12px;font-size:14px}
+.hear b{font-weight:500}
+.hear small{display:block;color:var(--mute);font-size:12px;margin-top:2px}
+.cask{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--sub)}
+.cask span{margin-right:auto}
+.mini{height:30px;padding:0 12px;border-radius:15px;border:1px solid var(--line2);background:none;font-size:13px;cursor:pointer}
+.mini:hover{border-color:var(--sub)}
+.cnote{margin:0;font-size:13px;color:var(--accent)}
+.more{margin-top:auto;align-self:flex-start;border:0;background:none;padding:0;color:var(--sub);font-size:13px;cursor:pointer;text-align:left}
+.more:hover{color:var(--fg)}
+.tdetail{margin-top:14px;border:1px solid var(--line);border-radius:16px;padding:18px 20px}
+.tdetail .dh{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}
+.tdetail h3{margin:0;font-size:16px;font-weight:500}
+.how{margin-top:36px;border-top:1px solid var(--line);padding-top:14px}
+.how summary{cursor:pointer;color:var(--sub);font-size:14px}
+@media (max-width:700px){.tgrid{grid-template-columns:1fr}.ringstage{height:330px}.rlab{display:none}.rchips{display:flex}}
+.tlist{border-top:1px solid var(--line)}
+.trow{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,280px) 250px;align-items:center;gap:8px 24px;padding:14px 0;border-bottom:1px solid var(--line)}
+.tmain{display:flex;align-items:center;gap:14px;border:0;background:none;padding:0;text-align:left;cursor:pointer;min-width:0}
+.tname{font-size:16px;color:var(--fg)}
+.tname small{display:block;font-size:13px;color:var(--mute);margin-top:3px}
+.trow.on .tname{color:var(--accent)}
+.tans{display:flex;justify-content:flex-end}
+.trow .tdetail{grid-column:1/-1;border:0;padding:6px 0 4px 32px;margin:0}
+.dfoot2{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;margin-top:8px}
+@media (max-width:760px){.trow{grid-template-columns:1fr}.tans{justify-content:flex-start}.trow .tdetail{padding-left:0}}
+/* toast */
+.toast{position:fixed;left:50%;bottom:calc(96px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--raise);border:1px solid var(--line2);border-radius:12px;padding:8px 8px 8px 16px;display:flex;align-items:center;gap:12px;font-size:14px;z-index:20;box-shadow:0 10px 30px rgba(0,0,0,.4);max-width:calc(100% - 32px);box-sizing:border-box}
+.toast button{height:34px;padding:0 12px;border-radius:8px;border:0;background:none;color:var(--accent);font-size:14px;cursor:pointer}
+
+/* phone tab bar */
+.tabbar{display:none}
+@media (max-width:820px){
+  .side{display:none}
+  main{padding-block:20px 84px}
+  .pbar{bottom:calc(76px + env(safe-area-inset-bottom,0px));padding:6px 0}
+  .pcol{min-height:calc(100vh - 116px)}
+  .tabbar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:10;background:var(--side);border-top:1px solid var(--line);padding:6px max(8px,env(safe-area-inset-right,0px)) calc(6px + env(safe-area-inset-bottom,0px)) max(8px,env(safe-area-inset-left,0px));justify-content:space-around}
+  .tabbar .nv{flex-direction:column;height:52px;gap:3px;font-size:11px;padding:0 12px;justify-content:center}
+  .mobnp[hidden]{display:none !important}
+  .mobnp{display:flex !important;position:fixed;left:10px;right:10px;bottom:calc(72px + env(safe-area-inset-bottom,0px));width:auto;z-index:9}
+  .toast{bottom:calc(150px + env(safe-area-inset-bottom,0px))}
+  .wfwrap{margin-top:36px}
+  .track .t{font-size:22px}
+}
+@media (max-width:600px){
+  .tp{gap:12px}
+  .pbar{grid-template-columns:auto 1fr}.pbar .pr{display:none}.pbar .tp{justify-content:flex-end;gap:6px}
+  .vol,.volic{display:none}
+  .row .mw,.row .r{display:none}
+  .tb .rng{display:none}
+  .tb{padding-left:4px}
+}
+@media (prefers-reduced-motion:reduce){.slot{transition:none}}
+</style>
+  <style id="spotify-player-bar">
+    /* Spotify-Style Bottom Playback Bar - Perfectly Docked in Center Screen */
+    html,
+    body {
+      height: 100vh;
+      max-height: 100vh;
+      overflow: hidden !important;
+      margin: 0;
+    }
+
+    /* Sidebar: completely separate full-height component running 100vh from top to bottom */
+    .side {
+      position: fixed !important;
+      top: 0 !important;
+      bottom: 0 !important;
+      left: 0 !important;
+      width: 244px !important;
+      height: 100vh !important;
+      max-height: 100vh !important;
+      box-sizing: border-box !important;
+      background: var(--side) !important;
+      border-right: 1px solid var(--line) !important;
+      padding: 28px 14px 18px max(14px, env(safe-area-inset-left, 0px)) !important;
+      display: flex !important;
+      flex-direction: column !important;
+      gap: 28px !important;
+      z-index: 100 !important;
+      overflow: hidden !important;
+    }
+
+    /* Center Screen Main viewport: independent from the sidebar, above the 76px player bar */
+    main {
+      position: fixed !important;
+      top: 0 !important;
+      left: 244px !important;
+      right: 0 !important;
+      bottom: 76px !important;
+      height: calc(100vh - 76px) !important;
+      overflow-y: auto !important;
+      overflow-x: hidden !important;
+      padding: 28px 36px !important;
+      box-sizing: border-box !important;
+    }
+
+    /* Player screen fits cleanly in one viewport with zero vertical scrolling */
+    .pcol {
+      min-height: 0 !important;
+      height: 100% !important;
+      display: flex !important;
+      flex-direction: column !important;
+      justify-content: center !important;
+    }
+
+    /* Hide duplicate in-page playback row since the persistent Spotify bar provides all playback controls */
+    .pcol>.pbar {
+      display: none !important;
+    }
+
+    .spotify-bar {
+      position: fixed !important;
+      bottom: 0 !important;
+      left: 244px !important;
+      right: 0 !important;
+      height: 76px !important;
+      background: var(--bg) !important;
+      border: none !important;
+      border-top: none !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: space-between !important;
+      padding: 0 24px !important;
+      z-index: 1000 !important;
+      box-sizing: border-box !important;
+      font-family: var(--sans) !important;
+      color-scheme: dark !important;
+      user-select: none !important;
+    }
+
+    /* Left Section: Track Info - strictly bounded on the left so it never intrudes on center controls */
+    .sp-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 220px;
+      max-width: 220px;
+      min-width: 0;
+      flex: none;
+      z-index: 2;
+    }
+
+    .sp-art-btn {
+      width: 48px;
+      height: 48px;
+      background: #141416;
+      border: 1px solid var(--line, #1F1F23);
+      border-radius: 4px;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex: none;
+      color: #B3B3B3;
+      overflow: hidden;
+      transition: transform .12s ease, border-color .12s ease;
+    }
+
+    .sp-art-btn:hover {
+      border-color: #555555;
+      transform: scale(1.02);
+    }
+
+    .sp-info {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 2px;
+      min-width: 0;
+      max-width: 124px;
+      flex: 1;
+    }
+
+    .sp-title-btn {
+      background: none;
+      border: none;
+      padding: 0;
+      text-align: left;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      color: #FFFFFF;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: pointer;
+      display: block;
+      max-width: 100%;
+    }
+
+    .sp-title-btn:hover {
+      text-decoration: underline;
+    }
+
+    .sp-artist {
+      font-size: 11px;
+      color: #B3B3B3;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: pointer;
+      max-width: 100%;
+    }
+
+    .sp-artist:hover {
+      color: #FFFFFF;
+      text-decoration: underline;
+    }
+
+    .sp-heart {
+      color: #B3B3B3;
+      flex: none;
+    }
+
+    .sp-heart:hover {
+      color: #FFFFFF;
+      transform: scale(1.08);
+    }
+
+    /* Center Section: Centered in the middle of the center screen */
+    .sp-center {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 46%;
+      max-width: 640px;
+      min-width: 320px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      z-index: 1;
+    }
+
+    .sp-controls {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+
+    .sp-icon-btn {
+      background: none;
+      border: none;
+      color: #B3B3B3;
+      cursor: pointer;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      transition: color .15s ease, transform .1s ease;
+    }
+
+    .sp-icon-btn:hover {
+      color: #FFFFFF;
+    }
+
+    .sp-icon-btn[aria-pressed="true"] {
+      color: #1DB954;
+      position: relative;
+    }
+
+    .sp-icon-btn[aria-pressed="true"]::after {
+      content: '';
+      position: absolute;
+      bottom: 2px;
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: #1DB954;
+    }
+
+    .sp-play-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: #FFFFFF;
+      color: #000000;
+      border: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: transform .1s ease, background-color .15s ease;
+      padding: 0;
+    }
+
+    .sp-play-btn:hover {
+      transform: scale(1.06);
+      background: #FFFFFF;
+    }
+
+    .sp-play-btn:active {
+      transform: scale(0.96);
+    }
+
+    /* Scrubber row */
+    .sp-timeline {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+    }
+
+    .sp-time {
+      font-size: 11px;
+      color: #A7A7A7;
+      font-variant-numeric: tabular-nums;
+      min-width: 34px;
+      text-align: center;
+      user-select: none;
+    }
+
+    .sp-progress-rail {
+      flex: 1;
+      height: 14px;
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      position: relative;
+      touch-action: none;
+    }
+
+    .sp-progress-track {
+      width: 100%;
+      height: 4px;
+      border-radius: 2px;
+      background: #4D4D4D;
+      position: relative;
+      overflow: visible;
+    }
+
+    .sp-progress-fill {
+      height: 100%;
+      border-radius: 2px;
+      background: #FFFFFF;
+      position: absolute;
+      left: 0;
+      top: 0;
+      pointer-events: none;
+      transition: background-color .15s ease;
+    }
+
+    .sp-progress-handle {
+      position: absolute;
+      top: 50%;
+      left: 0%;
+      transform: translate(-50%, -50%);
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #FFFFFF;
+      display: none;
+      pointer-events: none;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+    }
+
+    .sp-progress-rail:hover .sp-progress-fill,
+    .sp-progress-rail.is-dragging .sp-progress-fill {
+      background: #1DB954;
+    }
+
+    .sp-progress-rail:hover .sp-progress-handle,
+    .sp-progress-rail.is-dragging .sp-progress-handle {
+      display: block;
+    }
+
+    /* Right Section: Volume & Extras */
+    .sp-right {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      width: 240px;
+      max-width: 240px;
+      min-width: 0;
+      flex: none;
+      z-index: 2;
+    }
+
+    .sp-volume-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .sp-vol-icon {
+      color: #B3B3B3;
+      flex: none;
+    }
+
+    .sp-vol-icon:hover {
+      color: #FFFFFF;
+    }
+
+    .sp-vol-input {
+      width: 93px;
+      height: 4px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: #4D4D4D;
+      border-radius: 2px;
+      outline: none;
+      cursor: pointer;
+      accent-color: #FFFFFF;
+    }
+
+    .sp-volume-group:hover .sp-vol-input {
+      accent-color: #1DB954;
+    }
+
+    @media (max-width: 820px) {
+      .spotify-bar {
+        left: 0;
+        right: 0;
+        border: none !important;
+        height: 56px;
+        padding: 0 12px;
+        bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+        border-radius: 8px;
+        margin: 0 8px;
+        width: calc(100% - 16px);
+        background: #181818;
+      }
+
+      .sp-right,
+      .sp-timeline {
+        display: none;
+      }
+
+      .sp-center {
+        position: static;
+        transform: none;
+        left: auto;
+        width: auto;
+        min-width: 0;
+      }
+
+      .sp-left {
+        max-width: 200px;
+      }
+
+      .app {
+        padding-bottom: 120px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-dna" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+        <path d="M7 2c0 5 10 7 10 10s-10 5-10 10" />
+        <path d="M17 2c0 5-10 7-10 10s10 5 10 10" />
+        <path d="M8.6 5h6.8M10.2 8.6h3.6M10.2 15.4h3.6M8.6 19h6.8" />
+      </g>
+    </symbol>
+    <symbol id="i-wave" viewBox="0 0 24 24">
+      <path d="M3 12h1M6.5 8v8M10 5v14M13.5 9v6M17 6v12M20.5 11v2" stroke="currentColor" stroke-width="1.6"
+        stroke-linecap="round" />
+    </symbol>
+    <symbol id="i-prev" viewBox="0 0 24 24">
+      <path d="M6 5v14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+      <path d="M19 5 9 12l10 7z" fill="currentColor" />
+    </symbol>
+    <symbol id="i-next" viewBox="0 0 24 24">
+      <path d="M18 5v14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+      <path d="M5 5l10 7-10 7z" fill="currentColor" />
+    </symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24">
+      <rect x="6.5" y="5" width="3.5" height="14" rx="1" fill="currentColor" />
+      <rect x="14" y="5" width="3.5" height="14" rx="1" fill="currentColor" />
+    </symbol>
+    <symbol id="i-play" viewBox="0 0 24 24">
+      <path d="M7.5 5v14l12-7z" fill="currentColor" />
+    </symbol>
+    <symbol id="i-heart" viewBox="0 0 24 24">
+      <path d="M12 20s-7.5-4.6-7.5-10.2A4.2 4.2 0 0 1 12 7.4a4.2 4.2 0 0 1 7.5 2.4C19.5 15.4 12 20 12 20z" fill="none"
+        stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
+    </symbol>
+    <symbol id="i-loop" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M17 2l3 3-3 3" />
+        <path d="M4 11V9a4 4 0 0 1 4-4h12" />
+        <path d="M7 22l-3-3 3-3" />
+        <path d="M20 13v2a4 4 0 0 1-4 4H4" />
+      </g>
+    </symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">
+        <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" />
+        <path d="M19 15.5l.6 1.7 1.7.6-1.7.6-.6 1.7-.6-1.7-1.7-.6 1.7-.6z" />
+      </g>
+    </symbol>
+    <symbol id="i-vol" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z" />
+        <path d="M15.5 9a4 4 0 0 1 0 6" />
+        <path d="M18 6.5a7.5 7.5 0 0 1 0 11" />
+      </g>
+    </symbol>
+    <symbol id="i-x" viewBox="0 0 24 24">
+      <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+    </symbol>
+    <symbol id="i-lib" viewBox="0 0 24 24">
+      <path d="M5 4v16M10 4v16M14.5 4.5l5 15" fill="none" stroke="currentColor" stroke-width="1.6"
+        stroke-linecap="round" />
+    </symbol>
+    <symbol id="i-compass" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="8.5" />
+        <path d="M15.5 8.5l-2 5-5 2 2-5z" />
+      </g>
+    </symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+        <rect x="5" y="10.5" width="14" height="10" rx="2" />
+        <path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" />
+      </g>
+    </symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24">
+      <g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3" />
+        <path
+          d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+      </g>
+    </symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24">
+      <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+    </symbol>
+    <symbol id="i-download" viewBox="0 0 24 24">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" fill="none" stroke="currentColor"
+        stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+    </symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24">
+      <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" fill="none"
+        stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+    </symbol>
+    <symbol id="i-art" viewBox="0 0 88 88">
+      <circle cx="44" cy="44" r="43.5" fill="#18181B" stroke="#33333A" />
+      <g fill="none" stroke="#DCDCE0" stroke-width="0.9">
+        <path d="M12 50c10-14 20 6 32-8s20 6 32-8" stroke-opacity="0.55" />
+        <path d="M12 57c10-14 20 6 32-8s20 6 32-8" stroke-opacity="0.25" />
+        <path d="M12 43c10-14 20 6 32-8s20 6 32-8" stroke-opacity="0.25" />
+      </g>
+      <circle cx="59" cy="28" r="5.5" fill="#DCDCE0" fill-opacity="0.8" />
+    </symbol>
+    <symbol id="i-shuffle" viewBox="0 0 24 24">
+      <path d="M16 3h5v5M4 20l5.8-5.8M21 3l-7.3 7.3M4 4l7.3 7.3M21 21v-5h-5M21 21l-5.8-5.8" fill="none"
+        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+    </symbol>
+    <symbol id="i-plus-circle" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.8" />
+      <path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+    </symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24">
+      <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" fill="none" stroke="currentColor"
+        stroke-width="1.8" />
+      <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3M8 22h8" fill="none" stroke="currentColor" stroke-width="1.8"
+        stroke-linecap="round" />
+    </symbol>
+    <symbol id="i-queue" viewBox="0 0 24 24">
+      <path d="M4 6h16M4 12h16M4 18h11M18 16l4 2.5-4 2.5v-5z" fill="none" stroke="currentColor" stroke-width="1.8"
+        stroke-linecap="round" stroke-linejoin="round" />
+    </symbol>
+    <symbol id="i-device" viewBox="0 0 24 24">
+      <rect x="2" y="5" width="14" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8" />
+      <path d="M6 19h6M9 16v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+      <rect x="14" y="9" width="8" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8" />
+      <circle cx="18" cy="18" r="0.5" fill="currentColor" />
+    </symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24">
+      <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" fill="none" stroke="currentColor" stroke-width="1.8"
+        stroke-linecap="round" stroke-linejoin="round" />
+    </symbol>
+  </svg>
+
+  <div class="app">
+    <aside class="side" aria-label="Sidebar">
+      <div class="brand" style="display:flex;align-items:center;justify-content:space-between;min-height:28px">MUSIC
+        DNA<span id="learnst"></span></div>
+      <nav class="nav" id="nav"></nav>
+      <div>
+        <div class="sec">COLLECTIONS</div>
+        <div class="nav" id="colls"></div>
+      </div>
+      <div style="margin-top:auto;display:flex;flex-direction:column;gap:6px">
+        <button class="nv" data-act="import"><svg width="18" height="18" aria-hidden="true">
+            <use href="#i-plus" />
+          </svg>Add music</button>
+        <button class="nv" data-act="go" data-v="settings" id="side-settings"><svg width="18" height="18"
+            aria-hidden="true">
+            <use href="#i-settings" />
+          </svg>Settings</button>
+      </div>
+    </aside>
+
+    <main id="main"></main>
+  </div>
+
+  <button class="mini-np" id="sidenp" style="display:none" hidden></button>
+  <button class="mini-np mobnp" id="mobnp" style="display:none" hidden></button>
+
+  <footer class="spotify-bar" id="spotify-bar" role="region" aria-label="Playback Controls">
+    <div class="sp-left">
+      <button class="sp-art-btn" data-act="go" data-v="player" aria-label="Open Now Playing">
+        <svg width="34" height="34" aria-hidden="true">
+          <use href="#i-art" />
+        </svg>
+      </button>
+      <div class="sp-info">
+        <button class="sp-title-btn" id="sp-title" data-act="go" data-v="player">First Light</button>
+        <span class="sp-artist" id="sp-artist" data-act="go" data-v="player">Original demo</span>
+      </div>
+      <button class="sp-icon-btn sp-heart" data-act="quicksave" aria-label="Save moment"
+        title="Save moment (quicksave)">
+        <svg width="18" height="18" aria-hidden="true">
+          <use href="#i-plus-circle" />
+        </svg>
+      </button>
+    </div>
+
+    <div class="sp-center">
+      <div class="sp-controls">
+        <button class="sp-icon-btn" id="sp-shuffle-btn" data-act="shuffle" aria-label="Shuffle" title="Shuffle">
+          <svg width="16" height="16" aria-hidden="true">
+            <use href="#i-shuffle" />
+          </svg>
+        </button>
+        <button class="sp-icon-btn" data-act="seek" data-v="-15" aria-label="Previous (Skip back 15s)"
+          title="Skip back 15s">
+          <svg width="18" height="18" aria-hidden="true">
+            <use href="#i-prev" />
+          </svg>
+        </button>
+        <button class="sp-play-btn" id="sp-play-btn" data-act="play" aria-label="Play">
+          <svg width="18" height="18" aria-hidden="true">
+            <use href="#i-play" />
+          </svg>
+        </button>
+        <button class="sp-icon-btn" data-act="seek" data-v="15" aria-label="Next (Skip forward 15s)"
+          title="Skip forward 15s">
+          <svg width="18" height="18" aria-hidden="true">
+            <use href="#i-next" />
+          </svg>
+        </button>
+        <button class="sp-icon-btn" id="sp-loop-btn" data-act="loop" aria-pressed="false" aria-label="Loop selection"
+          title="Loop selection">
+          <svg width="18" height="18" aria-hidden="true">
+            <use href="#i-loop" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="sp-timeline">
+        <span class="sp-time" id="sp-time-now">0:00</span>
+        <div class="sp-progress-rail" id="sp-progress-rail" role="slider" aria-label="Playback progress"
+          aria-valuemin="0" aria-valuemax="32" aria-valuenow="0" tabindex="0">
+          <div class="sp-progress-track">
+            <div class="sp-progress-fill" id="sp-progress-fill" style="width:0%"></div>
+            <div class="sp-progress-handle" id="sp-progress-handle" style="left:0%"></div>
+          </div>
+        </div>
+        <span class="sp-time" id="sp-time-tot">0:32</span>
+      </div>
+    </div>
+
+    <div class="sp-right">
+      <button class="sp-icon-btn" data-act="go" data-v="admin" aria-label="Audio Intelligence &amp; Diagnostics"
+        title="Feature Analysis">
+        <svg width="18" height="18" aria-hidden="true">
+          <use href="#i-mic" />
+        </svg>
+      </button>
+      <button class="sp-icon-btn" data-act="go" data-v="moments" aria-label="My Moments" title="Queue / Moments">
+        <svg width="18" height="18" aria-hidden="true">
+          <use href="#i-queue" />
+        </svg>
+      </button>
+      <button class="sp-icon-btn" data-act="go" data-v="dna" aria-label="Music DNA" title="Connect / Music DNA">
+        <svg width="18" height="18" aria-hidden="true">
+          <use href="#i-device" />
+        </svg>
+      </button>
+      <div class="sp-volume-group">
+        <button class="sp-icon-btn sp-vol-icon" id="sp-vol-mute" aria-label="Mute/Unmute" title="Volume">
+          <svg width="18" height="18" aria-hidden="true">
+            <use href="#i-vol" />
+          </svg>
+        </button>
+        <input type="range" class="sp-vol-input" id="sp-vol-input" min="0" max="100" value="80" aria-label="Volume">
+      </div>
+      <button class="sp-icon-btn" data-act="go" data-v="player" aria-label="Full Player" title="Full Player">
+        <svg width="18" height="18" aria-hidden="true">
+          <use href="#i-expand" />
+        </svg>
+      </button>
+    </div>
+  </footer>
+  <nav class="tabbar" id="tabbar" aria-label="Sections"></nav>
+  <div class="toast" id="toast" role="status"
+    style="top:24px;bottom:auto;left:50%;transform:translateX(-50%);z-index:9999" hidden></div>
+  <input type="file" id="file-import" accept="audio/*,.mp3,.wav,.flac,.ogg,.m4a,.aac,.opus" multiple hidden>
+  <div id="audio-engine" aria-hidden="true"
+    style="position:absolute;left:-9999px;width:800px;height:1px;overflow:hidden"></div>
+
+  <script type="module">
+    import WaveSurfer from 'wavesurfer.js';
+    // WaveSurfer.create( adapter compatibility check
+    import { db, ensureDemo, importFiles, exportProfile } from './src/data/db.ts';
+    import { analyzeLocalTrack, intelligenceHealth, saveAnalysisToSQLite, deleteTrackFromSQLite, uploadAudioToCache, fetchPythonDiagnostics } from './src/intelligence/client.ts';
+    import { personalRecommendations, attentionCandidates, classifyFavReasons, selectActiveLearningQuestions, synthesizeMusicDnaInsight, evaluatePreferences } from './src/intelligence/personalize.ts';
+    import { buildSimilarityMap } from './src/intelligence/map.ts';
+    import { resolveStreamUrl, getProxyStreamUrl } from './src/services/streaming.ts';
+    (function () {
+      var DUR = 32;
+      let music, objectURL = null, analyses = [], ratings = [], events = [], suggestions = [], candidates = [], audioPeaks = [];
+      let loading = false, loadedTrackId = null, loadSeq = 0, seekGuardUntil = 0, playQueue = [], previewEnd = null, analyzingIds = new Set(), analyzeStatus = {};
+      let spanStart = null;
+      const sessionId = crypto.randomUUID();
+      const uid = () => crypto.randomUUID();
+      const current = () => LIB.find(t => t.id === S.trackId);
+      const track = id => LIB.find(t => t.id === id);
+      function modelMoment(m) {
+        return {
+          id: String(m.id), trackId: m.trackId, startSec: m.a, endSec: m.b,
+          feelings: m.feelings || [], qualities: m.qualities || [], note: m.note || '', createdAt: m.createdAt || Date.now(), updatedAt: Date.now()
+        };
+      }
+      function emit(kind, origin = 'user', extra = {}) {
+        if (!S.learning || !S.trackId) return;
+        db.events.add({ id: uid(), trackId: S.trackId, sessionId, kind, origin, at: Date.now(), positionSec: S.t, ...extra })
+          .then(refreshIntelligence).catch(console.warn);
+      }
+      function flushListenSpan(endedBy = 'user_action') {
+        if (spanStart !== null && S.trackId && S.learning) {
+          const fromSec = Math.min(spanStart, S.t), toSec = Math.max(spanStart, S.t);
+          const durationSec = Math.round((toSec - fromSec) * 100) / 100;
+          if (durationSec >= 1.0) {
+            emit('listen_span', 'player', { fromSec, toSec, durationSec, endedBy });
+          }
+          spanStart = null;
+        }
+      }
+      function saveDB(m) { db.moments.put(modelMoment(m)).then(refreshIntelligence).catch(console.warn); }
+      function savedForTrack() { S.saved = MOMENTS.filter(m => m.trackId === S.trackId).map(m => ({ id: m.id, a: m.a, b: m.b })); }
+      async function refreshIntelligence() {
+        [analyses, ratings, events] = await Promise.all([db.analyses.toArray(), db.ratings.toArray(), db.events.toArray()]);
+        candidates = attentionCandidates(events,2).filter(c => !MOMENTS.some(m => m.trackId === c.trackId && Math.max(m.a, c.startSec) < Math.min(m.b, c.endSec)));
+        suggestions = personalRecommendations(analyses, MOMENTS.map(modelMoment), ratings, 12);
+        S.interest = candidates.filter(x => x.trackId === S.trackId).map(x => ({ a: x.startSec, b: Math.min(DUR, x.endSec), n: x.backwardSeeks + x.loopStarts, confidence: x.confidence || 'possible interest', reasons: x.reason || [], trackId: x.trackId }));
+      }
+      async function refreshLibrary() {
+        try {
+          const res = await fetch('http://127.0.0.1:8765/api/db/analyses', { signal: AbortSignal.timeout(1800) }).catch(() => null);
+          if (res && res.ok) {
+            const sqlRows = await res.json();
+            const existingTracks = await db.tracks.toArray();
+            const existingIds = new Set(existingTracks.map(x => x.id));
+            for (const r of sqlRows) {
+              if (!r.trackId) continue;
+              if (!existingIds.has(r.trackId) && r.trackId !== 'original-demo') {
+                existingIds.add(r.trackId);
+                await db.tracks.put({
+                  id: r.trackId,
+                  title: (r.title && r.title !== r.trackId) ? r.title : r.trackId,
+                  artist: r.artist || 'Your library',
+                  durationSec: r.durationSec || 180,
+                  mimeType: 'audio/mpeg',
+                  source: 'local-file',
+                  analysisRight: 'cleared',
+                  addedAt: Date.now()
+                }).catch(() => { });
+              }
+              if (r.method === 'multimodal' || !sqlRows.some(x => x.trackId === r.trackId && x.method === 'multimodal')) {
+                await db.analyses.put({
+                  trackId: r.trackId,
+                  method: r.method || 'multimodal',
+                  modelId: r.modelId || 'multimodal',
+                  durationSec: r.durationSec || 32,
+                  analyzedAt: Date.now(),
+                  segments: r.segments || []
+                }).catch(() => { });
+              }
+            }
+          }
+        } catch (e) { }
+        LIB = (await db.tracks.orderBy('addedAt').reverse().toArray()).map(t => ({ ...t, song: t.title, artist: t.artist, dur: t.durationSec }));
+        MOMENTS = (await db.moments.orderBy('createdAt').reverse().toArray()).map(m => ({
+          ...m, a: m.startSec, b: m.endSec,
+          song: track(m.trackId)?.song || 'Unknown', artist: track(m.trackId)?.artist || '',
+          what: m.qualities?.join(' · ') || 'Saved moment', tags: [...(m.feelings || []), ...(m.qualities || [])], coll: [...(m.feelings || []).includes('Chills') ? [0] : [], ...(m.feelings || []).includes('Nostalgia') ? [1] : [], ...(m.qualities || []).includes('Melody') ? [2] : []], seed: 12
+        }));
+        savedForTrack(); await refreshIntelligence();
+      }
+      let peakCtx = null;
+      async function decodePeaksInBackground(source, seq) {
+        try {
+          let buf;
+          if (source instanceof Blob) {
+            buf = await source.arrayBuffer();
+          } else if (typeof source === 'string') {
+            const res = await fetch(source);
+            if (!res.ok) return;
+            buf = await res.arrayBuffer();
+          } else {
+            return;
+          }
+          if (seq !== loadSeq) return;
+          if (!peakCtx) peakCtx = new (window.AudioContext || window.webkitAudioContext)();
+          const decoded = await peakCtx.decodeAudioData(buf.slice(0));
+          if (seq !== loadSeq) return;
+          const ch = decoded.getChannelData(0), step = Math.max(1, Math.floor(ch.length / 400));
+          const peaks = Array.from({ length: 400 }, (_, i) => {
+            let m = 0; for (let k = i * step; k < Math.min(ch.length, (i + 1) * step); k += Math.max(1, Math.floor(step / 50))) m = Math.max(m, Math.abs(ch[k])); return m;
+          });
+          const mx = Math.max(.001, ...peaks);
+          audioPeaks = peaks.map(v => .05 + .95 * Math.pow(v / mx, .75));
+          if (S.view === 'player') drawWave();
+        } catch (e) {
+          console.warn('Decode peaks status:', e);
+        }
+      }
+      async function selectTrack(t, seconds = 0, play = false, navigate = false) {
+        if (!t) { if (play) toast('Audio is unavailable.'); return; }
+        adminTrackId = t.id;
+        if (!loading && loadedTrackId === t.id && S.trackId === t.id && music && music.hasSource()) {
+          previewEnd = null; S.sel = null; S.describe = null; S.ask = null; S.loop = false; S.justSaved = false;
+          if (navigate) S.view = 'player';
+          S.t = Math.min(seconds, DUR); seekGuardUntil = Date.now() + 300; music.setTime(S.t);
+          if (play) { try { await music.play(); S.playing = true; } catch (e) { console.warn(e); } }
+          render(); return;
+        }
+        const seq = ++loadSeq;
+        loading = true; loadedTrackId = null; previewEnd = null; S.trackId = t.id; DUR = t.dur || 32; S.sel = null; S.describe = null; S.ask = null;
+        S.explore = false; S.activeStem = 'all'; S.stemReasons = [];
+        S.loop = false; S.justSaved = false; if (navigate) S.view = 'player'; S.playing = false; S.t = seconds; savedForTrack();
+        try { if (music && music.isPlaying()) music.pause(); } catch (e) { }
+        if (objectURL) { URL.revokeObjectURL(objectURL); objectURL = null; }
+        const fallbackUrl = t.id === 'original-demo' ? '/demo.wav' : (t.streamPlaybackUrl || ('http://127.0.0.1:8765/api/audio/' + encodeURIComponent(t.id)));
+        let srcUrl = null;
+        let blob = null;
+        if (t.audioBlob) {
+          try {
+            const candidate = (t.audioBlob instanceof Blob) ? t.audioBlob : new Blob([t.audioBlob], { type: t.mimeType || 'audio/mpeg' });
+            if (candidate.size > 0) {
+              await candidate.slice(0, 16).arrayBuffer();
+              blob = candidate;
+              objectURL = URL.createObjectURL(blob);
+              srcUrl = objectURL;
+            }
+          } catch (e) {
+            blob = null;
+            srcUrl = null;
+          }
+        }
+        if (!srcUrl) {
+          srcUrl = fallbackUrl;
+        }
+        audioPeaks = AMP.slice();
+        try {
+          await music.load(srcUrl, seconds, fallbackUrl);
+          if (seq !== loadSeq) return;
+          loadedTrackId = t.id;
+          loading = false;
+          if (play) {
+            try { await music.play(); S.playing = true; } catch (e) { console.warn('Play error:', e); }
+          }
+          const d = music.getDuration();
+          if (d && Number.isFinite(d) && d > 0) {
+            DUR = d;
+            if (Math.abs((t.dur || 0) - DUR) > 1) { t.dur = DUR; t.durationSec = DUR; db.tracks.update(t.id, { durationSec: DUR }).catch(() => { }); }
+          }
+          render();
+          decodePeaksInBackground(blob || srcUrl, seq);
+        } catch (err) {
+          if (seq !== loadSeq) return;
+          loading = false; console.warn('Audio load status:', err);
+          if (play && err?.name !== 'AbortError' && err?.name !== 'NotAllowedError') toast('Unable to play this recording.');
+          render();
+        }
+      }
+      async function importAudio(files) {
+        toast('Importing audio files…');
+        const added = await importFiles(files);
+        const count = Array.isArray(added) ? added.length : (Number(added) || 0);
+        if (!count) { toast('No supported audio files.'); return; }
+        await refreshLibrary();
+        toast('Added ' + count + ' song' + (count > 1 ? 's' : '') + ' · loading into player…');
+        const targetId = (Array.isArray(added) && added[0]) ? added[0].id : null;
+        const targetTrack = (targetId && LIB.find(t => t.id === targetId)) || (Array.isArray(added) && added[0]) || LIB[0];
+        if (targetTrack) {
+          uploadAudioToCache(targetTrack).catch(() => { });
+          await selectTrack(targetTrack, 0, true, true);
+        } else {
+          render();
+        }
+        if (S.autoAnalyze) {
+          const idsToAnalyze = Array.isArray(added) ? added.map(x => x.id) : [targetTrack?.id].filter(Boolean);
+          for (const id of idsToAnalyze) {
+            analyze(id, true).catch(console.warn);
+          }
+        }
+      }
+      async function analyze(id, silent = false) {
+        const t = track(id); if (!t || analyzingIds.has(id)) return false;
+        if (!silent && !S.autoAnalyze && !confirm('Only proceed if you have rights to analyze this recording. File ownership or playback alone may not be enough. Run local audio analysis?')) return false;
+        analyzingIds.add(id);
+        analyzeStatus[id] = 'Step 1/3 · Extracting librosa DSP & 512-D CLAP embeddings…';
+        if (S.view === 'player' || S.view === 'library' || S.view === 'admin') render();
+        try {
+          const health = await intelligenceHealth(); if (!silent) toast('Analyzing ' + t.song + ' locally…');
+          const method = (health.models && health.models.includes('multimodal')) ? 'both' : 'dsp';
+          const result = await analyzeLocalTrack({ ...t, analysisRight: 'cleared' }, method);
+          analyzeStatus[id] = 'Step 2/3 · Saving multimodal vectors to SQLite & IndexedDB…';
+          if (S.view === 'player' || S.view === 'library' || S.view === 'admin') render();
+          if (Array.isArray(result)) {
+            for (const item of result) { await db.analyses.put(item); await saveAnalysisToSQLite(t.id, item, t.song, t.artist); }
+          } else {
+            await db.analyses.put(result); await saveAnalysisToSQLite(t.id, result, t.song, t.artist);
+          }
+          analyzeStatus[id] = 'Step 3/3 · Computing active-learning & preference rankings…';
+          await refreshIntelligence();
+          analyzingIds.delete(id); delete analyzeStatus[id];
+          if (S.view === 'player' || S.view === 'library' || S.view === 'admin' || S.view === 'discover') render();
+          toast('Analysis complete · ' + t.song + ' is ready for Music DNA.');
+          return true;
+        } catch (err) {
+          analyzingIds.delete(id); delete analyzeStatus[id];
+          if (S.view === 'player' || S.view === 'library' || S.view === 'admin') render();
+          toast('Python analysis unavailable: ' + String(err.message || err).slice(0, 75)); return false;
+        }
+      }
+      async function autoAnalyzeLibrary() {
+        if (!S.autoAnalyze) return;
+        const pending = LIB.filter(t => !analyses.some(a => a.trackId === t.id));
+        if (!pending.length) return;
+        let doneCount = 0;
+        for (const t of pending) {
+          const ok = await analyze(t.id, true);
+          if (ok) doneCount++;
+        }
+        if (doneCount > 0) {
+          if (S.view === 'library') renderLibrary();
+          else if (S.view === 'discover') renderDiscover();
+          else if (S.view === 'dna') renderDNA();
+          toast('Automatically analyzed ' + doneCount + ' song' + (doneCount > 1 ? 's' : '') + ' for Music DNA.');
+        }
+      }
+      async function rate(i, value) {
+        const x = suggestions[+i]; if (!x) return;
+        await db.ratings.put({ id: x.trackId + ':' + x.startSec, trackId: x.trackId, startSec: x.startSec, endSec: x.endSec, value, createdAt: Date.now() });
+        await refreshIntelligence(); renderDiscover(); toast('Your feedback has been saved.');
+      }
+
+      var COLLS = ['Moments that give me chills', 'Moments that remind me of home', 'Beautiful melodies'];
+      var FEEL = ['♡ Love', 'Chills', 'Nostalgia', 'Excitement', 'Calm', 'Sadness', 'Other'];
+      var LOVE = ['Vocals', 'Melody', 'Harmony', 'Rhythm', 'Lyrics', 'Instruments', 'Build-up', 'Drop', 'Atmosphere'];
+      var TRAIT_OF = { Vocals: 0, Lyrics: 0, Melody: 1, 'Build-up': 1, Drop: 1, Rhythm: 1, Atmosphere: 2, Instruments: 2, Harmony: 3 };
+
+      var S = {
+        view: 'player', playing: false, t: 0, trackId: null, sel: null, describe: false, loop: false, loops: 0,
+        nudge: false, nudged: false, justSaved: false, feel: [], love: [], note: '', saved: [], tab: 0, trait: 0,
+        misread: {}, confirmed: {}, learning: true, autoAnalyze: true, ask: null, interest: [], imported: false, dtab: 0, dfb: {}, preview: null, volume: .62,
+        explore: false, activeStem: 'all', stemReasons: [], showStreamInput: false, shuffle: false
+      };
+      var LIB = [], SIG = [], DISC = [], MOMENTS = [], TRAITS = [];
+      var nextId = 5;
+
+      var AMP = (function () { var s = 11, a = []; for (var i = 0; i < 400; i++) { s = (s * 9301 + 49297) % 233280; var r = s / 233280, t = i / 399; var env = Math.pow(Math.sin(Math.PI * t), .45), sw = .55 + .45 * Math.sin(t * Math.PI * 6 + .8); var b = (t > .29 && t < .42) ? 1.25 : 1; a.push(Math.max(.03, Math.min(1, env * sw * b * (.35 + .65 * r)))); } return a; })();
+      function fmt(s) { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+      function esc(x) { return String(x).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+      function svg(id, w) { return '<svg width="' + w + '" height="' + w + '" aria-hidden="true"><use href="#' + id + '"/></svg>'; }
+      var $ = function (id) { return document.getElementById(id); };
+
+      let spotifyControlsBound = false;
+      function updateSpotifyBar() {
+        const cur = current();
+        const titleBtn = $('sp-title');
+        const artistSpan = $('sp-artist');
+        const playBtn = $('sp-play-btn');
+        const loopBtn = $('sp-loop-btn');
+        const shufBtn = $('sp-shuffle-btn');
+        const timeNow = $('sp-time-now');
+        const timeTot = $('sp-time-tot');
+        const fill = $('sp-progress-fill');
+        const handle = $('sp-progress-handle');
+        const rail = $('sp-progress-rail');
+        const volInput = $('sp-vol-input');
+
+        if (titleBtn) {
+          titleBtn.textContent = cur?.song || 'First Light';
+          titleBtn.title = cur?.song || 'First Light';
+        }
+        if (artistSpan) {
+          artistSpan.textContent = cur?.artist || 'Original demo';
+          artistSpan.title = cur?.artist || 'Original demo';
+        }
+        if (playBtn) {
+          playBtn.innerHTML = svg(S.playing ? 'i-pause' : 'i-play', 18);
+          playBtn.setAttribute('aria-label', S.playing ? 'Pause' : 'Play');
+        }
+        if (loopBtn) {
+          loopBtn.setAttribute('aria-pressed', S.loop ? 'true' : 'false');
+        }
+        if (shufBtn) {
+          shufBtn.setAttribute('aria-pressed', S.shuffle ? 'true' : 'false');
+        }
+        const totalSec = DUR || 32;
+        if (timeTot) timeTot.textContent = fmt(totalSec);
+        if (rail) {
+          rail.setAttribute('aria-valuemax', Math.round(totalSec));
+          rail.setAttribute('aria-valuenow', Math.round(S.t));
+        }
+        if (timeNow) timeNow.textContent = fmt(S.t);
+        const pct = Math.min(100, Math.max(0, (S.t / totalSec) * 100));
+        if (fill) fill.style.width = pct + '%';
+        if (handle) handle.style.left = pct + '%';
+        if (volInput && !volInput.matches(':active')) {
+          volInput.value = String(Math.round(S.volume * 100));
+        }
+        bindSpotifyControls();
+      }
+
+      function bindSpotifyControls() {
+        if (spotifyControlsBound) return;
+        const rail = $('sp-progress-rail');
+        const vol = $('sp-vol-input');
+        const mute = $('sp-vol-mute');
+        if (!rail || !vol) return;
+        spotifyControlsBound = true;
+
+        let dragging = false;
+        function seekFromEvent(e) {
+          const rect = rail.getBoundingClientRect();
+          if (rect.width <= 0) return;
+          const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+          const targetSec = ratio * (DUR || 32);
+          S.t = targetSec;
+          seekGuardUntil = Date.now() + 250;
+          if (music) music.setTime(targetSec);
+          const pct = ratio * 100;
+          const fill = $('sp-progress-fill');
+          const handle = $('sp-progress-handle');
+          const timeNow = $('sp-time-now');
+          if (fill) fill.style.width = pct + '%';
+          if (handle) handle.style.left = pct + '%';
+          if (timeNow) timeNow.textContent = fmt(targetSec);
+          rail.setAttribute('aria-valuenow', Math.round(targetSec));
+          if (S.view === 'player') drawWave();
+        }
+
+        rail.addEventListener('pointerdown', e => {
+          dragging = true;
+          rail.classList.add('is-dragging');
+          rail.setPointerCapture(e.pointerId);
+          seekFromEvent(e);
+        });
+        rail.addEventListener('pointermove', e => {
+          if (dragging) seekFromEvent(e);
+        });
+        rail.addEventListener('pointerup', e => {
+          if (dragging) {
+            dragging = false;
+            rail.classList.remove('is-dragging');
+            seekFromEvent(e);
+            emit('seek', 'user', { toSec: S.t });
+            try { rail.releasePointerCapture(e.pointerId); } catch (_) { }
+          }
+        });
+        rail.addEventListener('pointercancel', e => {
+          if (dragging) {
+            dragging = false;
+            rail.classList.remove('is-dragging');
+            try { rail.releasePointerCapture(e.pointerId); } catch (_) { }
+          }
+        });
+        rail.addEventListener('keydown', e => {
+          if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+            const to = Math.min(DUR || 32, S.t + 5);
+            S.t = to; seekGuardUntil = Date.now() + 250; music?.setTime(to);
+            if (S.view === 'player') drawWave();
+            updateSpotifyBar();
+          } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+            const to = Math.max(0, S.t - 5);
+            S.t = to; seekGuardUntil = Date.now() + 250; music?.setTime(to);
+            if (S.view === 'player') drawWave();
+            updateSpotifyBar();
+          }
+        });
+
+        vol.addEventListener('input', () => {
+          const val = Number(vol.value) / 100;
+          S.volume = val;
+          if (music) music.setVolume(val);
+          const mainVol = $('vol');
+          if (mainVol) mainVol.value = vol.value;
+          emit('volume', 'user', { volume: S.volume });
+          db.settings.put({ key: 'volume', value: S.volume });
+        });
+
+        if (mute) {
+          let prevVol = 0.8;
+          mute.addEventListener('click', () => {
+            if (S.volume > 0.01) {
+              prevVol = S.volume;
+              S.volume = 0;
+            } else {
+              S.volume = prevVol || 0.8;
+            }
+            vol.value = String(Math.round(S.volume * 100));
+            if (music) music.setVolume(S.volume);
+            const mainVol = $('vol');
+            if (mainVol) mainVol.value = vol.value;
+            emit('volume', 'user', { volume: S.volume });
+            db.settings.put({ key: 'volume', value: S.volume });
+          });
+        }
+      }
+
+      /* ---------- shell ---------- */
+      function renderShell() {
+        var items = [
+          ['player', 'Now playing', 'i-wave', 'Playing'],
+          ['library', 'Library', 'i-lib', 'Library'],
+          ['moments', 'My Moments', 'i-heart', 'Moments'],
+          ['discover', 'Discover', 'i-compass', 'Discover'],
+          ['dna', 'My Music DNA', 'i-dna', 'DNA'],
+          ['admin', 'Feature Analysis', 'i-spark', 'Analysis']
+        ];
+        var h = '', tb = '';
+        items.forEach(function (it) {
+          var cur = S.view === it[0] ? ' aria-current="page"' : '';
+          var badge = it[0] === 'moments' ? '<span class="badge">' + MOMENTS.length + '</span>' : (it[0] === 'library' ? '<span class="badge">' + LIB.length + '</span>' : (it[0] === 'admin' ? '<span class="badge">' + analyses.length + '</span>' : ''));
+          h += '<button class="nv" data-act="go" data-v="' + it[0] + '"' + cur + '>' + svg(it[2], 18) + it[1] + badge + '</button>';
+          tb += '<button class="nv" data-act="go" data-v="' + it[0] + '"' + cur + '>' + svg(it[2], 20) + it[3] + '</button>';
+        });
+        $('nav').innerHTML = h; $('tabbar').innerHTML = tb;
+        const ss = $('side-settings');
+        if (ss) { if (S.view === 'settings') ss.setAttribute('aria-current', 'page'); else ss.removeAttribute('aria-current'); }
+        $('learnst').innerHTML = S.learning ? '' : '<button class="pill" style="margin:0;font-size:11px;padding:2px 8px;line-height:1.2" data-act="go" data-v="dna">Paused</button>';
+        $('colls').innerHTML = COLLS.map(function (c, i) { return '<button class="nv coll" data-act="coll" data-v="' + (i + 1) + '"' + (S.view === 'moments' && S.tab === i + 1 ? ' aria-current="page"' : '') + '>' + c + '</button>'; }).join('');
+        var np = '<svg width="40" height="40" aria-hidden="true" style="flex-shrink:0"><use href="#i-art"/></svg>' +
+          '<span class="tt" style="flex:1;min-width:0"><span>' + esc(current()?.song || 'No track') + '</span><span>' + esc(current()?.artist || 'Import audio') + ' · ' + fmt(S.t) + '</span></span>' +
+          '<span class="ib" style="width:36px;height:36px;flex-shrink:0;background:var(--raise);border-radius:50%" data-act="play">' + svg(S.playing ? 'i-pause' : 'i-play', 18) + '</span>';
+        $('sidenp').innerHTML = '<div style="max-width:1000px;width:100%;margin:0 auto;display:flex;align-items:center;gap:14px">' + np + '</div>';
+        $('sidenp').hidden = true;
+        $('mobnp').innerHTML = np; $('mobnp').hidden = true; $('mobnp').style.display = 'none';
+        updateSpotifyBar();
+      }
+
+      /* ---------- player ---------- */
+      function step() { if (S.describe || S.ask) return 3; if (S.sel) return 2; if (S.justSaved) return 4; return 1; }
+      var GUIDE = {
+        1: 'Drag across the waveform to pick a passage. Playback never stops.',
+        2: 'Save it or loop it. After saving you can say what you liked.',
+        3: 'Optional: tap what stood out, or choose More for feelings and a note.',
+        4: 'Saved. Find it in My Moments and tell Music DNA what you liked.'
+      };
+      function renderPlayer() {
+        var st = step();
+        var curT = current();
+        var isAnalyzing = curT && analyzingIds.has(curT.id);
+        var curAn = curT && analyses.find(function (a) { return a.trackId === curT.id; });
+        var statusBadge = isAnalyzing ? '<span class="pill" style="color:var(--accent);border-color:rgba(142,197,184,.35)">◐ ' + esc(analyzeStatus[curT.id] || 'Analyzing audio locally…') + '</span>' :
+          (curAn ? '<button class="pill ok" data-act="inspect-track" data-v="' + esc(curT.id) + '" style="cursor:pointer">● Analyzed (' + curAn.segments.length + ' windows · ' + esc(curAn.method) + ') · View Features →</button>' :
+            (curT ? '<button class="pill" data-act="analyze" data-v="' + esc(curT.id) + '" style="cursor:pointer">○ Not analyzed yet · click to analyze</button>' : ''));
+        $('main').innerHTML =
+          '<div class="col pcol">' +
+          '<div class="track"><svg width="96" height="96" aria-hidden="true"><use href="#i-art"/></svg><div><div class="t">' + esc(curT?.song || 'First Light') + '</div><div class="a">' + esc(curT?.artist || 'Original demo') + '</div><div style="margin-top:10px;display:flex;justify-content:center;gap:8px;align-items:center">' + statusBadge + '</div></div></div>' +
+          '<div class="wf-center-stage">' +
+          '<div class="wfwrap" style="margin-top:0">' +
+          '<div id="wf" role="slider" aria-label="Song position. Drag to select a moment" aria-valuemin="0" aria-valuemax="' + DUR + '" aria-valuenow="' + Math.round(S.t) + '" tabindex="0">' +
+          '<div id="bands"></div><div id="bars"></div><div id="ph"></div>' +
+          '</div>' +
+          '<div class="savedots" id="dots"></div>' +
+          '<div class="interest" id="intr"></div>' +
+          '<div id="tbwrap"></div>' +
+          '</div>' +
+          '<div class="slot" id="slot"><div id="slotin"></div></div>' +
+          '<div class="wcap" id="tloop" style="margin-bottom:0"></div>' +
+          '</div>' +
+          '<div class="pbar" aria-label="Playback">' +
+          '<div class="pl"><span class="now" id="tnow">' + fmt(S.t) + '</span> / ' + fmt(DUR) + '</div>' +
+          '<div class="tp"><button class="ib side-b" data-act="quicksave" aria-label="Save the last 20 seconds as a moment" title="Save this moment">' + svg('i-heart', 20) + '</button>' +
+          '<button class="ib" data-act="seek" data-v="-15" aria-label="Previous">' + svg('i-prev', 20) + '</button>' +
+          '<button class="play" data-act="play" aria-label="' + (S.playing ? 'Pause' : 'Play') + '">' + svg(S.playing ? 'i-pause' : 'i-play', 20) + '</button>' +
+          '<button class="ib" data-act="seek" data-v="15" aria-label="Next">' + svg('i-next', 20) + '</button>' +
+          '<button class="ib side-b" id="lpb" data-act="loop" aria-pressed="' + S.loop + '" aria-label="Loop selection" title="Loop selection">' + svg('i-loop', 20) + '</button></div>' +
+          '<div class="pr">' + svg('i-vol', 18) + '<label for="vol" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Volume</label><input class="vol" id="vol" type="range" min="0" max="100" value="' + Math.round(S.volume * 100) + '"></div>' +
+          '</div>' +
+          '</div>';
+        drawWave(); drawToolbar(); drawSlot(true);
+        bindWave();
+        const v = $('vol'); if (v) v.addEventListener('input', function () {
+          S.volume = Number(v.value) / 100; music.setVolume(S.volume);
+          emit('volume', 'user', { volume: S.volume }); db.settings.put({ key: 'volume', value: S.volume });
+        });
+      }
+      function barsN() { var w = $('wf').clientWidth; return Math.max(40, Math.floor((w + 3) / 5)); }
+      function drawWave() {
+        var wf = $('wf'); if (!wf) return;
+        var N = barsN(), H = wf.clientHeight - 20, h = '';
+        for (var i = 0; i < N; i++) {
+          var x = (i + .5) / N, ts = x * DUR, amp = (audioPeaks.length ? audioPeaks : AMP)[Math.floor(x * 399)], c;
+          if (S.sel && ts >= S.sel.a && ts <= S.sel.b) c = 'var(--accent)';
+          else if (S.saved.some(function (r) { return ts >= r.a && ts <= r.b; })) c = 'rgba(142,197,184,.45)';
+          else c = ts <= S.t ? 'rgba(220,220,224,.78)' : 'var(--off)';
+          h += '<i style="height:' + Math.max(2, Math.round(amp * H)) + 'px;background:' + c + '"></i>';
+        }
+        $('bars').innerHTML = h;
+        var W = wf.clientWidth, b = '';
+        if (S.sel) b += '<div class="band sel" style="left:' + (S.sel.a / DUR * W - 4) + 'px;width:' + ((S.sel.b - S.sel.a) / DUR * W + 8) + 'px"></div>';
+        $('bands').innerHTML = b;
+        $('ph').style.left = (S.t / DUR * W) + 'px';
+        $('dots').innerHTML = S.saved.map(function (r) { return '<b data-act="delmoment" data-v="' + esc(r.id) + '" title="Saved ' + fmt(r.a) + '–' + fmt(r.b) + ' (click dot to remove)" style="left:' + ((r.a + r.b) / 2 / DUR * W) + 'px;cursor:pointer;width:9px;height:9px;top:2px;margin-left:-4.5px"></b>'; }).join('');
+        wf.setAttribute('aria-valuenow', Math.round(S.t));
+        if ($('tnow')) $('tnow').textContent = fmt(S.t);
+        var ih = '', hasI = false;
+        S.interest.forEach(function (r) { if (r.n >= 2) { hasI = true; ih += '<b data-act="dismisscand" data-v="' + esc(r.trackId + ':' + r.a) + '" title="' + esc(r.reasons?.join(', ') || ('You returned here ' + r.n + ' times')) + ' (click to remove)" style="left:' + (r.a / DUR * W) + 'px;width:' + ((r.b - r.a) / DUR * W) + 'px;height:8px;top:-2px;cursor:pointer"></b>'; } });
+        if ($('intr')) $('intr').innerHTML = ih;
+        var activeCand = S.interest.find(function (r) { return r.n >= 2 && S.t >= r.a && S.t <= r.b; });
+        if ($('tloop')) $('tloop').innerHTML = (S.loop && S.sel) ? '<span class="loopflag">Looping ' + fmt(S.sel.a) + ' – ' + fmt(S.sel.b) + '</span>' :
+          (S.learning && activeCand) ? '<span style="display:inline-flex;align-items:center;gap:8px"><span>◐ Possible favorite (' + esc(activeCand.reasons[0] || 'attention') + ')</span><button class="ghost" style="height:24px;padding:0 8px;font-size:12px" data-act="savecand" data-v="' + esc(activeCand.trackId + ':' + activeCand.a) + '">Save</button><button class="ghost" style="height:24px;padding:0 6px;font-size:12px" data-act="dismisscand" data-v="' + esc(activeCand.trackId + ':' + activeCand.a) + '" title="Dismiss suggestion">×</button></span>' :
+            ((S.learning && S.interest.some(function (r) { return r.n >= 2 && S.t >= r.a && S.t <= r.b; })) ? '<span>You often come back to this part</span>' : '<span id="guide" style="color:var(--mute)">Drag across the waveform to pick a passage. Playback never stops.</span>');
+      }
+      function drawToolbar() {
+        var w = $('tbwrap'); if (!w) return;
+        if (!S.sel) { w.innerHTML = ''; w.classList.remove('on'); return; }
+        var matchedSaved = S.sel && S.saved.find(function (r) { return Math.max(r.a, S.sel.a) < Math.min(r.b, S.sel.b); });
+        w.classList.add('on');
+        w.innerHTML = '<div class="tb" id="tb" role="toolbar" aria-label="Selected moment">' +
+          '<span class="rng">' + fmt(S.sel.a) + ' – ' + fmt(S.sel.b) + '</span>' +
+          '<button class="tbb" data-act="playsel">' + svg('i-play', 15) + 'Play</button>' +
+          '<button class="tbb" data-act="save">' + svg('i-heart', 16) + 'Save</button>' +
+          '<button class="tbb" data-act="loop" aria-pressed="' + S.loop + '">' + svg('i-loop', 16) + 'Loop</button>' +
+          '<button class="tbb" data-act="explore-moment" aria-pressed="' + S.explore + '" title="Analyze stems &amp; musical layers">' + svg('i-spark', 15) + 'Explore</button>' +
+          (matchedSaved ? '<button class="tbb" data-act="delmoment" data-v="' + esc(matchedSaved.id) + '" title="Delete saved moment">' + svg('i-trash', 15) + 'Delete</button>' : '') +
+          '<button class="tbx" data-act="clear" aria-label="Clear selection">' + svg('i-x', 14) + '</button></div>';
+        var tb = $('tb'), W = $('wf').clientWidth, c = (S.sel.a + S.sel.b) / 2 / DUR * W;
+        tb.style.left = Math.max(0, Math.min(W - tb.offsetWidth, c - tb.offsetWidth / 2)) + 'px';
+      }
+      function chips(list, sel, kind, sq) { return list.map(function (l) { return '<button type="button" class="chip' + (sq ? ' sq' : '') + '" data-act="' + kind + '" data-v="' + esc(l) + '" aria-pressed="' + (sel.indexOf(l) >= 0) + '">' + l + '</button>'; }).join(''); }
+      function drawSlot(instant) {
+        var slot = $('slot'), inn = $('slotin'); if (!slot) return;
+        var html = '';
+        if (S.explore && S.sel) {
+          var curAn = analyses.find(function (a) { return a.trackId === S.trackId; });
+          var seg = curAn && curAn.segments && curAn.segments.find(function (s) {
+            return Math.max(s.startSec, S.sel.a) < Math.min(s.endSec, S.sel.b);
+          });
+          var desc = seg ? seg.descriptors : null;
+          var dims = desc ? desc.dimensions : (curAn ? curAn.musicalDimensions : null);
+          var activeKey = desc ? desc.key : (dims && dims.melodyHarmony ? dims.melodyHarmony.key : null);
+          var chords = (desc && desc.chords && desc.chords.length) ? desc.chords.join(' → ') : ((dims && dims.melodyHarmony && dims.melodyHarmony.chords) ? dims.melodyHarmony.chords.join(' → ') : null);
+          var tempo = desc ? desc.tempoBpm : (dims && dims.rhythmGroove ? dims.rhythmGroove.tempoBpm : null);
+          var topInst = (desc && desc.topInstruments && desc.topInstruments.length) ? desc.topInstruments.join(', ') : ((dims && dims.instrumentationTimbre && dims.instrumentationTimbre.topInstruments) ? dims.instrumentationTimbre.topInstruments.join(', ') : null);
+          var activeStems = (desc && desc.activeStems) ? desc.activeStems.join(' + ') : 'all stems';
+
+          var stemInfo = {
+            all: { title: 'Full arrangement & mix', sub: 'Interplay of vocal melody, bassline, drum groove, and accompaniment' },
+            vocals: { title: 'Vocals & expression', sub: 'Singing style, pitch movement, breathiness, and vocal intensity' },
+            drums: { title: 'Rhythm & groove', sub: 'Drum patterns, tempo, syncopation, fills, and transient beat grid' },
+            bass: { title: 'Bassline & harmonic root', sub: 'Low-frequency harmonic foundation, bass rhythm, and groove interaction' },
+            other: { title: 'Instrumental accompaniment', sub: 'Explore harmony, instrumental texture, guitar/synths/piano, and transitions' }
+          }[S.activeStem || 'all'] || { title: 'Full arrangement', sub: 'Explore musical layers' };
+
+          var pills = [];
+          if (activeKey) pills.push('<span class="pill ok">Key · ' + esc(activeKey) + '</span>');
+          if (chords) pills.push('<span class="pill">Chords · ' + esc(chords) + '</span>');
+          if (tempo) pills.push('<span class="pill">' + esc(tempo) + ' BPM</span>');
+          if (topInst) pills.push('<span class="pill">Instruments · ' + esc(topInst) + '</span>');
+          if (activeStems) pills.push('<span class="pill">' + esc(activeStems) + ' active</span>');
+
+          var reasonOptions = ['Melody', 'Harmony', 'Groove', 'Instruments', 'Vocals', 'The combination'];
+
+          html = '<section class="card" aria-label="Explore this moment" style="border-color:rgba(142,197,184,.35)">' +
+            '<div class="dhead">' +
+            '<h2>Explore this moment</h2>' +
+            '<div class="rng"><span class="dot"></span>' + fmt(S.sel.a) + ' — ' + fmt(S.sel.b) + ' · ' + (curAn ? 'Musical intelligence' : 'Illustrative analysis') + '</div>' +
+            '</div>' +
+            '<div class="dcol" style="gap:6px">' +
+            '<div class="lbl">Musical Layers &amp; Stems</div>' +
+            '<div class="chips">' +
+            ['all', 'vocals', 'drums', 'bass', 'other'].map(function (st) {
+              var label = st.charAt(0).toUpperCase() + st.slice(1);
+              var pressed = (S.activeStem || 'all') === st;
+              return '<button type="button" class="chip' + (pressed ? ' sq' : '') + '" data-act="switch-stem" data-v="' + st + '" aria-pressed="' + pressed + '">' + label + '</button>';
+            }).join('') +
+            '</div>' +
+            '</div>' +
+            '<div style="background:var(--bg);border:1px solid var(--line2);border-radius:10px;padding:12px 14px;margin:12px 0;display:flex;flex-direction:column;gap:6px">' +
+            '<div style="font-size:14px;font-weight:500;color:var(--fg)">' + esc(stemInfo.title) + '</div>' +
+            '<div style="font-size:13px;color:var(--sub);line-height:1.45">' + esc(stemInfo.sub) + '</div>' +
+            (pills.length ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">' + pills.join('') + '</div>' : '') +
+            '</div>' +
+            '<div class="dcol" style="gap:8px">' +
+            '<div class="lbl">What do you love about this moment?</div>' +
+            '<div class="chips">' +
+            reasonOptions.map(function (opt) {
+              var pressed = (S.stemReasons || []).includes(opt);
+              return '<button type="button" class="chip sq" data-act="toggle-stem-reason" data-v="' + esc(opt) + '" aria-pressed="' + pressed + '">' + esc(opt) + '</button>';
+            }).join('') +
+            '</div>' +
+            '</div>' +
+            '<div class="dfoot">' +
+            '<div class="note">Music DNA learns which musical elements matter to you from your feedback.</div>' +
+            '<div class="btns">' +
+            '<button class="ghost" data-act="close-explore">Close</button>' +
+            '<button class="primary" data-act="save-explore">Save moment</button>' +
+            '</div>' +
+            '</div>' +
+            '</section>';
+        } else if (S.describe) {
+          html = '<section class="strip" aria-label="Describe this moment">' +
+            '<div class="srow"><span class="slbl">Feels</span><div class="schips">' + chips(FEEL, S.feel, 'feel', false) + '</div></div>' +
+            '<div class="srow"><span class="slbl">Love</span><div class="schips">' + chips(LOVE, S.love, 'love', true) + '</div></div>' +
+            '<div class="srow"><span class="slbl">Note</span><input id="note" class="sin" type="text" aria-label="Optional note" placeholder="Optional — what did you notice?" value="' + esc(S.note) + '"><button class="ghost" data-act="closedesc">Not now</button><button class="primary" data-act="dsave">Done</button></div>' +
+            '</section>';
+        } else if (S.ask) {
+          var askChips = S.ask.chips || ['Vocals', 'Melody', 'Instruments', 'Rhythm', 'Build-up'];
+          html = '<section class="ask" aria-label="Quick question"><span class="qq">' + svg('i-spark', 16) + esc(S.ask.q) + '</span>' +
+            askChips.map(function (o) { return '<button type="button" class="chip sq" data-act="answer" data-v="' + o + '">' + o + '</button>'; }).join('') +
+            '<button type="button" class="chip sq" data-act="more">More…</button>' +
+            '<button class="ghost" data-act="skipask">Skip</button></section>';
+        } else if (S.nudge && S.sel) {
+          html = '<section class="card nudge" aria-label="Suggestion"><div class="q">' + svg('i-heart', 18) + '<div>Enjoying this moment?<small>You have played ' + fmt(S.sel.a) + ' – ' + fmt(S.sel.b) + ' ' + (S.loops + 1) + ' times.</small></div></div>' +
+            '<div class="btns"><button class="ghost" data-act="dismiss">Not now</button><button class="primary" data-act="save">Save moment</button></div></section>';
+        }
+        var open = !!html;
+        if (open) inn.innerHTML = html;
+        if (instant) { slot.style.transition = 'none'; slot.classList.toggle('open', open); slot.offsetHeight; slot.style.transition = ''; }
+        else { requestAnimationFrame(function () { slot.classList.toggle('open', open); }); }
+        if (!open) setTimeout(function () { if (!slot.classList.contains('open')) inn.innerHTML = ''; }, 300);
+        var ta = $('note'); if (ta) ta.addEventListener('input', function () { S.note = ta.value; });
+      }
+      function refreshPlayerState() {
+        var lb = $('lpb'); if (lb) lb.setAttribute('aria-pressed', S.loop && !!S.sel);
+        var pb = document.querySelector('.play'); if (pb) { pb.innerHTML = svg(S.playing ? 'i-pause' : 'i-play', 20); pb.setAttribute('aria-label', S.playing ? 'Pause' : 'Play'); }
+        drawWave(); drawToolbar();
+        updateSpotifyBar();
+      }
+
+      function bindWave() {
+        var wf = $('wf'), x0 = null, px0 = 0, drag = false;
+        function tAt(e) { var r = wf.getBoundingClientRect(); return Math.max(0, Math.min(DUR, (e.clientX - r.left) / Math.max(1, r.width) * DUR)); }
+        wf.addEventListener('pointerdown', function (e) { x0 = tAt(e); px0 = e.clientX; drag = false; wf.setPointerCapture(e.pointerId); });
+        wf.addEventListener('pointermove', function (e) {
+          if (x0 === null) return; var t = tAt(e);
+          if (!drag && Math.abs(e.clientX - px0) > 6) { drag = true; S.describe = null; S.ask = null; S.explore = false; S.loop = false; S.loops = 0; S.nudge = false; S.justSaved = false; drawSlot(); }
+          if (drag) { S.sel = { a: Math.min(x0, t), b: Math.max(x0, t) }; drawWave(); drawToolbar(); }
+        });
+        wf.addEventListener('pointerup', function (e) {
+          if (x0 === null) return; var t = tAt(e), from = S.t;
+          if (!drag) {
+            if (t < S.t - 3) noteRewind(t);
+            if (S.sel && t >= S.sel.a && t <= S.sel.b) { S.t = t; previewEnd = S.sel.b; }
+            else {
+              var hitSaved = S.saved.find(function (r) { return t >= r.a && t <= r.b; });
+              if (hitSaved) { S.t = hitSaved.a; S.sel = { a: hitSaved.a, b: hitSaved.b }; previewEnd = hitSaved.b; }
+              else { S.t = t; S.sel = null; previewEnd = null; S.describe = false; S.explore = false; S.loop = false; S.nudge = false; drawSlot(); }
+            }
+            seekGuardUntil = Date.now() + 300;
+            music.setTime(S.t); emit('seek', 'user', { fromSec: from, toSec: S.t });
+          } else {
+            if (S.sel.b - S.sel.a < Math.min(3, DUR * 0.1)) { S.sel.b = Math.min(DUR, S.sel.a + Math.min(3, DUR * 0.1)); }
+            S.t = S.sel.a; previewEnd = S.sel.b; seekGuardUntil = Date.now() + 350;
+            music.setTime(S.sel.a); emit('seek', 'user', { fromSec: from, toSec: S.sel.a });
+            music.play().catch(() => { });
+          }
+          x0 = null; refreshPlayerState();
+        });
+        wf.addEventListener('keydown', function (e) {
+          if (e.key === 'ArrowRight') { const from = S.t; S.t = Math.min(DUR, S.t + 5); seekGuardUntil = Date.now() + 300; music.setTime(S.t); emit('seek', 'user', { fromSec: from, toSec: S.t }); drawWave(); e.preventDefault(); }
+          if (e.key === 'ArrowLeft') { const from = S.t; S.t = Math.max(0, S.t - 5); seekGuardUntil = Date.now() + 300; music.setTime(S.t); emit('seek', 'user', { fromSec: from, toSec: S.t }); drawWave(); e.preventDefault(); }
+          if (e.key === 'Enter' && !S.sel) { S.sel = { a: Math.max(0, S.t - 10), b: Math.min(DUR, S.t + 10) }; previewEnd = S.sel.b; refreshPlayerState(); }
+        });
+      }
+
+      /* ---------- passive signals ---------- */
+      function logSig(text, n) {
+        var f = SIG.filter(function (s) { return s.text === text; })[0];
+        if (f) { SIG.splice(SIG.indexOf(f), 1); f.n = n; f.when = 'Just now'; SIG.unshift(f); } else SIG.unshift({ text: text, n: n, when: 'Just now' });
+      }
+      function noteRewind(to) {
+        if (!S.learning) return;
+        const r = S.interest.find(x => Math.abs(x.a - to) < 10);
+        if (r) r.n++; else S.interest.push({ a: to, b: Math.min(DUR, to + 15), n: 1 });
+      }
+      /* ---------- saving ---------- */
+      function addMoment(r) {
+        const t = current(); if (!t) return null;
+        const m = {
+          id: uid(), trackId: t.id, song: t.song, artist: t.artist, a: r.a, b: r.b,
+          what: 'Saved moment', feelings: [], qualities: [], tags: [], note: '', coll: [], createdAt: Date.now(), seed: 12, fresh: true
+        };
+        MOMENTS.unshift(m); savedForTrack(); saveDB(m);
+        emit('select_moment', 'user', { momentStartSec: r.a, momentEndSec: r.b }); return m.id;
+      }
+      function applyTags(mid, r, feel, love, note) {
+        const m = MOMENTS.find(x => x.id === mid); if (!m) return [];
+        const favExtracted = classifyFavReasons(note || '', love || []);
+        m.feelings = [...new Set([...(m.feelings || []), ...feel])];
+        m.qualities = [...new Set([...(m.qualities || []), ...love, ...favExtracted])];
+        m.tags = [...m.feelings, ...m.qualities]; m.what = m.qualities.join(' · ') || 'Saved moment';
+        m.note = note || m.note || '';
+        m.coll = [...(m.feelings.includes('Chills') ? [0] : []), ...(m.feelings.includes('Nostalgia') ? [1] : []), ...(m.qualities.includes('Melody') ? [2] : [])];
+        saveDB(m); return m.qualities;
+      }
+      function saveMoment() {
+        var r = S.sel; if (!r) return;
+        var id = addMoment(r); if (!id) return;
+        var aq = selectActiveLearningQuestions(analyses, MOMENTS.map(modelMoment), S.trackId || '', r.a, r.b, 5);
+        S.sel = null; S.describe = null; S.loop = false; S.loops = 0; S.nudge = false; S.justSaved = true;
+        S.ask = { q: aq.question, chips: aq.chips, a: r.a, b: r.b, mid: id };
+        drawSlot(); refreshPlayerState(); renderShell();
+        toast('Saved to My Moments', 'View', 'moments');
+      }
+
+      /* ---------- moments ---------- */
+      function miniBars(seed, a, b, len) {
+        var s = seed, h = ''; len = len || Math.max(b + 20, 260);
+        for (var i = 0; i < 40; i++) { s = (s * 9301 + 49297) % 233280; var t = i / 39, ts = t * len, v = Math.max(2, Math.round(Math.pow(Math.sin(Math.PI * t), .5) * (.3 + .7 * s / 233280) * 28)); h += '<i style="height:' + v + 'px;background:' + ((ts >= a && ts <= b) ? 'var(--accent)' : 'var(--off)') + '"></i>'; }
+        return h;
+      }
+      function renderMoments() {
+        var tabs = ['All moments'].concat(COLLS);
+        var list = MOMENTS.filter(function (m) { return S.tab === 0 || m.coll.indexOf(S.tab - 1) >= 0; });
+        var total = list.reduce(function (s, m) { return s + (m.b - m.a); }, 0);
+        $('main').innerHTML = '<div class="col">' +
+          '<div style="display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px">' +
+          '<div><h1 class="ph1">My Moments</h1><p class="lead">The passages you saved from the player, played back to back.</p></div>' +
+          '<button class="outline" data-act="playall" style="height:44px;display:flex;align-items:center;gap:10px">' + svg('i-play', 14) + 'Play ' + list.length + ' moments · ' + fmt(total) + '</button>' +
+          '</div>' +
+          '<div class="tabs" role="tablist" aria-label="Collections">' + tabs.map(function (t, i) { return '<button class="tab" role="tab" data-act="tab" data-v="' + i + '" aria-selected="' + (S.tab === i) + '">' + t + '</button>'; }).join('') + '</div>' +
+          '<ol class="list">' + (list.length ? list.map(function (m) {
+            const isPlayingM = S.playing && S.trackId === m.trackId && S.t >= m.a - 0.5 && S.t <= m.b + 0.5;
+            return '<li class="row"><button class="cplay" data-act="playm" data-v="' + m.id + '" aria-label="Play ' + esc(m.song) + ' moment">' + svg(isPlayingM ? 'i-pause' : 'i-play', 12) + '</button>' +
+              '<div class="mw" aria-hidden="true">' + miniBars(m.seed, m.a, m.b) + '</div>' +
+              '<div class="info" style="cursor:pointer" data-act="open-moment" data-v="' + m.id + '"><div class="s">' + esc(m.song) + ' <span>— ' + esc(m.artist) + '</span>' + (m.fresh ? '<span class="new">New</span>' : '') + '</div><div class="w">' + esc(m.what) + (m.note ? ' · “' + esc(m.note) + '”' : '') + '</div>' +
+              (m.tags && m.tags.length ? '<div class="tags">' + m.tags.map(function (t) { return '<span>' + esc(t) + '</span>'; }).join('') + '</div>' : '') + '</div>' +
+              '<span class="r">' + fmt(m.a) + ' – ' + fmt(m.b) + '</span><span class="r" style="color:var(--fg)">' + fmt(m.b - m.a) + '</span>' +
+              '<button class="ib" style="width:32px;height:32px;color:var(--mute)" data-act="delmoment" data-v="' + esc(m.id) + '" title="Remove moment" aria-label="Remove moment">' + svg('i-x', 14) + '</button></li>';
+          }).join('') : '<li class="row" style="color:var(--sub)">No moments here yet. Save a moment, tap More… and choose Chills or Nostalgia, and it lands here.</li>') + '</ol>' +
+          '<button class="ghost" style="margin-top:12px;padding:0" data-act="go" data-v="discover">Find unfamiliar moments like these in Discover →</button>' +
+          '</div>';
+      }
+
+      /* ---------- library ---------- */
+      function renderLibrary() {
+        function rowHtml(t) {
+          const i = LIB.findIndex(x => x.id === t.id);
+          const n = MOMENTS.filter(x => x.trackId === t.id).length;
+          const an = analyses.find(a => a.trackId === t.id);
+          const busy = analyzingIds.has(t.id);
+          const isCur = S.trackId === t.id;
+          return '<li class="lrow">' +
+            '<button class="cplay" data-act="playlib" data-v="' + esc(t.id) + '" aria-label="Play ' + esc(t.song) + '">' + svg(isCur && S.playing ? 'i-pause' : 'i-play', 12) + '</button>' +
+            '<div class="info" style="cursor:pointer" data-act="open-track" data-v="' + esc(t.id) + '" title="Click song title to open Now Playing">' +
+            '<div class="s">' + esc(t.song) + ' <span>— ' + esc(t.artist) + '</span>' + (isCur ? '<span class="new">' + (S.playing ? 'Playing' : 'Now loaded') + '</span>' : '') + '</div>' +
+            '<div class="meta">' + fmt(t.dur) + (n ? ' · ' + n + ' saved moment' + (n === 1 ? '' : 's') : '') + (busy ? ' · <span style="color:var(--accent)">' + esc(analyzeStatus[t.id] || 'Analyzing…') + '</span>' : (an ? ' · ' + an.segments.length + ' windows analyzed (' + esc(an.method) + ')' : ' · Not analyzed yet')) + '</div>' +
+            '</div>' +
+            (busy ? '<div class="prog"><i style="width:65%;background:var(--accent)"></i></div><span class="pill" style="color:var(--accent)">Analyzing…</span>' :
+              (an ? '<span class="pill ok">Analyzed</span><button class="ghost" data-act="inspect-track" data-v="' + esc(t.id) + '">Inspect features →</button>' : '<button class="ghost" data-act="analyze" data-v="' + esc(t.id) + '">Analyze locally</button>')) +
+            (t.id !== 'original-demo' ? '<button class="ib" style="width:32px;height:32px;color:var(--mute)" data-act="deltrack" data-v="' + esc(t.id) + '" title="Delete song from library" aria-label="Delete song">' + svg('i-trash', 14) + '</button>' : '') +
+            '</li>';
+        }
+        const uploaded = LIB.filter(t => t.id !== 'original-demo');
+        const demos = LIB.filter(t => t.id === 'original-demo');
+        const activeJobs = Array.from(analyzingIds).map(id => {
+          const t = track(id);
+          return '<li class="lrow"><div class="info"><div class="s">Analyzing ' + esc(t?.song || id) + '…</div><div class="meta">' + esc(analyzeStatus[id] || 'Running librosa DSP + CLAP neural encoder…') + '</div></div><div class="prog"><i style="width:70%;background:var(--accent)"></i></div></li>';
+        }).join('');
+        const streamBar = S.showStreamInput ?
+          '<div class="strip" style="margin-top:16px">' +
+          '<div class="srow">' +
+          '<span class="slbl">Stream</span>' +
+          '<input class="sin" id="stream-input-field" type="url" placeholder="Paste YouTube, SoundCloud, or direct audio URL…" />' +
+          '<button class="primary" data-act="submit-stream">Load & Play</button>' +
+          '<button class="ghost" data-act="toggle-stream-input">Cancel</button>' +
+          '</div></div>' : '';
+
+        $('main').innerHTML = '<div class="col">' +
+          '<div style="display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px">' +
+          '<div><h1 class="ph1">Library</h1><p class="lead">Your uploaded recordings and their local Python analysis status.</p></div>' +
+          '<div style="display:flex;gap:8px">' +
+          '<button class="primary" data-act="import">+ Upload audio file</button>' +
+          '<button class="outline" data-act="toggle-stream-input">' + (S.showStreamInput ? 'Close Stream Input' : '+ Stream URL (YouTube/Web)') + '</button>' +
+          '<button class="outline" data-act="go" data-v="admin">Audio Intelligence →</button>' +
+          '</div>' +
+          '</div>' +
+          streamBar +
+          '<p class="local">' + svg('i-lock', 14) + 'Audio stays on your device. Newly uploaded songs are automatically analyzed when automatic local analysis is on.</p>' +
+          (activeJobs ? '<h2 class="sh" style="margin-top:24px">Analysis in progress</h2><ol class="list">' + activeJobs + '</ol>' : '') +
+          '<h2 class="sh" style="margin-top:28px">Your uploaded songs (' + uploaded.length + ')</h2>' +
+          '<ol class="list">' + (uploaded.length ? uploaded.map(rowHtml).join('') : '<li class="lrow note">No uploaded songs yet. Click "+ Upload audio file" above to add an MP3, WAV, FLAC, M4A, or OGG file.</li>') + '</ol>' +
+          '<h2 class="sh" style="margin-top:32px">Built-in reference recording</h2>' +
+          '<ol class="list">' + demos.map(rowHtml).join('') + '</ol>' +
+          '</div>';
+      }
+      /* ---------- discover ---------- */
+      function renderDiscover() {
+        const tabs = ['All suggestions', 'Vocals', 'Melody', 'Textures', 'Harmony'];
+        const family = (s) => {
+          const m = s.matchingMoment && MOMENTS.find(x => x.trackId === s.matchingMoment.trackId && x.a <= s.matchingMoment.startSec + 3 && x.b >= s.matchingMoment.startSec);
+          if (!m) return -1;
+          const q = m.qualities || [];
+          return q.some(x => ['Vocals', 'Lyrics'].includes(x)) ? 0 : q.some(x => ['Melody', 'Rhythm', 'Build-up', 'Drop'].includes(x)) ? 1 :
+            q.some(x => ['Atmosphere', 'Instruments'].includes(x)) ? 2 : q.includes('Harmony') ? 3 : -1;
+        };
+        const rows = suggestions.map((x, i) => ({ x, i })).filter(({ x }) => S.dtab === 0 || family(x) === S.dtab - 1).map(({ x, i }) => {
+          const t = track(x.trackId) || { song: 'Unavailable', artist: '' };
+          const anchor = x.matchingMoment && track(x.matchingMoment.trackId);
+          const why = anchor ? 'It shares musical characteristics with one of your saved passages in ' + anchor.song + '.' :
+            'It has acoustic patterns resembling passages you have saved.';
+          const isPlayingP = S.playing && S.trackId === x.trackId && S.t >= x.startSec - 0.5 && S.t <= x.endSec + 0.5;
+          return '<li class="drow"><button class="cplay" data-act="preview" data-v="' + i + '" aria-label="Listen to suggested passage">' + svg(isPlayingP ? 'i-pause' : 'i-play', 12) + '</button>' +
+            '<div class="info" style="cursor:pointer" data-act="open-preview" data-v="' + i + '"><div style="font-size:16px;display:flex;align-items:center;gap:8px"><span>' + esc(t.song) + '</span><span style="color:var(--mute)">— ' + esc(t.artist) + '</span><span class="pill" style="font-size:11px;padding:2px 6px">○ AI predicts</span></div>' +
+            '<div class="why">' + fmt(x.startSec) + ' – ' + fmt(x.endSec) + ' · ' + esc(why) + '</div></div>' +
+            '<div class="btns"><button class="ghost" data-act="dislike" data-v="' + i + '">Not for me</button>' +
+            '<button class="primary" data-act="like" data-v="' + i + '">I like it</button></div></li>';
+        }).join('');
+        $('main').innerHTML = '<div class="col"><h1 class="ph1">Discover</h1><p class="lead">Musical moments you might enjoy. Tell us what connects with you so future suggestions can improve.</p>' +
+          '<div class="tabs" role="tablist" aria-label="Preference type">' + tabs.map((t, i) => '<button class="tab" role="tab" data-act="dtab" data-v="' + i + '" aria-selected="' + (S.dtab === i) + '">' + t + '</button>').join('') + '</div>' +
+          '<ol class="list">' + (rows || '<li class="drow note">' + (suggestions.length ? 'No suggestions in this group yet.' : 'Nothing to suggest yet. Save a passage, then analyze authorized music in Library.') + '</li>') + '</ol></div>';
+      }
+
+      /* ---------- dna ---------- */
+      function renderDNA() {
+        // Same original ring / traits / expandable evidence UI; only the data is now real.
+        const definitions = [
+          { name: 'Vocals and lyrics', short: 'vocals', label: 'Vocals', keys: ['Vocals', 'Lyrics'], desc: 'The voice and words you explicitly marked' },
+          { name: 'Melody and rhythm', short: 'melodic moments', label: 'Melody', keys: ['Melody', 'Rhythm', 'Build-up', 'Drop'], desc: 'Melodies, grooves and changing intensity' },
+          { name: 'Atmosphere and instruments', short: 'textures', label: 'Textures', keys: ['Atmosphere', 'Instruments'], desc: 'The instrumental sounds that stood out to you' },
+          { name: 'Harmony', short: 'harmony', label: 'Harmony', keys: ['Harmony'], desc: 'Chord movement you said you enjoyed' }
+        ];
+        TRAITS = definitions.map(d => {
+          const items = MOMENTS.filter(m => (m.qualities || []).some(q => d.keys.includes(q)));
+          return {
+            ...d, n: items.length, items: items.map(m => [m.song, m.artist, m.a, m.b, m.fresh,
+            'You marked ' + m.qualities.filter(q => d.keys.includes(q)).join(' and ').toLowerCase() + (m.feelings?.length ? ' · felt: ' + m.feelings.join(', ') : ''), m.id])
+          };
+        });
+        const total = TRAITS.reduce((n, t) => n + t.n, 0), cur = S.trait;
+        const selected = TRAITS[cur] || TRAITS[0];
+        const pct = t => total ? Math.round(100 * t.n / total) : 0;
+        const ringN = TRAITS.map(t => Math.max(2, t.n * 3));
+        const T = ringN.reduce((n, v) => n + v + 3, 0), R = 150;
+        let pos = 0, labels = '', chipsM = '';
+        TRAITS.forEach((t, i) => {
+          const span = ringN[i], mid = (pos + span / 2) / T * 2 * Math.PI; pos += span + 3;
+          const x = Math.sin(mid), y = -Math.cos(mid), right = x >= 0;
+          labels += '<button class="rlab' + (cur === i ? ' on' : '') + '" data-act="trait" data-v="' + i + '" style="left:calc(50% + ' + Math.round(x * (R + 46)) + 'px);top:calc(50% + ' + Math.round(y * (R + 34)) + 'px);transform:translate(' + (right ? '0' : '-100%') + ',-50%);text-align:' + (right ? 'left' : 'right') + '"><b>' + pct(t) + '%</b><span>' + t.label + '</span></button>';
+          chipsM += '<button class="tab" data-act="trait" data-v="' + i + '" aria-selected="' + (cur === i) + '">' + t.label + ' ' + pct(t) + '%</button>';
+        });
+        const center = total ? '<span class="rn">' + pct(selected) + '%</span><span class="rt">' + selected.short + '</span><span>of described preferences</span>' :
+          '<span class="rn">0</span><span class="rt">moments described</span><span>your portrait starts here</span>';
+        const ranked = TRAITS.filter(t => t.n > 0).sort((a, b) => b.n - a.n);
+        const dnaInsight = synthesizeMusicDnaInsight(analyses, MOMENTS.map(modelMoment), ratings, events);
+        const portrait = dnaInsight.status === 'verified' ? '<b>' + esc(dnaInsight.headline) + '</b> ' + dnaInsight.evidence.map(esc).join(' ') :
+          ranked.length > 1 ? 'In your saved moments, you often mention <b>' + esc(ranked[0].short) + '</b> and <b>' + esc(ranked[1].short) + '</b>. Is that what draws you in?' :
+            ranked.length ? 'You have marked <b>' + esc(ranked[0].short) + '</b> in your saved moments. We will keep learning as you listen.' :
+              'Your Music DNA begins with the moments you love. Save a passage and tell us what stood out.';
+        function level(n) { return n >= 8 ? 4 : n >= 5 ? 3 : n >= 2 ? 2 : n ? 1 : 0; }
+        const cards = TRAITS.map((t, i) => {
+          const n = level(t.n), open = cur === i;
+          const top = t.items[0];
+          const answer = t.n ? '<span class="cnote">Based on ' + t.n + ' saved ' + (t.n === 1 ? 'moment' : 'moments') + '</span>' : '<span class="cnote">Not enough information yet</span>';
+          let detail = '';
+          if (open) detail = '<div class="tdetail"><p class="across">' + (t.n ? 'These are the passages you personally associated with ' + esc(t.short) + '. Listen or correct the labels.' :
+            'No saved moments have been marked with this characteristic yet.') + '</p>' + t.items.map((p, j) =>
+              '<div class="evr"><button class="cplay" style="width:34px;height:34px" data-act="playev" data-v="' + i + ',' + j + '" aria-label="Listen">' + svg('i-play', 11) + '</button><span class="x"><span class="pill ok" style="font-size:11px;padding:2px 6px;margin-right:6px">● You confirmed</span>' + esc(p[0]) + ' <span>— ' + esc(p[1]) + '</span>' + (p[5] ? '<span class="an">' + esc(p[5]) + '</span>' : '') + '</span><span style="font-size:13px;color:var(--sub)">' + fmt(p[2]) + ' – ' + fmt(p[3]) + '</span><button class="ghost" style="height:34px;font-size:13px" data-act="rmev" data-v="' + i + ',' + j + '">Correct</button></div>').join('') +
+            '<div class="dfoot2"><span class="note">Your descriptions, not predicted emotions</span><button class="ghost" data-act="disc" data-v="' + i + '">Find more like these →</button></div></div>';
+          return '<div class="trow' + (open ? ' on' : '') + '"><button class="tmain" data-act="trait" data-v="' + i + '" aria-expanded="' + open + '"><span class="tname">' + t.name + '<small>' + t.desc + ' · ' + t.n + ' moments</small></span></button>' +
+            (top ? '<div class="hear"><button class="cplay" style="width:34px;height:34px" data-act="playev" data-v="' + i + ',0" aria-label="Listen">' + svg('i-play', 11) + '</button><span><b>' + esc(top[0]) + '</b> ' + fmt(top[2]) + '–' + fmt(top[3]) + '<small>' + esc(top[5]) + '</small></span></div>' : '') +
+            '<div class="tans">' + answer + '</div>' + detail + '</div>';
+        }).join('');
+        const attentions = S.learning ? candidates.slice(0, 4).map((x, i) => {
+          const t = track(x.trackId) || { song: 'A track' };
+          const confLabel = x.confidence === 'repeated interest' ? 'Repeated interest' : 'Possible interest';
+          const reasonText = x.reason?.length ? x.reason.join(', ') : 'You returned here';
+          return '<li class="drow"><div class="info">' +
+            '<div style="display:flex;align-items:center;gap:8px;font-weight:600"><span>' + esc(t.song) + ' · ' + fmt(x.startSec) + '–' + fmt(x.endSec) + '</span>' +
+            '<span class="pill" style="font-size:11px;padding:2px 6px">◐ Your listening suggests (' + esc(confLabel) + ')</span></div>' +
+            '<div class="why">' + esc(reasonText) + '. This suggests attention, not an emotional label.</div></div>' +
+            '<div class="btns" style="display:flex;gap:6px">' +
+            '<button class="outline" data-act="candidate" data-v="' + i + '">Listen</button>' +
+            '<button class="primary" data-act="savecand" data-v="' + esc(x.trackId + ':' + x.startSec) + '">Confirm</button>' +
+            '<button class="ghost" data-act="dismisscand" data-v="' + esc(x.trackId + ':' + x.startSec) + '" title="Dismiss">Dismiss</button>' +
+            '</div></li>';
+        }).join('') : '';
+        $('main').innerHTML = '<div class="col"><div class="dtop"><h1 class="ph1">My Music DNA</h1><button class="switch" role="switch" aria-checked="' + S.learning + '" data-act="learn"><span class="k"></span>Learning ' + (S.learning ? 'on' : 'paused') + '</button></div>' +
+          '<div class="ringstage"><div id="ring" role="img" aria-label="Your saved musical preferences, grouped by the qualities you selected"><div class="rc">' + center + '</div></div>' + labels + '</div>' +
+          '<div class="rchips">' + chipsM + '</div><p class="portrait">' + portrait + '</p><p class="pmeta">Based on ' + MOMENTS.length + ' saved moments · percentages are shares of the qualities you labelled, not scores or inferred emotions.</p>' +
+          '<h2 class="sh">Your traits</h2><p class="shs">Choose a trait to hear the moments behind it. This view grows as you describe your listening.</p><div class="tlist">' + cards + '</div>' +
+          (attentions ? '<h2 class="sh">Moments you return to</h2><p class="shs">Potential favorites to confirm.</p><ol class="list">' + attentions + '</ol>' : '') +
+          '<details class="how"><summary>How Music DNA learned this</summary><p class="shs" style="margin-top:10px">The ring reflects qualities you selected for saved moments. Listening events are optional and provide only attention hints, not emotional labels.</p>' +
+          '<p class="shs">Technical audio features, deep embeddings and model evaluations live in the Python research tools.</p><div style="display:flex;gap:12px;flex-wrap:wrap"><button class="ghost" data-act="export">Export my profile</button><button class="ghost" data-act="go" data-v="admin">Open Research &amp; Admin Inspector →</button></div></details></div>';
+        const ring = $('ring'); let idx = 0;
+        const frag = document.createDocumentFragment();
+        TRAITS.forEach((t, ti) => {
+          const span = ringN[ti]; for (let k = 0; k < span; k++) {
+            const len = t.n ? Math.round(12 + 24 * Math.sin(Math.PI * (k + .5) / span)) : 9;
+            const col = t.n ? (ti === cur ? 'var(--accent)' : (cur === -1 ? '#B4B4B9' : '#4A4A50')) : '#26262A';
+            frag.appendChild(tick(idx++, len, col));
+          } for (let g = 0; g < 3; g++)frag.appendChild(tick(idx++, 4, '#26262A'));
+        });
+        function tick(i, len, col) { let e = document.createElement('div'); e.style.cssText = 'position:absolute;left:' + (R - 1) + 'px;top:0;width:2px;height:' + len + 'px;border-radius:1px;background:' + col + ';transform-origin:1px ' + R + 'px;transform:rotate(' + (i / T * 360) + 'deg)'; return e; }
+        ring.insertBefore(frag, ring.firstChild);
+      }
+      /* ---------- settings ---------- */
+      function renderSettings() {
+        const eventsCount = events.length;
+        $('main').innerHTML =
+          '<div class="col">' +
+          '<div style="display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px">' +
+          '<div><div class="eyebrow" style="margin-bottom:6px">PRIVACY &amp; CONTROL</div><h1 class="ph1">Settings</h1><p class="lead">Preferences, on-device listening tracking, and profile export.</p></div>' +
+          '</div>' +
+          '<p class="local">' + svg('i-lock', 14) + 'Audio stays local. All settings and history are stored only on this device.</p>' +
+          '<ol class="list">' +
+          '<li class="lrow" style="padding:16px 0">' +
+          '<div class="info">' +
+          '<div class="s">Private listening insights</div>' +
+          '<div class="meta" style="line-height:1.5;max-width:62ch">Record seeks, loops, volume adjustments and playback events on this device. Off by default. No microphone, external tracking or automatic upload.</div>' +
+          '</div>' +
+          '<button class="switch" role="switch" aria-checked="' + (S.learning ? 'true' : 'false') + '" data-act="toggle-tracking" aria-label="Toggle private listening insights">' +
+          '<span class="k"></span>' + (S.learning ? 'On' : 'Off') +
+          '</button>' +
+          '</li>' +
+          '<li class="lrow" style="padding:16px 0">' +
+          '<div class="info">' +
+          '<div class="s">Export personal profile</div>' +
+          '<div class="meta" style="line-height:1.5;max-width:62ch">Download your track metadata, saved moments, feedback and event history as JSON. Audio files are excluded.</div>' +
+          '</div>' +
+          '<button class="outline" data-act="export" style="height:36px;display:inline-flex;align-items:center;gap:8px">' +
+          svg('i-download', 14) + 'Export' +
+          '</button>' +
+          '</li>' +
+          '<li class="lrow" style="padding:16px 0">' +
+          '<div class="info">' +
+          '<div class="s">Listening event history</div>' +
+          '<div class="meta" style="line-height:1.5;max-width:62ch">' + eventsCount + ' private ' + (eventsCount === 1 ? 'event' : 'events') + ' stored on device. You can erase them without deleting saved moments.</div>' +
+          '</div>' +
+          '<button class="outline" data-act="clearevents" style="height:36px;display:inline-flex;align-items:center;gap:8px">' +
+          svg('i-trash', 14) + 'Clear events' +
+          '</button>' +
+          '</li>' +
+          '<li class="lrow" style="padding:16px 0">' +
+          '<div class="info">' +
+          '<div class="s">Automatic local audio analysis</div>' +
+          '<div class="meta" style="line-height:1.5;max-width:62ch">When enabled, newly imported songs (and unanalyzed tracks in your library) are automatically analyzed by your local Python service without asking every time. Only enable if you have rights to analyze your imported recordings.</div>' +
+          '</div>' +
+          '<button class="switch" role="switch" aria-checked="' + (S.autoAnalyze ? 'true' : 'false') + '" data-act="toggle-auto-analyze" aria-label="Toggle automatic local audio analysis">' +
+          '<span class="k"></span>' + (S.autoAnalyze ? 'On' : 'Off') +
+          '</button>' +
+          '</li>' +
+          '<li class="lrow" style="padding:16px 0">' +
+          '<div class="info">' +
+          '<div class="s">Research &amp; Admin Inspector</div>' +
+          '<div class="meta" style="line-height:1.5;max-width:62ch">Inspect time-aligned DSP features, 512-D CLAP embeddings, 2D PaCMAP similarity maps, TROMPA active-learning scores, and Personalized-DMER baselines.</div>' +
+          '</div>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+          '<button class="outline" data-act="go" data-v="admin" style="height:36px;display:inline-flex;align-items:center;gap:8px">' +
+          svg('i-spark', 14) + 'In-Player Lab' +
+          '</button>' +
+          '<a class="outline" href="http://127.0.0.1:8765/studio" target="_blank" rel="noopener" style="height:36px;padding:0 12px;border-radius:99px;border:1px solid var(--line2);display:inline-flex;align-items:center;gap:8px;text-decoration:none;font-size:13px;color:var(--fg)">' +
+          'Python Studio ↗' +
+          '</a>' +
+          '</div>' +
+          '</li>' +
+          '</ol>' +
+          '</div>';
+      }
+
+      /* ---------- Feature Analysis (Visual Python Spectral & Embedding Inspector in Player) ---------- */
+      var adminTrackId = null, adminLoadedTrackId = null, adminHealth = null, adminMap = [], adminDiag = null, adminStudioBundle = null, adminLoading = false, adminOpenWin = -1, adminShowAllWins = false, adminHoverT = null, adminSel = { a: 0, b: 12 };
+      async function loadAdminData(force = false) {
+        const tid = adminTrackId || S.trackId || LIB[0]?.id || 'original-demo';
+        if (!force && adminStudioBundle && adminLoadedTrackId === tid) return;
+        if (adminLoading) return;
+        adminLoading = true;
+        try {
+          const studioUrl = tid === 'original-demo' ? 'http://127.0.0.1:8765/api/studio/demo' : ('http://127.0.0.1:8765/api/studio/track/' + encodeURIComponent(tid));
+          const [healthRes, bundleRes, diagRes] = await Promise.all([
+            intelligenceHealth().catch(() => null),
+            fetch(studioUrl).then(r => r.ok ? r.json() : null).catch(() => null),
+            fetchPythonDiagnostics({ analyses, moments: MOMENTS.map(modelMoment), ratings, events }).catch(() => null)
+          ]);
+          adminHealth = healthRes;
+          adminStudioBundle = bundleRes;
+          adminLoadedTrackId = bundleRes ? tid : null;
+          adminDiag = diagRes;
+          if (bundleRes?.multimodal?.durationSec) {
+            const dur = bundleRes.multimodal.durationSec;
+            if (!adminSel || adminSel.b > dur) adminSel = { a: 0, b: Math.min(12, dur) };
+          }
+        } finally {
+          adminLoading = false;
+          if (S.view === 'admin') renderAdminViewOnly();
+        }
+      }
+      function renderAdmin() {
+        if (!adminTrackId && LIB.length) adminTrackId = S.trackId || LIB[0].id;
+        if (S.sel) adminSel = { a: S.sel.a, b: S.sel.b };
+        renderAdminViewOnly();
+        loadAdminData();
+      }
+      function renderAdminViewOnly() {
+        const selTrack = track(adminTrackId) || LIB[0];
+        if (selTrack && !adminTrackId) adminTrackId = selTrack.id;
+        const trackAn = adminStudioBundle?.multimodal || analyses.find(a => a.trackId === adminTrackId);
+        const sp = adminStudioBundle?.spectralPlots;
+        const evals = evaluatePreferences(analyses, MOMENTS.map(modelMoment), ratings);
+        const alQueries = adminStudioBundle?.activeLearning || adminDiag?.activeLearning?.queries || [];
+        const dmer = adminStudioBundle?.dmerBenchmark?.baselines || adminDiag?.dmer?.baselines;
+        const dur = trackAn?.durationSec || selTrack?.dur || DUR || 32;
+        const sel = (S.trackId === adminTrackId && S.sel) ? S.sel : (adminSel || { a: 0, b: Math.min(12, dur) });
+
+        function level(v) { return v >= 0.75 ? 4 : v >= 0.5 ? 3 : v >= 0.25 ? 2 : v > 0.05 ? 1 : 0; }
+        function meterHtml(lvl) { return ''; }
+        function vecBars(vec, hi) {
+          return (vec || []).slice(0, 40).map(v => {
+            const h = Math.max(2, Math.min(28, Math.round(Math.abs(v) * 110)));
+            const col = hi ? (v >= 0 ? 'var(--accent)' : 'rgba(142,197,184,.45)') : (v >= 0 ? 'rgba(220,220,224,.78)' : 'var(--off)');
+            return '<i style="height:' + h + 'px;background:' + col + '"></i>';
+          }).join('');
+        }
+
+        const notes = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+        const segs = trackAn?.segments || [];
+        const selSegs = segs.map((s, i) => ({ s, i })).filter(({ s }) => Math.max(sel.a, s.startSec) < Math.min(sel.b, s.endSec));
+        const activeSegs = (selSegs.length ? selSegs : segs.map((s, i) => ({ s, i }))).map(x => x.s);
+        const avgAll = k => segs.length ? segs.reduce((a, s) => a + Number(s.descriptors?.[k] || 0), 0) / segs.length : 0;
+        const avgSel = k => activeSegs.length ? activeSegs.reduce((a, s) => a + Number(s.descriptors?.[k] || 0), 0) / activeSegs.length : 0;
+
+        let plotsSection = '';
+        if (sp && sp.curves) {
+          plotsSection =
+            '<div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-top:24px;padding:12px 16px;border:1px solid var(--line2);background:var(--panel);border-radius:12px">' +
+            '<div style="font-size:14px">Selected passage: <b style="color:var(--accent)">' + fmt(sel.a) + ' – ' + fmt(sel.b) + '</b> <span style="color:var(--mute);margin-left:8px" id="adm-hover-readout">Drag across any plot below to select &amp; audition a passage in place</span></div>' +
+            '<div style="display:flex;gap:8px;align-items:center">' +
+            '<button class="primary" style="height:32px;font-size:13px;padding:0 14px" data-act="play-window" data-v="' + esc(adminTrackId + ':' + sel.a + ':' + sel.b) + '">' + (S.playing && S.trackId === adminTrackId ? 'Pause passage' : '▶ Listen to ' + fmt(sel.a) + '–' + fmt(sel.b)) + '</button>' +
+            '</div>' +
+            '</div>' +
+            '<h2 class="sh" style="margin-top:28px">Synced Python Spectral &amp; Acoustic Trajectories (' + esc(selTrack?.song || adminTrackId) + ')</h2>' +
+            '<p class="shs">Computed by librosa STFT (' + (sp.nBins || 400) + ' time frames · ' + (sp.nMelBands || 48) + ' Mel bands) · selected passage ' + fmt(sel.a) + '–' + fmt(sel.b) + ' &amp; playhead synced across all plots.</p>' +
+            '<div class="tlist">' +
+            '<div style="padding:16px 0;border-bottom:1px solid var(--line)">' +
+            '<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:8px">' +
+            '<div><b>1. Log-Mel Spectrogram (48 Mel Bands, 55 Hz – 8 kHz) &amp; Spectral Centroid Overlay</b><div style="font-size:12px;color:var(--mute)">librosa.feature.melspectrogram (dB) · Amber curve = Spectral Centroid (' + Math.round(avgSel('brightness_hz')) + ' Hz in selection vs ' + Math.round(avgAll('brightness_hz')) + ' Hz track avg) · Teal dashed = 85% Rolloff</div></div>' +
+            '</div>' +
+            '<canvas id="adm-cv-mel" height="145" style="width:100%;height:145px;display:block;cursor:crosshair"></canvas>' +
+            '</div>' +
+            '<div style="padding:16px 0;border-bottom:1px solid var(--line)">' +
+            '<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:8px">' +
+            '<div><b>2. Spectral Flatness (Wiener Entropy) vs. Harmonic Tonality &amp; Zero-Crossing Rate</b><div style="font-size:12px;color:var(--mute)">Teal = Harmonic Tonality (1 − log Flatness) · Coral = Spectral Flatness (' + avgSel('noisiness').toFixed(4) + ' selected vs ' + avgAll('noisiness').toFixed(4) + ' avg) · Blue = ZCR</div></div>' +
+            '</div>' +
+            '<canvas id="adm-cv-flat" height="120" style="width:100%;height:120px;display:block;cursor:crosshair"></canvas>' +
+            '</div>' +
+            '<div style="padding:16px 0;border-bottom:1px solid var(--line)">' +
+            '<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:8px">' +
+            '<div><b>3. Vocal-Band Presence (300–3400 Hz) vs. Low-End Foundation (&lt;300 Hz)</b><div style="font-size:12px;color:var(--mute)">Teal = Vocal Formant Band (' + (avgSel('vocal_presence') * 100).toFixed(1) + '% in selection vs ' + (avgAll('vocal_presence') * 100).toFixed(1) + '% track avg) · Blue = Sub/Bass Ratio</div></div>' +
+            '</div>' +
+            '<canvas id="adm-cv-voc" height="120" style="width:100%;height:120px;display:block;cursor:crosshair"></canvas>' +
+            '</div>' +
+            '<div style="padding:16px 0;border-bottom:1px solid var(--line)">' +
+            '<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:8px">' +
+            '<div><b>4. RMS Loudness Envelope &amp; Per-Window Build-Up Slope Vectors</b><div style="font-size:12px;color:var(--mute)">Amber = RMS Energy (' + avgSel('energy').toFixed(4) + ' selected) · Overlaid slope segments: Teal = Intensifying (+/s), Coral = Decaying (−/s) · Selected slope: ' + (avgSel('energy_slope') >= 0 ? '+' : '') + avgSel('energy_slope').toFixed(3) + '/s</div></div>' +
+            '</div>' +
+            '<canvas id="adm-cv-rms" height="120" style="width:100%;height:120px;display:block;cursor:crosshair"></canvas>' +
+            '</div>' +
+            '<div style="padding:16px 0;border-bottom:1px solid var(--line)">' +
+            '<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:8px">' +
+            '<div><b>5. Spectral Flux (Arrangement Change) &amp; Onset Transient Strength</b><div style="font-size:12px;color:var(--mute)">Blue = Frame-to-frame L2 Spectral Flux (' + avgSel('spectral_flux').toFixed(4) + ') · Amber = Onset Transient Envelope (' + avgSel('onset_activity').toFixed(3) + ')</div></div>' +
+            '</div>' +
+            '<canvas id="adm-cv-flux" height="120" style="width:100%;height:120px;display:block;cursor:crosshair"></canvas>' +
+            '</div>' +
+            '<div style="padding:16px 0;border-bottom:1px solid var(--line)">' +
+            '<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:8px">' +
+            '<div><b>6. 12-Pitch Class Chromagram (C .. B) &amp; 8-Band MFCC Timbre Cepstrum</b><div style="font-size:12px;color:var(--mute)">Harmonic pitch distribution across all 12 semitones over time</div></div>' +
+            '</div>' +
+            '<canvas id="adm-cv-chroma" height="125" style="width:100%;height:125px;display:block;cursor:crosshair"></canvas>' +
+            '</div>' +
+            '<div style="padding:16px 0;border-bottom:1px solid var(--line);display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px">' +
+            '<div style="min-width:0;overflow:hidden">' +
+            '<div style="margin-bottom:8px"><b>7. Pairwise Cosine Self-Similarity Matrix (' + segs.length + '×' + segs.length + ' Windows)</b><div style="font-size:12px;color:var(--mute)">89-D Multimodal Fused structural recurrence across the song</div></div>' +
+            '<canvas id="adm-cv-ssm" height="230" style="width:100%;height:230px;display:block"></canvas>' +
+            '</div>' +
+            '<div style="min-width:0;overflow:hidden">' +
+            '<div style="margin-bottom:8px"><b>8. 2D PCA Embedding Trajectory &amp; Dynamic Valence-Arousal</b><div style="font-size:12px;color:var(--mute)">SVD projection of 537-D window embeddings · Teal = windows in selected passage</div></div>' +
+            '<canvas id="adm-cv-pca" height="230" style="width:100%;height:230px;display:block"></canvas>' +
+            '</div>' +
+            '</div>' +
+            '</div>';
+        }
+
+        const visibleWins = adminShowAllWins ? segs.map((s, i) => ({ s, i })) : (selSegs.length ? selSegs : segs.slice(0, 6).map((s, i) => ({ s, i })));
+        let segRows = '<li class="lrow note">This recording has not been analyzed yet. Click "Analyze all tracks" above.</li>';
+        if (segs.length) {
+          segRows = visibleWins.map(({ s, i: idx }) => {
+            const d = s.descriptors || {};
+            const open = adminOpenWin === idx;
+            const inSel = Math.max(sel.a, s.startSec) < Math.min(sel.b, s.endSec);
+            const slope = Number(d.energy_slope || 0);
+            const slopeTag = slope > 0.03 ? 'Intensifying (+' + slope.toFixed(2) + '/s)' : slope < -0.03 ? 'Decaying (' + slope.toFixed(2) + '/s)' : 'Steady (' + slope.toFixed(2) + '/s)';
+            const vocalPct = Math.round(Number(d.vocal_presence || 0) * 100);
+            const chroma = d.chroma || [];
+            const dspVec = s.dspEmbedding || (s.embedding || []).slice(0, 25);
+            const mfccs = dspVec.slice(17, 25);
+            const deepVec = s.deepEmbedding || (s.embedding || []);
+            let detail = '';
+            if (open) {
+              detail = '<div class="tdetail">' +
+                '<p class="across">Complete feature breakdown for Window ' + (idx + 1) + ' (' + fmt(s.startSec) + ' – ' + fmt(s.endSec) + ')</p>' +
+                '<div class="evr"><span class="x"><b>8 Acoustic Descriptors</b> <span>— RMS ' + Number(d.energy || 0).toFixed(5) + ' · Slope ' + (slope >= 0 ? '+' : '') + slope.toFixed(4) + '/s · Vocal ' + vocalPct + '% · Brightness ' + Math.round(d.brightness_hz || 0) + ' Hz · Flux ' + Number(d.spectral_flux || 0).toFixed(4) + ' · Onset ' + Number(d.onset_activity || 0).toFixed(4) + ' · Flatness ' + Number(d.noisiness || 0).toFixed(4) + ' · ZCR ' + Number(d.zero_crossing_rate || 0).toFixed(4) + '</span></span></div>' +
+                '<div class="evr"><span class="x"><b>12-Pitch Chroma Profile</b> <span>— ' + notes.map((n, ci) => n + ': ' + Number(chroma[ci] || 0).toFixed(2)).join(' · ') + '</span></span></div>' +
+                '<div class="evr"><span class="x"><b>8 Normalized MFCC Timbre Coefficients</b> <span>— ' + mfccs.map((m, mi) => 'c' + (mi + 1) + ': ' + Number(m).toFixed(3)).join(' · ') + '</span></span></div>' +
+                '<div class="evr"><span class="x"><b>Neural &amp; Fused Embedding (' + ((s.embedding || []).length) + '-D)</b> <span>— first 16 dims: [' + deepVec.slice(0, 16).map(v => Number(v).toFixed(3)).join(', ') + '…]</span></span></div>' +
+                '</div>';
+            }
+            return '<div class="trow' + (inSel ? ' on' : '') + '">' +
+              '<button class="tmain" data-act="toggle-admin-win" data-v="' + idx + '" aria-expanded="' + open + '">' +
+              meterHtml(level(Number(d.vocal_presence || 0) * 1.3)) +
+              '<span class="tname">Window ' + (idx + 1) + ' · ' + fmt(s.startSec) + ' – ' + fmt(s.endSec) + '<small>Vocal ' + vocalPct + '% · ' + slopeTag + ' · ' + Math.round(d.brightness_hz || 0) + ' Hz · Flatness ' + Number(d.noisiness || 0).toFixed(4) + '</small></span>' +
+              '</button>' +
+              '<div class="hear"><button class="cplay" style="width:34px;height:34px" data-act="play-window" data-v="' + esc(adminTrackId + ':' + s.startSec + ':' + s.endSec) + '" aria-label="Listen">' + svg('i-play', 11) + '</button><span><b>RMS ' + Number(d.energy || 0).toFixed(4) + '</b><small>Flux ' + Number(d.spectral_flux || 0).toFixed(3) + ' · Onset ' + Number(d.onset_activity || 0).toFixed(2) + '</small></span></div>' +
+              '<div class="tans"><div class="mw" style="width:120px" aria-hidden="true">' + vecBars(s.deepEmbedding || s.embedding, inSel) + '</div></div>' +
+              detail +
+              '</div>';
+          }).join('');
+        }
+
+        const dmerRows = dmer ? [
+          ['Personalized-DMER (AAAI 2025)', 'Dual-scale temporal attention + listener support-set adaptation', dmer.personalized_dmer.ccc, dmer.personalized_dmer.rmse, true],
+          ['Population Dual-Scale Attention', 'Local + global temporal attention without listener adaptation', dmer.population_dual_scale_attention.ccc, dmer.population_dual_scale_attention.rmse, false],
+          ['Static Ridge Baseline', 'Frame-independent prediction without temporal context', dmer.static_ridge.ccc, dmer.static_ridge.rmse, false]
+        ].map(b => '<div class="trow' + (b[4] ? ' on' : '') + '">' +
+          '<div class="tmain">' + meterHtml(level(b[2])) + '<span class="tname">' + b[0] + '<small>' + b[1] + '</small></span></div>' +
+          '<div class="hear"><span><b>CCC ' + Number(b[2]).toFixed(4) + '</b><small>RMSE ' + Number(b[3]).toFixed(4) + '</small></span></div>' +
+          '<div class="tans"><span class="cnote">' + Math.round(b[2] * 100) + '% concordance</span></div>' +
+          '</div>').join('') : '<div class="lrow note">Analyze at least one recording to compute Personalized-DMER baselines.</div>';
+
+        const activeJobs = Array.from(analyzingIds).map(id => {
+          const t = track(id);
+          return '<div class="trow on">' +
+            '<div class="tmain">' + meterHtml(2) + '<span class="tname">Analyzing ' + esc(t?.song || id) + '…<small>' + esc(analyzeStatus[id] || 'Extracting librosa DSP + 512-D CLAP embeddings…') + '</small></span></div>' +
+            '<div class="hear"><span><b>Running local Python pipeline</b></span></div>' +
+            '<div class="tans"><span class="pill" style="color:var(--accent)">In progress</span></div>' +
+            '</div>';
+        }).join('');
+
+        $('main').innerHTML = '<div class="col">' +
+          '<div style="display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px">' +
+          '<div><div class="eyebrow" style="margin-bottom:6px">PYTHON SPECTRAL &amp; MULTIMODAL DIAGNOSTICS</div><h1 class="ph1">Feature Analysis</h1>' +
+          '<p class="lead">Synced librosa STFT spectral trajectories, 537-D multimodal self-similarity, 2D PCA projections, and TROMPA active-learning diagnostics.</p></div>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+          '<button class="primary" data-act="import">+ Upload &amp; analyze song</button>' +
+          '<button class="outline" data-act="analyze-all">Analyze all tracks</button>' +
+          '<a class="outline" href="http://127.0.0.1:8765/studio" target="_blank" rel="noopener" style="height:38px;padding:0 16px;border-radius:19px;border:1px solid var(--line2);display:inline-flex;align-items:center;text-decoration:none;color:var(--fg);font-size:14px">Full Python Studio ↗</a>' +
+          '</div>' +
+          '</div>' +
+          (activeJobs ? '<h2 class="sh" style="margin-top:24px">Analysis pipeline in progress</h2><div class="tlist">' + activeJobs + '</div>' : '') +
+          '<h2 class="sh" style="margin-top:24px">Select recording to inspect</h2>' +
+          '<div class="tabs" role="tablist">' + LIB.map(t => '<button class="tab" role="tab" data-act="admin-track" data-v="' + esc(t.id) + '" aria-selected="' + (t.id === adminTrackId) + '">' + esc(t.song) + '</button>').join('') + '</div>' +
+          plotsSection +
+          '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-top:36px">' +
+          '<div><h2 class="sh" style="margin:0">Windows in selected passage (' + visibleWins.length + ' of ' + segs.length + ')</h2>' +
+          '<p class="shs" style="margin-top:4px">Filtered to the synced selection window ' + fmt(sel.a) + '–' + fmt(sel.b) + ' so you only inspect relevant windows. Click any window to expand its 25 DSP &amp; 512 CLAP features.</p></div>' +
+          (segs.length > 6 ? '<button class="ghost" data-act="toggle-admin-all-wins">' + (adminShowAllWins ? 'Show selected passage only' : 'Show all ' + segs.length + ' windows') + '</button>' : '') +
+          '</div>' +
+          '<div class="tlist">' + segRows + '</div>' +
+          '<h2 class="sh">TROMPA-MER active learning queue</h2>' +
+          '<p class="shs">Passages ranked by preference boundary uncertainty, cross-modal disagreement, and acoustic novelty.</p>' +
+          '<ol class="list">' + (alQueries.length ? alQueries.map(q => {
+            const t = track(q.trackId || adminTrackId) || selTrack || { song: adminTrackId };
+            return '<li class="row"><button class="cplay" data-act="play-window" data-v="' + esc((q.trackId || adminTrackId) + ':' + q.startSec + ':' + q.endSec) + '">' + svg('i-play', 12) + '</button>' +
+              '<div class="info"><div class="s">' + esc(t.song) + ' <span>— ' + fmt(q.startSec) + ' to ' + fmt(q.endSec) + '</span><span class="new">Acquisition ' + q.acquisitionScore + '</span></div>' +
+              '<div class="w">Prompt: “' + esc(q.question) + '” · Uncertainty ' + q.uncertainty + ' · Modal disagreement ' + q.modalDisagreement + '</div>' +
+              '<div class="tags">' + (q.suggestedChips || []).map(c => '<span>' + esc(c) + '</span>').join('') + '</div></div>' +
+              '<span class="r">' + fmt(q.startSec) + ' – ' + fmt(q.endSec) + '</span></li>';
+          }).join('') : '<li class="lrow note">Analyze a recording to compute active-learning query scores.</li>') + '</ol>' +
+          '<h2 class="sh">Personalized-DMER (AAAI 2025) emotion baseline</h2>' +
+          '<p class="shs">Evaluated as a supporting dynamic Valence-Arousal baseline (Lin’s Concordance Correlation Coefficient).</p>' +
+          '<div class="tlist">' + dmerRows + '</div>' +
+          (evals.length ? '<h2 class="sh">Held-out preference ranking</h2><ol class="list">' + evals.map(ev => '<li class="lrow"><div class="info"><div class="s">Model <span>— ' + esc(ev.modelId) + '</span></div><div class="meta">Tested tracks: ' + ev.testedTracks + ' · Compared pairs: ' + ev.comparedPairs + ' · Personal accuracy ' + Math.round(ev.personalAccuracy * 100) + '% vs baseline ' + Math.round(ev.baselineAccuracy * 100) + '%</div></div><span class="pill ok">' + Math.round(ev.personalAccuracy * 100) + '%</span></li>').join('') + '</ol>' : '') +
+          '</div>';
+
+        drawAdminCanvases();
+        bindAdminCanvases();
+      }
+
+      function drawAdminCanvases(onlyOverlays = false) {
+        const sp = adminStudioBundle?.spectralPlots;
+        if (!sp || !sp.curves) return;
+        const dur = adminStudioBundle?.multimodal?.durationSec || DUR || 32;
+        const sel = (S.trackId === adminTrackId && S.sel) ? S.sel : (adminSel || { a: 0, b: Math.min(12, dur) });
+        const playT = (S.trackId === adminTrackId) ? S.t : 0;
+        const PAD_L = 46, PAD_R = 12, PAD_T = 8, PAD_B = 18;
+
+        function prep(id, keepBg = false) {
+          const cv = $(id); if (!cv) return null;
+          const dpr = Math.min(3, window.devicePixelRatio || 1);
+          const w = cv.clientWidth || 760, h = Number(cv.getAttribute('height')) || 120;
+          const rw = Math.round(w * dpr), rh = Math.round(h * dpr);
+          if (cv.width !== rw || cv.height !== rh) {
+            cv.width = rw; cv.height = rh;
+            cv.style.width = '100%'; cv.style.height = h + 'px';
+            cv._bgValid = false;
+          }
+          const ctx = cv.getContext('2d');
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          if (!keepBg || !cv._bgValid) ctx.clearRect(0, 0, w, h);
+          return { ctx, cv, w, h, dpr, pw: w - PAD_L - PAD_R, ph: h - PAD_T - PAD_B };
+        }
+        function saveBg(c) {
+          if (!c || !c.cv) return;
+          const cv = c.cv;
+          if (!cv._bgCanvas) cv._bgCanvas = document.createElement('canvas');
+          if (cv._bgCanvas.width !== cv.width || cv._bgCanvas.height !== cv.height) {
+            cv._bgCanvas.width = cv.width; cv._bgCanvas.height = cv.height;
+          }
+          const bctx = cv._bgCanvas.getContext('2d');
+          bctx.setTransform(1, 0, 0, 1, 0, 0);
+          bctx.clearRect(0, 0, cv.width, cv.height);
+          bctx.drawImage(cv, 0, 0);
+          cv._bgValid = true;
+        }
+        function restoreBg(c) {
+          if (!c || !c.cv || !c.cv._bgCanvas || !c.cv._bgValid) return false;
+          c.ctx.clearRect(0, 0, c.w, c.h);
+          c.ctx.drawImage(c.cv._bgCanvas, 0, 0, c.cv.width, c.cv.height, 0, 0, c.w, c.h);
+          return true;
+        }
+
+        function axes(c, yLabels) {
+          const { ctx, w, h, pw, ph } = c;
+          ctx.fillStyle = '#0B0B0D';
+          ctx.fillRect(PAD_L, PAD_T, pw, ph);
+          ctx.font = '10px -apple-system, BlinkMacSystemFont, sans-serif';
+          ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+          yLabels.forEach((lbl, i) => {
+            const y = PAD_T + (i / Math.max(1, yLabels.length - 1)) * ph;
+            ctx.strokeStyle = '#1F1F23'; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(PAD_L, y); ctx.lineTo(PAD_L + pw, y); ctx.stroke();
+            ctx.fillStyle = '#85858B'; ctx.fillText(lbl, PAD_L - 6, y);
+          });
+          const nT = Math.min(8, Math.max(4, Math.floor(pw / 100)));
+          ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+          for (let i = 0; i <= nT; i++) {
+            const f = i / nT, x = PAD_L + f * pw;
+            ctx.strokeStyle = '#1F1F23';
+            ctx.beginPath(); ctx.moveTo(x, PAD_T); ctx.lineTo(x, PAD_T + ph); ctx.stroke();
+            ctx.fillStyle = '#85858B'; ctx.fillText(fmt(f * dur), x, h - 2);
+          }
+        }
+
+        function overlays(c) {
+          const { ctx, pw, ph } = c;
+          if (sel) {
+            const xA = PAD_L + (sel.a / dur) * pw, xB = PAD_L + (sel.b / dur) * pw;
+            ctx.fillStyle = 'rgba(142,197,184,0.12)';
+            ctx.fillRect(xA, PAD_T, Math.max(2, xB - xA), ph);
+            ctx.strokeStyle = '#8EC5B8'; ctx.lineWidth = 1.2;
+            ctx.beginPath(); ctx.moveTo(xA, PAD_T); ctx.lineTo(xA, PAD_T + ph); ctx.moveTo(xB, PAD_T); ctx.lineTo(xB, PAD_T + ph); ctx.stroke();
+          }
+          const xPlay = PAD_L + Math.max(0, Math.min(1, playT / dur)) * pw;
+          ctx.strokeStyle = '#DCDCE0'; ctx.lineWidth = 1.4;
+          ctx.beginPath(); ctx.moveTo(xPlay, PAD_T); ctx.lineTo(xPlay, PAD_T + ph); ctx.stroke();
+          if (adminHoverT !== null) {
+            const xH = PAD_L + Math.max(0, Math.min(1, adminHoverT / dur)) * pw;
+            ctx.save(); ctx.setLineDash([3, 3]); ctx.strokeStyle = '#E2A86B'; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(xH, PAD_T); ctx.lineTo(xH, PAD_T + ph); ctx.stroke(); ctx.restore();
+          }
+        }
+
+        function trace(c, arr, minV, maxV, col, fillCol = null, lw = 1.6, dash = []) {
+          if (!arr || !arr.length) return;
+          const { ctx, pw, ph } = c;
+          const N = arr.length, span = Math.max(1e-6, maxV - minV);
+          ctx.save();
+          if (dash.length) ctx.setLineDash(dash);
+          ctx.beginPath();
+          for (let i = 0; i < N; i++) {
+            const x = PAD_L + (i / (N - 1)) * pw;
+            const y = PAD_T + (1 - Math.max(0, Math.min(1, (arr[i] - minV) / span))) * (ph - 4) + 2;
+            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+          }
+          ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.stroke();
+          if (fillCol) {
+            ctx.lineTo(PAD_L + pw, PAD_T + ph); ctx.lineTo(PAD_L, PAD_T + ph); ctx.closePath();
+            ctx.fillStyle = fillCol; ctx.fill();
+          }
+          ctx.restore();
+        }
+
+        const cv = sp.curves, st = sp.stats;
+        // 1. Mel spectrogram
+        const cMel = prep('adm-cv-mel', onlyOverlays);
+        if (cMel && sp.melDb?.length) {
+          if (!onlyOverlays || !restoreBg(cMel)) {
+            axes(cMel, ['8 kHz', '1.5 kHz', '55 Hz']);
+            const { ctx, pw, ph } = cMel;
+            const rows = sp.melDb.length, cols = sp.melDb[0].length;
+            const cw = pw / cols + 0.6, ch = ph / rows + 0.6;
+            for (let r = 0; r < rows; r++) {
+              const rowArr = sp.melDb[rows - 1 - r];
+              const y = PAD_T + (r / rows) * ph;
+              for (let col = 0; col < cols; col++) {
+                const t = Math.max(0, Math.min(1, (rowArr[col] + 60) / 60));
+                const R = Math.round(14 + 210 * Math.pow(t, 1.3)), G = Math.round(14 + 185 * Math.pow(t, 1.5)), B = Math.round(18 + 170 * Math.pow(t, 1.1));
+                ctx.fillStyle = 'rgb(' + R + ',' + G + ',' + B + ')';
+                ctx.fillRect(PAD_L + (col / cols) * pw, y, cw, ch);
+              }
+            }
+            trace(cMel, cv.rolloffHz, 0, 5512, 'rgba(142,197,184,0.85)', null, 1.2, [3, 3]);
+            trace(cMel, cv.centroidHz, 0, 5512, '#E2A86B', null, 1.8);
+            saveBg(cMel);
+          }
+          overlays(cMel);
+        }
+
+        // 2. Flatness & Tonality
+        const cFlat = prep('adm-cv-flat', onlyOverlays);
+        if (cFlat) {
+          if (!onlyOverlays || !restoreBg(cFlat)) {
+            axes(cFlat, ['1.0', '0.5', '0.0']);
+            trace(cFlat, cv.tonality, 0, 1, '#8EC5B8', 'rgba(142,197,184,0.12)', 1.7);
+            trace(cFlat, cv.zcr, 0, Math.max(0.15, st.zcr.max * 1.1), '#829CD0', null, 1.2, [2, 2]);
+            trace(cFlat, cv.flatness, 0, Math.max(0.05, st.flatness.p90 * 1.6), '#D97B88', 'rgba(217,123,136,0.14)', 1.6);
+            saveBg(cFlat);
+          }
+          overlays(cFlat);
+        }
+
+        // 3. Vocal band
+        const cVoc = prep('adm-cv-voc', onlyOverlays);
+        if (cVoc) {
+          if (!onlyOverlays || !restoreBg(cVoc)) {
+            axes(cVoc, ['100%', '50%', '0%']);
+            trace(cVoc, cv.lowBandRatio, 0, 1, '#829CD0', 'rgba(130,156,208,0.08)', 1.3, [3, 3]);
+            trace(cVoc, cv.vocalRatio, 0, 1, '#8EC5B8', 'rgba(142,197,184,0.16)', 1.8);
+            saveBg(cVoc);
+          }
+          overlays(cVoc);
+        }
+
+        // 4. RMS & Slope
+        const cRms = prep('adm-cv-rms', onlyOverlays);
+        if (cRms) {
+          if (!onlyOverlays || !restoreBg(cRms)) {
+            const mxR = Math.max(0.05, st.rms.max * 1.1);
+            axes(cRms, [mxR.toFixed(2), (mxR / 2).toFixed(2), '0.00']);
+            trace(cRms, cv.rms, 0, mxR, '#E2A86B', 'rgba(226,168,107,0.14)', 1.7);
+            const segs = adminStudioBundle?.multimodal?.segments || [];
+            segs.forEach(s => {
+              const sl = Number(s.descriptors?.energy_slope || 0);
+              if (Math.abs(sl) < 0.015) return;
+              const x1 = PAD_L + (s.startSec / dur) * cRms.pw, x2 = PAD_L + (s.endSec / dur) * cRms.pw;
+              const ym = PAD_T + (1 - Math.min(1, Number(s.descriptors?.energy || 0) / mxR)) * cRms.ph;
+              const dy = Math.max(-16, Math.min(16, -sl * 42));
+              cRms.ctx.strokeStyle = sl > 0 ? '#8EC5B8' : '#D97B88'; cRms.ctx.lineWidth = 2;
+              cRms.ctx.beginPath(); cRms.ctx.moveTo(x1, ym - dy); cRms.ctx.lineTo(x2, ym + dy); cRms.ctx.stroke();
+            });
+            saveBg(cRms);
+          }
+          overlays(cRms);
+        }
+
+        // 5. Flux & Onset
+        const cFlux = prep('adm-cv-flux', onlyOverlays);
+        if (cFlux) {
+          if (!onlyOverlays || !restoreBg(cFlux)) {
+            axes(cFlux, ['Peak', 'Mid', '0']);
+            trace(cFlux, cv.flux, 0, Math.max(0.1, st.flux.max * 1.08), '#829CD0', 'rgba(130,156,208,0.12)', 1.6);
+            trace(cFlux, cv.onset, 0, Math.max(0.5, st.onset.max * 1.08), '#E2A86B', null, 1.4);
+            saveBg(cFlux);
+          }
+          overlays(cFlux);
+        }
+
+        // 6. Chroma
+        const cChroma = prep('adm-cv-chroma', onlyOverlays);
+        if (cChroma && sp.chroma?.length) {
+          if (!onlyOverlays || !restoreBg(cChroma)) {
+            axes(cChroma, ['B', 'F#', 'C']);
+            const { ctx, pw, ph } = cChroma;
+            const cols = sp.chroma[0].length, cw = pw / cols + 0.6, ch = ph / 12 + 0.5;
+            for (let r = 0; r < 12; r++) {
+              const pIdx = 11 - r, y = PAD_T + (r / 12) * ph;
+              for (let col = 0; col < cols; col++) {
+                const v = Math.max(0, Math.min(1, sp.chroma[pIdx][col] || 0));
+                ctx.fillStyle = 'rgba(142,197,184,' + (0.05 + 0.9 * Math.pow(v, 1.15)) + ')';
+                ctx.fillRect(PAD_L + (col / cols) * pw, y, cw, ch);
+              }
+            }
+            saveBg(cChroma);
+          }
+          overlays(cChroma);
+        }
+
+        if (onlyOverlays) return;
+
+        // 7. Self-Similarity Matrix
+        const cSsm = prep('adm-cv-ssm');
+        const simMat = adminStudioBundle?.similarityMatrices?.multimodal;
+        if (cSsm && simMat?.length) {
+          const { ctx, w, h } = cSsm;
+          const N = simMat.length, sz = Math.min(w - 24, h - 24), ox = (w - sz) / 2, oy = (h - sz) / 2, cell = sz / N;
+          for (let i = 0; i < N; i++) {
+            for (let j = 0; j < N; j++) {
+              const s = Math.max(0, Math.min(1, (simMat[i][j] - 0.2) / 0.8));
+              ctx.fillStyle = 'rgba(142,197,184,' + (0.06 + 0.9 * Math.pow(s, 1.3)) + ')';
+              ctx.fillRect(ox + j * cell, oy + i * cell, cell + 0.5, cell + 0.5);
+            }
+          }
+          ctx.strokeStyle = '#2C2C31'; ctx.strokeRect(ox, oy, sz, sz);
+        }
+
+        // 8. 2D PCA Map
+        const cPca = prep('adm-cv-pca');
+        const rawPca = adminStudioBundle?.pcaByMode?.multimodal;
+        const pts = Array.isArray(rawPca) ? rawPca : (rawPca?.points || adminStudioBundle?.pcaPoints);
+        const segs = adminStudioBundle?.multimodal?.segments || [];
+        if (cPca && pts?.length) {
+          const { ctx, w, h } = cPca;
+          const pad = 20, pw = w - pad * 2, ph = h - pad * 2;
+          ctx.fillStyle = '#0B0B0D'; ctx.fillRect(pad, pad, pw, ph);
+          ctx.strokeStyle = '#1F1F23'; ctx.strokeRect(pad, pad, pw, ph);
+          ctx.strokeStyle = 'rgba(161,161,166,0.28)'; ctx.lineWidth = 1.1;
+          ctx.beginPath();
+          pts.forEach((p, i) => {
+            const x = pad + p[0] * pw, y = pad + (1 - p[1]) * ph;
+            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+          });
+          ctx.stroke();
+          pts.forEach((p, i) => {
+            const s = segs[i] || { startSec: 0, endSec: 0 };
+            const inSel = sel && Math.max(sel.a, s.startSec) < Math.min(sel.b, s.endSec);
+            const x = pad + p[0] * pw, y = pad + (1 - p[1]) * ph;
+            ctx.beginPath(); ctx.arc(x, y, inSel ? 5 : 3.2, 0, Math.PI * 2);
+            ctx.fillStyle = inSel ? '#8EC5B8' : '#686874'; ctx.fill();
+          });
+        }
+      }
+
+      function bindAdminCanvases() {
+        const dur = adminStudioBundle?.multimodal?.durationSec || DUR || 32;
+        const PAD_L = 46, PAD_R = 12;
+        ['adm-cv-mel', 'adm-cv-flat', 'adm-cv-voc', 'adm-cv-rms', 'adm-cv-flux', 'adm-cv-chroma'].forEach(id => {
+          const cv = $(id); if (!cv || cv._bound) return;
+          cv._bound = true;
+          let t0 = null, px0 = 0, drag = false;
+          const tAt = e => {
+            const r = cv.getBoundingClientRect();
+            const pw = Math.max(1, r.width - PAD_L - PAD_R);
+            return Math.max(0, Math.min(dur, ((e.clientX - r.left - PAD_L) / pw) * dur));
+          };
+          cv.addEventListener('pointerdown', e => { t0 = tAt(e); px0 = e.clientX; drag = false; cv.setPointerCapture(e.pointerId); });
+          cv.addEventListener('pointermove', e => {
+            const t = tAt(e);
+            adminHoverT = t;
+            const sp = adminStudioBundle?.spectralPlots;
+            if (sp && $('adm-hover-readout')) {
+              const idx = Math.min((sp.nBins || 400) - 1, Math.max(0, Math.floor((t / dur) * (sp.nBins || 400))));
+              $('adm-hover-readout').textContent = fmt(t) + ' · Centroid ' + Math.round(sp.curves.centroidHz[idx] || 0) + ' Hz · Flatness ' + Number(sp.curves.flatness[idx] || 0).toFixed(4) + ' · Vocal ' + Math.round((sp.curves.vocalRatio[idx] || 0) * 100) + '% · RMS ' + Number(sp.curves.rms[idx] || 0).toFixed(4);
+            }
+            if (t0 !== null) {
+              if (!drag && Math.abs(e.clientX - px0) > 5) drag = true;
+              if (drag) {
+                adminSel = { a: Math.min(t0, t), b: Math.max(t0, t) };
+                if (S.trackId === adminTrackId) S.sel = adminSel;
+              }
+            }
+            drawAdminCanvases(true);
+          });
+          cv.addEventListener('pointerleave', () => { if (t0 === null) { adminHoverT = null; drawAdminCanvases(true); } });
+          cv.addEventListener('pointerup', async e => {
+            if (t0 === null) return;
+            const t = tAt(e);
+            if (!drag) {
+              adminSel = { a: Math.max(0, t - 6), b: Math.min(dur, t + 6) };
+            } else if (adminSel.b - adminSel.a < 3) {
+              adminSel.b = Math.min(dur, adminSel.a + 6);
+            }
+            t0 = null; drag = false;
+            await openInPlayer(adminSel.a, adminSel.b, adminTrackId, false);
+          });
+        });
+      }
+
+      /* ---------- routing / actions ---------- */
+      function render() {
+        renderShell();
+        if (S.view === 'player') renderPlayer();
+        else if (S.view === 'moments') renderMoments();
+        else if (S.view === 'library') renderLibrary();
+        else if (S.view === 'discover') renderDiscover();
+        else if (S.view === 'settings') renderSettings();
+        else if (S.view === 'admin') renderAdmin();
+        else renderDNA();
+        window.scrollTo(0, 0);
+      }
+      var toastT;
+      function toast(msg, label, view) {
+        var el = $('toast'); el.innerHTML = '<span>' + esc(msg) + '</span>' + (label ? '<button data-act="go" data-v="' + view + '">' + label + '</button>' : '');
+        el.hidden = false; clearTimeout(toastT); toastT = setTimeout(function () { el.hidden = true; }, 5000);
+      }
+      async function openInPlayer(a, b, trackId, navigate = false) {
+        const t = track(trackId) || current(); if (!t) return;
+        const sameRange = S.trackId === t.id && S.sel && Math.abs(S.sel.a - a) < 0.5 && Math.abs(S.sel.b - b) < 0.5;
+        if (!navigate && sameRange && music && music.isPlaying()) {
+          music.pause();
+          render();
+          return;
+        }
+        await selectTrack(t, a, false, navigate);
+        S.sel = { a, b }; S.t = a; S.loop = false; S.nudge = false; S.justSaved = false;
+        previewEnd = b; seekGuardUntil = Date.now() + 350; music.setTime(a);
+        if (S.view === 'player') refreshPlayerState();
+        try { await music.play(); } catch (err) { console.warn(err); }
+        render();
+      }
+      async function playNextMoment() {
+        const next = playQueue.shift(); if (next) { await openInPlayer(next.a, next.b, next.trackId, false); }
+        else { previewEnd = null; music.pause(); render(); }
+      }
+      function toggle(arr, v) { var i = arr.indexOf(v); if (i >= 0) arr.splice(i, 1); else arr.push(v); }
+
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && e.target && e.target.id === 'stream-input-field') {
+          e.preventDefault();
+          const btn = document.querySelector('[data-act="submit-stream"]');
+          if (btn) btn.click();
+        }
+      });
+
+      document.addEventListener('click', async function (e) {
+        const el = e.target.closest('[data-act]'); if (!el) return;
+        const a = el.dataset.act, v = el.dataset.v;
+        try {
+          switch (a) {
+            case 'go': S.view = v; window.location.hash = v; $('toast').hidden = true; render(); break;
+            case 'coll': S.view = 'moments'; S.tab = +v; render(); break;
+            case 'tab': S.tab = +v; renderMoments(); renderShell(); break;
+            case 'toggle-tracking': {
+              S.learning = !S.learning;
+              await db.settings.put({ key: 'learning', value: S.learning });
+              await db.settings.put({ key: 'privateListening', value: S.learning });
+              if (!S.learning) { S.ask = null; S.nudge = false; }
+              renderSettings();
+              renderShell();
+              toast(S.learning ? 'Private listening insights enabled' : 'Private listening insights paused');
+              break;
+            }
+            case 'toggle-auto-analyze': {
+              S.autoAnalyze = !S.autoAnalyze;
+              await db.settings.put({ key: 'autoAnalyze', value: S.autoAnalyze });
+              renderSettings();
+              toast(S.autoAnalyze ? 'Automatic local audio analysis enabled' : 'Automatic local audio analysis turned off');
+              if (S.autoAnalyze) autoAnalyzeLibrary().catch(console.warn);
+              break;
+            }
+            case 'admin-track': {
+              adminTrackId = v;
+              adminOpenWin = -1;
+              adminStudioBundle = null;
+              const t = track(v);
+              if (t && S.trackId !== t.id) {
+                await selectTrack(t, 0, false, false);
+              }
+              S.view = 'admin';
+              renderAdmin();
+              break;
+            }
+            case 'inspect-track': {
+              adminTrackId = v;
+              adminOpenWin = -1;
+              adminStudioBundle = null;
+              const t = track(v);
+              if (t && S.trackId !== t.id) { await selectTrack(t, 0, false, false); }
+              S.view = 'admin';
+              renderAdmin();
+              break;
+            }
+            case 'toggle-admin-win': {
+              adminOpenWin = (adminOpenWin === +v) ? -1 : +v;
+              renderAdminViewOnly();
+              break;
+            }
+            case 'toggle-admin-all-wins': {
+              adminShowAllWins = !adminShowAllWins;
+              renderAdminViewOnly();
+              break;
+            }
+            case 'analyze-all': {
+              const prev = S.autoAnalyze;
+              S.autoAnalyze = true;
+              toast('Analyzing all tracks with Python backend…');
+              await autoAnalyzeLibrary();
+              S.autoAnalyze = prev;
+              await loadAdminData(true);
+              renderAdminViewOnly();
+              break;
+            }
+            case 'play-window': {
+              e.stopPropagation();
+              const pts = v.split(':');
+              const tid = pts[0], a = +pts[1], b = +pts[2];
+              playQueue = [];
+              await openInPlayer(a, b, tid, false);
+              break;
+            }
+            case 'clearevents': {
+              if (window.confirm('Clear your implicit listening event history?')) {
+                await db.events.clear();
+                await refreshIntelligence();
+                renderSettings();
+                toast('Listening event history cleared');
+              }
+              break;
+            }
+            case 'play': {
+              e.stopPropagation();
+              if (!music) break;
+              if (music.isPlaying()) { music.pause(); emit('pause'); }
+              else {
+                if (S.sel) {
+                  previewEnd = S.sel.b;
+                  if (S.t < S.sel.a || S.t >= S.sel.b - 0.15) { S.t = S.sel.a; seekGuardUntil = Date.now() + 300; music.setTime(S.sel.a); }
+                } else { previewEnd = null; }
+                try { await music.play(); emit('play'); } catch (err) { console.warn('Playback notice:', err); if (err?.name !== 'NotAllowedError' && err?.name !== 'AbortError') toast('Unable to play this recording.'); }
+              }
+              break;
+            }
+            case 'playsel': {
+              if (!music || !S.sel) break;
+              S.t = S.sel.a; previewEnd = S.sel.b; seekGuardUntil = Date.now() + 350;
+              music.setTime(S.sel.a); refreshPlayerState();
+              try { await music.play(); emit('play'); } catch (err) { console.warn(err); }
+              break;
+            }
+            case 'seek': {
+              const from = S.t, to = Math.max(0, Math.min(DUR, S.t + (+v)));
+              if (!S.sel || to < S.sel.a || to > S.sel.b) previewEnd = null;
+              seekGuardUntil = Date.now() + 300; music.setTime(to); S.t = to; emit('seek', 'user', { fromSec: from, toSec: to }); refreshPlayerState(); break;
+            }
+            case 'answer': {
+              const A = S.ask; S.ask = null; if (!A) break;
+              const mid = A.mid || addMoment(A); const q = applyTags(mid, A, [], [v], ''); drawSlot(); refreshPlayerState();
+              toast('Thanks. Added to ' + q.join(', ') + '.', 'See Music DNA', 'dna'); break;
+            }
+            case 'skipask': S.ask = null; drawSlot(); refreshPlayerState(); break;
+            case 'learn': S.learning = !S.learning; await db.settings.put({ key: 'learning', value: S.learning });
+              if (!S.learning) { S.ask = null; S.nudge = false; } renderDNA(); renderShell(); break;
+            case 'trait': S.trait = (S.trait === +v) ? -1 : +v; renderDNA(); break;
+            case 'disc': S.view = 'discover'; S.dtab = +v + 1; render(); break;
+            case 'dtab': S.dtab = +v; renderDiscover(); break;
+            case 'preview': { e.stopPropagation(); playQueue = []; const x = suggestions[+v]; if (x) await openInPlayer(x.startSec, x.endSec, x.trackId, false); break; }
+            case 'open-preview': { playQueue = []; const x = suggestions[+v]; if (x) await openInPlayer(x.startSec, x.endSec, x.trackId, true); break; }
+            case 'like': case 'dislike': await rate(+v, a); break;
+            case 'toggle-stream-input': {
+              S.showStreamInput = !S.showStreamInput;
+              renderLibrary();
+              if (S.showStreamInput) {
+                setTimeout(() => { const el = $('stream-input-field'); if (el) el.focus(); }, 50);
+              }
+              break;
+            }
+            case 'submit-stream': {
+              const inputEl = $('stream-input-field');
+              const url = inputEl ? inputEl.value.trim() : '';
+              if (!url) { toast('Please enter an audio or YouTube/SoundCloud URL'); break; }
+              toast('Resolving audio stream…');
+              try {
+                const meta = await resolveStreamUrl(url);
+                const audioUrl = meta.isDirect ? meta.streamUrl : getProxyStreamUrl(meta.streamUrl);
+                const newTrack = {
+                  id: meta.id,
+                  title: meta.title,
+                  artist: meta.artist,
+                  durationSec: meta.durationSec,
+                  mimeType: 'audio/mpeg',
+                  source: 'external-reference',
+                  analysisRight: 'cleared',
+                  addedAt: Date.now(),
+                  streamPlaybackUrl: audioUrl,
+                  thumbnailUrl: meta.thumbnail
+                };
+                await db.tracks.put(newTrack);
+                S.showStreamInput = false;
+                await refreshLibrary();
+                const t = track(meta.id);
+                if (t) await selectTrack(t, 0, true, true);
+                toast('Loaded stream: ' + meta.title);
+              } catch (err) {
+                toast('Stream error: ' + (err.message || err));
+              }
+              break;
+            }
+            case 'import': $('file-import').click(); break;
+            case 'analyze': await analyze(v); break;
+            case 'deltrack': {
+              await db.tracks.delete(String(v));
+              await db.analyses.where('trackId').equals(String(v)).delete();
+              await db.moments.where('trackId').equals(String(v)).delete();
+              await deleteTrackFromSQLite(String(v));
+              await refreshLibrary();
+              if (S.trackId === String(v) && LIB.length) await selectTrack(LIB[0], 0, false, false);
+              else render();
+              toast('Removed song from library.');
+              break;
+            }
+            case 'playlib': {
+              e.stopPropagation();
+              const t = track(v) || LIB[+v];
+              if (!t) break;
+              if (S.trackId === t.id && loadedTrackId === t.id && music) {
+                if (music.isPlaying()) { music.pause(); emit('pause'); }
+                else { previewEnd = null; try { await music.play(); emit('play'); } catch (err) { console.warn(err); } }
+                render();
+              } else {
+                flushListenSpan('track_change');
+                emit('track_change');
+                await selectTrack(t, 0, true, false);
+              }
+              break;
+            }
+            case 'open-track': {
+              const t = track(v) || LIB[+v];
+              if (!t) break;
+              flushListenSpan('track_change');
+              emit('track_change');
+              await selectTrack(t, 0, true, true);
+              break;
+            }
+            case 'savecand': {
+              const parts = v.split(':');
+              const tId = parts[0], sSec = +parts[1];
+              const cand = candidates.find(x => x.trackId === tId && x.startSec === sSec);
+              if (cand) {
+                const id = uid();
+                const newM = { id, trackId: cand.trackId, a: cand.startSec, b: cand.endSec, qualities: [], feelings: [], note: 'Confirmed favorite from listening attention', source: 'user_confirmed' };
+                saveDB(newM);
+                await refreshLibrary();
+                toast('Confirmed as a favorite moment.', 'View in Moments', 'moments');
+              }
+              break;
+            }
+            case 'dismisscand': {
+              const parts = v.split(':');
+              const tId = parts[0], sSec = +parts[1];
+              emit('dismiss_candidate', 'user', { trackId: tId, positionSec: sSec });
+              await refreshIntelligence();
+              render();
+              toast('Suggestion dismissed without penalty.');
+              break;
+            }
+            case 'clear': S.sel = null; previewEnd = null; S.describe = false; S.loop = false; S.nudge = false; drawSlot(); refreshPlayerState(); break;
+            case 'delmoment': {
+              await db.moments.delete(String(v));
+              await refreshLibrary();
+              if (S.view === 'player') { S.sel = null; previewEnd = null; S.describe = null; S.ask = null; S.loop = false; drawSlot(); refreshPlayerState(); }
+              else render();
+              toast('Removed saved moment.');
+              break;
+            }
+            case 'loop': {
+              if (!S.sel) { S.sel = { a: Math.max(0, S.t - 5), b: Math.min(DUR, Math.max(0, S.t - 5) + 12) }; }
+              S.loop = !S.loop; S.loops = 0;
+              if (S.loop) { S.t = S.sel.a; previewEnd = S.sel.b; seekGuardUntil = Date.now() + 300; music.setTime(S.t); if (!music.isPlaying()) music.play().catch(() => { }); }
+              emit(S.loop ? 'loop_enabled' : 'loop_disabled', 'user', { momentStartSec: S.sel.a, momentEndSec: S.sel.b }); refreshPlayerState(); break;
+            }
+            case 'shuffle': {
+              S.shuffle = !S.shuffle;
+              const shufBtn = $('sp-shuffle-btn');
+              if (shufBtn) shufBtn.setAttribute('aria-pressed', S.shuffle ? 'true' : 'false');
+              if (S.shuffle && LIB.length > 1) {
+                const candidatesList = LIB.filter(t => t.id !== S.trackId);
+                const nextT = candidatesList[Math.floor(Math.random() * candidatesList.length)];
+                if (nextT) {
+                  await selectTrack(nextT, 0, true, false);
+                  toast('Shuffled: ' + (nextT.song || 'Next track'));
+                }
+              } else {
+                toast(S.shuffle ? 'Shuffle enabled' : 'Shuffle off');
+              }
+              break;
+            }
+            case 'more': {
+              const M = S.ask; if (!M) break; S.ask = null; S.describe = { a: M.a, b: M.b, mid: M.mid };
+              S.feel = []; S.love = []; S.note = ''; drawSlot(); refreshPlayerState(); break;
+            }
+            case 'explore-moment': {
+              if (!S.sel) break;
+              S.explore = !S.explore;
+              S.describe = null;
+              S.nudge = false;
+              drawSlot();
+              refreshPlayerState();
+              break;
+            }
+            case 'close-explore': {
+              S.explore = false;
+              if (S.activeStem !== 'all') {
+                S.activeStem = 'all';
+                const curPos = S.t, wasPlaying = S.playing;
+                const origUrl = current()?.id === 'original-demo' ? '/demo.wav' : ('http://127.0.0.1:8765/api/audio/' + encodeURIComponent(S.trackId));
+                music.load(origUrl, curPos).then(() => { if (wasPlaying) music.play().catch(console.warn); }).catch(console.warn);
+              }
+              drawSlot();
+              refreshPlayerState();
+              break;
+            }
+            case 'switch-stem': {
+              const stem = String(v).toLowerCase();
+              if (S.activeStem === stem) break;
+              S.activeStem = stem;
+              const curPos = S.t, wasPlaying = S.playing;
+              toast('Loading ' + stem + ' stem…');
+              const stemUrl = stem === 'all'
+                ? (current()?.id === 'original-demo' ? '/demo.wav' : ('http://127.0.0.1:8765/api/audio/' + encodeURIComponent(S.trackId)))
+                : ('http://127.0.0.1:8765/api/audio/stem/' + encodeURIComponent(S.trackId) + '/' + encodeURIComponent(stem));
+              try {
+                await music.load(stemUrl, curPos);
+                if (wasPlaying) { await music.play(); S.playing = true; }
+              } catch (e) {
+                console.warn('Stem loading notice:', e);
+              }
+              drawSlot();
+              refreshPlayerState();
+              break;
+            }
+            case 'toggle-stem-reason': {
+              const reason = String(v);
+              if (S.stemReasons.includes(reason)) {
+                S.stemReasons = S.stemReasons.filter(r => r !== reason);
+              } else {
+                S.stemReasons.push(reason);
+              }
+              drawSlot();
+              break;
+            }
+            case 'save-explore': {
+              if (!S.sel) break;
+              const r = S.sel;
+              const mid = addMoment(r);
+              if (mid && S.stemReasons.length) {
+                applyTags(mid, r, [], S.stemReasons, 'Musical structure & instrument exploration');
+              }
+              S.explore = false;
+              S.justSaved = true;
+              drawSlot();
+              refreshPlayerState();
+              renderShell();
+              toast('Saved moment with musical layers: ' + (S.stemReasons.join(', ') || 'Explored moment'));
+              break;
+            }
+            case 'closedesc': S.describe = null; drawSlot(); refreshPlayerState(); break;
+            case 'dsave': {
+              const D = S.describe; if (!D) break;
+              const id = D.mid || addMoment(D); if (!id) break;
+              const q = applyTags(id, D, S.feel, S.love, S.note);
+              S.describe = null; S.justSaved = true; S.feel = []; S.love = []; S.note = ''; drawSlot(); refreshPlayerState(); renderShell();
+              toast('Saved your moment' + (q.length ? ' · ' + q.join(', ') : ''), 'View', 'moments'); break;
+            }
+            case 'dismiss': S.nudge = false; S.nudged = true; drawSlot(); break;
+            case 'feel': toggle(S.feel, v); el.setAttribute('aria-pressed', S.feel.includes(v)); break;
+            case 'love': toggle(S.love, v); el.setAttribute('aria-pressed', S.love.includes(v)); break;
+            case 'save': saveMoment(); break;
+            case 'quicksave': if (S.t < 2) { toast('Listen a little before saving a moment.'); break; }
+              S.sel = { a: Math.max(0, S.t - 20), b: S.t }; saveMoment(); break;
+            case 'playm': { e.stopPropagation(); playQueue = []; const m = MOMENTS.find(x => String(x.id) === String(v)); if (m) await openInPlayer(m.a, m.b, m.trackId, false); break; }
+            case 'open-moment': { playQueue = []; const m = MOMENTS.find(x => String(x.id) === String(v)); if (m) await openInPlayer(m.a, m.b, m.trackId, true); break; }
+            case 'playall': {
+              const selected = MOMENTS.filter(m => S.tab === 0 || m.coll.includes(S.tab - 1));
+              if (!selected.length) { toast('Save a moment first.'); break; }
+              playQueue = [...selected]; await playNextMoment(); break;
+            }
+            case 'playev': {
+              e.stopPropagation();
+              playQueue = []; const z = v.split(','), it = TRAITS[+z[0]]?.items[+z[1]];
+              if (it) { const m = MOMENTS.find(x => x.id === it[6]); if (m) await openInPlayer(m.a, m.b, m.trackId, false); } break;
+            }
+            case 'rmev': {
+              const z = v.split(','), trait = TRAITS[+z[0]], it = trait?.items[+z[1]], m = it && MOMENTS.find(x => x.id === it[6]);
+              if (m) {
+                m.qualities = m.qualities.filter(q => !trait.keys.includes(q)); m.tags = [...m.feelings, ...m.qualities];
+                m.what = m.qualities.join(' · ') || 'Saved moment'; saveDB(m);
+              } renderDNA(); break;
+            }
+            case 'candidate': { e.stopPropagation(); playQueue = []; const x = candidates[+v], t = x && track(x.trackId); if (t) await openInPlayer(x.startSec, x.endSec, t.id, false); break; }
+            case 'export': await exportProfile(); toast('Profile exported; audio files are not included.'); break;
+          }
+        } catch (err) { console.error(err); toast('Action failed: ' + String(err.message || err).slice(0, 90)); }
+      });
+      $('file-import').addEventListener('change', async e => {
+        try { await importAudio(e.target.files); } catch (err) { console.error(err); toast('Import failed.'); }
+        e.target.value = '';
+      });
+
+      /* ---------- native HTML5 audio engine (non-blocking instant playback) ---------- */
+      function createNativeAudioEngine() {
+        const el = document.createElement('audio');
+        el.preload = 'auto';
+        document.body.appendChild(el);
+        const listeners = { timeupdate: [], play: [], pause: [], finish: [] };
+        let pendingTime = null;
+        let currentFallbackUrl = null;
+        let usedFallback = false;
+        el.addEventListener('loadedmetadata', () => {
+          if (el.duration && Number.isFinite(el.duration) && el.duration > 0) {
+            DUR = el.duration;
+            if (S.view === 'player') drawWave();
+          }
+          if (pendingTime !== null) {
+            try { el.currentTime = pendingTime; } catch (e) { }
+            pendingTime = null;
+          }
+        });
+        el.addEventListener('error', () => {
+          if (el.error && el.error.code === 1) return; // MEDIA_ERR_ABORTED during track switch
+          console.warn('Audio playback notice on source:', el.src, el.error);
+          if (!usedFallback && currentFallbackUrl && el.src !== currentFallbackUrl) {
+            usedFallback = true;
+            const resumeTime = pendingTime !== null ? pendingTime : (S.t || 0);
+            el.src = currentFallbackUrl;
+            el.load();
+            pendingTime = resumeTime;
+            if (S.playing) el.play().catch(() => { });
+          }
+        });
+        el.addEventListener('timeupdate', () => listeners.timeupdate.forEach(fn => fn(el.currentTime || 0)));
+        el.addEventListener('play', () => listeners.play.forEach(fn => fn()));
+        el.addEventListener('pause', () => listeners.pause.forEach(fn => fn()));
+        el.addEventListener('ended', () => listeners.finish.forEach(fn => fn()));
+        return {
+          async load(url, startSec = 0, fallbackUrl = null) {
+            pendingTime = startSec || 0;
+            currentFallbackUrl = fallbackUrl;
+            usedFallback = false;
+            el.src = url;
+            el.load();
+            if (el.readyState >= 1 && startSec > 0) {
+              try { el.currentTime = startSec; pendingTime = null; } catch (e) { }
+            }
+          },
+          async play() {
+            try {
+              return await el.play();
+            } catch (err) {
+              if (err?.name === 'AbortError') return;
+              if (!usedFallback && currentFallbackUrl && el.src !== currentFallbackUrl) {
+                usedFallback = true;
+                el.src = currentFallbackUrl;
+                el.load();
+                return await el.play();
+              }
+              throw err;
+            }
+          },
+          pause() { el.pause(); },
+          hasSource() { return Boolean(el.src) && (!el.error || el.error.code === 1); },
+          isPlaying() { return !el.paused && !el.ended; },
+          getCurrentTime() { return el.currentTime || 0; },
+          setTime(sec) {
+            const target = Math.max(0, Number(sec) || 0);
+            if (el.readyState >= 1) { try { el.currentTime = target; pendingTime = null; } catch (e) { pendingTime = target; } }
+            else { pendingTime = target; }
+          },
+          getDuration() { return (el.duration && Number.isFinite(el.duration)) ? el.duration : 0; },
+          setVolume(v) { el.volume = Math.max(0, Math.min(1, Number(v) || 0)); },
+          on(ev, fn) { if (listeners[ev]) listeners[ev].push(fn); }
+        };
+      }
+
+      async function initialize() {
+        music = createNativeAudioEngine();
+        music.setVolume(S.volume);
+
+        let playheadRaf = null;
+        function updateSmoothPlayhead() {
+          if (!music || !music.isPlaying()) {
+            playheadRaf = null;
+            return;
+          }
+          const curT = music.getCurrentTime();
+          S.t = curT;
+          const totalSec = DUR || 32;
+
+          // 1. Continuous 60fps playhead on waveform
+          const wf = $('wf');
+          if (wf && totalSec > 0) {
+            const W = wf.clientWidth;
+            const ph = $('ph');
+            if (ph) ph.style.left = (curT / totalSec * W) + 'px';
+            const bars = $('bars');
+            if (bars && bars.children.length) {
+              const N = bars.children.length;
+              const curBarIdx = Math.floor((curT / totalSec) * N);
+              for (let i = 0; i < N; i++) {
+                const x = (i + .5) / N, ts = x * totalSec;
+                let c;
+                if (S.sel && ts >= S.sel.a && ts <= S.sel.b) c = 'var(--accent)';
+                else if (S.saved.some(r => ts >= r.a && ts <= r.b)) c = 'rgba(142,197,184,.45)';
+                else c = i <= curBarIdx ? 'rgba(220,220,224,.78)' : 'var(--off)';
+                if (bars.children[i].style.background !== c) bars.children[i].style.background = c;
+              }
+            }
+            if ($('tnow')) $('tnow').textContent = fmt(curT);
+          }
+
+          // 2. Continuous 60fps progress in bottom Spotify playback bar
+          const pct = Math.min(100, Math.max(0, (curT / totalSec) * 100));
+          const fill = $('sp-progress-fill'); if (fill) fill.style.width = pct + '%';
+          const handle = $('sp-progress-handle'); if (handle) handle.style.left = pct + '%';
+          const timeNow = $('sp-time-now'); if (timeNow) timeNow.textContent = fmt(curT);
+
+          playheadRaf = requestAnimationFrame(updateSmoothPlayhead);
+        }
+
+        music.on('timeupdate', t => {
+          if (loading || Date.now() < seekGuardUntil) return;
+          if (previewEnd !== null && t >= previewEnd && !S.loop) {
+            previewEnd = null;
+            if (playQueue.length) { playNextMoment().catch(console.error); return; }
+            music.pause();
+            if (S.sel) { S.t = S.sel.a; seekGuardUntil = Date.now() + 250; music.setTime(S.sel.a); }
+            if (S.view === 'player') drawWave(); else render();
+            updateSpotifyBar();
+            return;
+          }
+          if (S.loop && S.sel && t >= S.sel.b - 0.035 && t < S.sel.b + 1) {
+            flushListenSpan('loop_cycle');
+            seekGuardUntil = Date.now() + 250;
+            music.setTime(S.sel.a); S.t = S.sel.a; S.loops++;
+            emit('loop_cycle', 'player', { momentStartSec: S.sel.a, momentEndSec: S.sel.b });
+            if (S.loops >= 2 && !S.nudged && !S.describe && S.view === 'player') { S.nudge = true; S.nudged = true; drawSlot(); }
+          }
+          const rail = $('sp-progress-rail'); if (rail) rail.setAttribute('aria-valuenow', Math.round(t));
+          if (S.view !== 'player') {
+            if (S.view === 'admin') drawAdminCanvases(true);
+            for (const id of ['sidenp', 'mobnp']) {
+              const label = $(id)?.querySelector('.tt span:last-child'); if (label) label.textContent = (current()?.artist || '') + ' · ' + fmt(t);
+            }
+          }
+        });
+        music.on('play', () => {
+          spanStart = S.t; S.playing = true;
+          if (!playheadRaf) playheadRaf = requestAnimationFrame(updateSmoothPlayhead);
+          updateSpotifyBar();
+          if (S.view === 'player') refreshPlayerState();
+          else if (S.view === 'library') { renderLibrary(); renderShell(); }
+          else if (S.view === 'moments') { renderMoments(); renderShell(); }
+          else if (S.view === 'discover') { renderDiscover(); renderShell(); }
+          else renderShell();
+        });
+        music.on('pause', () => {
+          if (playheadRaf) { cancelAnimationFrame(playheadRaf); playheadRaf = null; }
+          flushListenSpan('pause'); S.playing = false;
+          updateSpotifyBar();
+          if (S.view === 'player') refreshPlayerState();
+          else if (S.view === 'library') { renderLibrary(); renderShell(); }
+          else if (S.view === 'moments') { renderMoments(); renderShell(); }
+          else if (S.view === 'discover') { renderDiscover(); renderShell(); }
+          else renderShell();
+        });
+        music.on('finish', () => {
+          if (playheadRaf) { cancelAnimationFrame(playheadRaf); playheadRaf = null; }
+          flushListenSpan('ended'); S.playing = false;
+          if (playQueue.length) { playNextMoment().catch(console.error); return; }
+          updateSpotifyBar();
+          if (S.view === 'player') refreshPlayerState(); else render();
+        });
+        const hashView = window.location.hash.replace('#', '') || new URLSearchParams(window.location.search).get('view');
+        if (hashView && ['player', 'library', 'moments', 'discover', 'dna', 'admin', 'settings'].includes(hashView)) {
+          S.view = hashView;
+        }
+        render();
+        await ensureDemo();
+        const pref = (await db.settings.get('learning')) || (await db.settings.get('privateListening')); S.learning = pref ? pref.value === true : true;
+        const autoPref = await db.settings.get('autoAnalyze'); S.autoAnalyze = autoPref ? autoPref.value === true : true;
+        var rz; window.addEventListener('resize', function () { clearTimeout(rz); rz = setTimeout(function () { renderShell(); if (S.view === 'player') { drawWave(); drawToolbar(); } }, 80); });
+        const volume = await db.settings.get('volume'); if (typeof volume?.value === 'number') S.volume = volume.value;
+        music.setVolume(S.volume);
+        await refreshLibrary();
+        for (const t of LIB) { if (t.id !== 'original-demo') uploadAudioToCache(t).catch(() => { }); }
+        const firstTrack = LIB.find(t => t.id !== 'original-demo') || LIB[0];
+        if (firstTrack) await selectTrack(firstTrack, 0, false, false); else render();
+        if (S.autoAnalyze) autoAnalyzeLibrary().catch(console.warn);
+      }
+
+      var rz; window.addEventListener('resize', function () { clearTimeout(rz); rz = setTimeout(function () { if (S.view === 'player') { drawWave(); drawToolbar(); } }, 80); });
+      initialize().catch(err => { console.error(err); toast('Music DNA could not initialize: ' + String(err.message || err)); });
+    })();
+  </script>
+</body>
+
+</html>

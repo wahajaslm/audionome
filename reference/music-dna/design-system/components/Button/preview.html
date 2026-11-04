@@ -1,0 +1,20 @@
+<!-- @dsCard group="Controls" height=150 subtitle="Primary, outline, ghost, icon and switch" -->
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="../../tokens.css">
+<style>
+body{margin:0;background:var(--bg);font-family:var(--font-sans);color:var(--ink)}
+.wrap{padding:24px;display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.primary{height:38px;padding:0 18px;border:0;border-radius:var(--radius-pill);background:var(--ink);color:var(--on-ink);font:500 14px var(--font-sans)}
+.outline{height:38px;padding:0 16px;border:1px solid var(--line-strong);border-radius:var(--radius-pill);background:none;color:var(--ink);font:14px var(--font-sans)}
+.ghost{height:38px;padding:0 14px;border:0;border-radius:var(--radius-pill);background:none;color:var(--ink-sub);font:14px var(--font-sans)}
+.cplay{width:40px;height:40px;border:1px solid var(--line-strong);border-radius:50%;background:none;color:var(--ink);display:flex;align-items:center;justify-content:center}
+.sw{display:flex;align-items:center;gap:10px;border:0;background:none;color:var(--ink-sub);font:14px var(--font-sans);height:36px}
+.k{width:34px;height:20px;border-radius:10px;background:rgba(142,197,184,0.35);position:relative}
+.k::after{content:"";position:absolute;left:16px;top:2px;width:16px;height:16px;border-radius:50%;background:var(--ink)}
+</style>
+<div class="wrap">
+  <button class="primary">Save moment</button>
+  <button class="outline">Not really</button>
+  <button class="ghost">Skip</button>
+  <button class="cplay" aria-label="Play moment"><svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 5v14l12-7z" fill="currentColor"/></svg></button>
+  <button class="sw" role="switch" aria-checked="true"><span class="k"></span>Learning on</button>
+</div>
