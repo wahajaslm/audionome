@@ -102,3 +102,38 @@ export function dmerRows(b: DmerBaselines | undefined) {
     { name: 'Static Ridge Baseline', desc: 'Frame-independent prediction without temporal context', ...b.static_ridge, main: false },
   ];
 }
+
+/**
+ * LIVE EXPLORE FIX - the Explore panel used to show only the first window of the selection,
+ * frozen while the loop played. It now follows the playhead: the window under it while the
+ * playhead is inside the selection, else the selection's first window.
+ * Example: windows of 12 s, selection 0:30–1:10, playhead 0:50 → window 0:48–1:00 (index 4).
+ */
+export function liveWindow(segs: AudioSegment[], sel: { a: number; b: number }, t: number): { s: AudioSegment; i: number } | null {
+  const inSel = segs.map((s, i) => ({ s, i })).filter(({ s }) => overlapsRange(s, sel.a, sel.b));
+  if (!inSel.length) return null;
+  const inside = t >= sel.a && t <= sel.b;
+  return (inside && inSel.find(({ s }) => t >= s.startSec && t < s.endSec)) || inSel[0];
+}
+
+/** The live measures, each as 0..1 against this song's own range (so bars compare within the song). */
+export const LIVE_MEASURES = [
+  { key: 'energy', label: 'Energy' },
+  { key: 'brightness_hz', label: 'Brightness' },
+  { key: 'onset_activity', label: 'Rhythm activity' },
+  { key: 'vocal_presence', label: 'Vocals' },
+  { key: 'spectral_flux', label: 'Change' },
+] as const;
+
+/**
+ * Where one window sits within the song, per measure: 0 = the song's lowest, 1 = its highest.
+ * Example: energy 0.15 in a song ranging 0.05–0.25 → 0.5.
+ */
+export function songRelative(segs: AudioSegment[], s: AudioSegment): { key: string; label: string; value: number; level: number }[] {
+  return LIVE_MEASURES.map(({ key, label }) => {
+    const all = segs.map(x => Number((x.descriptors as unknown as Record<string, unknown>)?.[key] ?? 0));
+    const v = Number((s.descriptors as unknown as Record<string, unknown>)?.[key] ?? 0);
+    const lo = Math.min(...all), hi = Math.max(...all);
+    return { key, label, value: v, level: hi > lo ? (v - lo) / (hi - lo) : 0.5 };
+  });
+}

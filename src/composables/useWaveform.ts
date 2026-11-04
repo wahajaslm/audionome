@@ -25,8 +25,11 @@ export function useWaveform() {
     seek: (sec: number) => playback.clickSeek(sec),
     selectStart: () => playback.beginSelection(),
     select: (a: number, b: number) => playback.updateSelection(a, b),
-    /** Release: widen to the minimum length, jump to the start and play it once. */
+    /** Release: widen to the minimum length (no seek, no play). */
     selectEnd: () => playback.commitSelection(),
+    /** Edge drag: the loop keeps running on the new range. */
+    resize: (a: number, b: number) => playback.resizeSelection(a, b),
+    resizeEnd: () => playback.endResize(),
     step: (delta: number) => playback.stepBy(delta),
     selectAround: () => playback.selectAroundPlayhead(),
     /** A saved-moment dot: select that moment (same as clicking inside it). */

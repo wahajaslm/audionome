@@ -254,7 +254,7 @@ test('moments: tags merge without losing earlier ones; rows keep index.html\'s f
 // ---------- phase 2: rules behind Library, My Moments, Discover, My Music DNA, Feature analysis ----------
 import { computeTraits, traitShare, traitLevel, levelWord, ringLayout, portraitParts, evidenceNote, withoutTrait } from '../src/core/dna.ts';
 import { suggestionFamily, whyLine, ratingRow, ratingOf, DISCOVER_TABS } from '../src/core/discover.ts';
-import { visibleWindows, slopeTag, windowSummary, dmerRows, studioUrl } from '../src/core/diagnostics.ts';
+import { visibleWindows, slopeTag, windowSummary, dmerRows, studioUrl, liveWindow, songRelative } from '../src/core/diagnostics.ts';
 import { inTab, withEdits, totalSeconds, COLLECTIONS } from '../src/core/moments.ts';
 
 const mo = (id, qualities = [], feelings = [], trackId = 't1', startSec = 10, endSec = 20) =>
@@ -326,3 +326,15 @@ test('diagnostics: windows follow the selection, slope words, summary values, of
   assert.deepEqual(dmerRows(undefined), []);
   assert.match(studioUrl('original-demo'), /\/api\/studio\/demo$/);
 });
+
+test('diagnostics: the live window follows the playhead inside the selection; measures are song-relative', () => {
+  const segs = Array.from({ length: 10 }, (_, i) => ({ startSec: i * 12, endSec: i * 12 + 12, descriptors: { energy: 0.05 + i * 0.02 } }));
+  const sel = { a: 30, b: 70 };
+  assert.equal(liveWindow(segs, sel, 50).i, 4, 'playhead 0:50 → window 0:48–1:00');
+  assert.equal(liveWindow(segs, sel, 100).i, 2, 'playhead outside → first window of the selection');
+  assert.equal(liveWindow(segs, { a: 500, b: 510 }, 0), null);
+  const e = songRelative(segs, segs[0]).find(m => m.key === 'energy');
+  assert.equal(e.level, 0);
+  assert.equal(songRelative(segs, segs[9])[0].level, 1);
+});
+

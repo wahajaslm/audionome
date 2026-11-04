@@ -84,6 +84,8 @@ function onLoopButton(): void { playback.toggleLoop(); }
         @select-start="wf.selectStart"
         @select="wf.select"
         @select-end="wf.selectEnd"
+        @resize="wf.resize"
+        @resize-end="wf.resizeEnd"
         @step="wf.step"
         @select-around="wf.selectAround"
         @saved-click="wf.savedClick"

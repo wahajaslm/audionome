@@ -271,6 +271,27 @@ export const usePlaybackStore = defineStore('playback', () => {
     region.previewEnd = null;
   }
 
+  /**
+   * RESIZE FIX - dragging an edge of the selection changes its range and keeps the loop and
+   * Explore open (a new drag would reset both). If the playhead falls outside the new range
+   * while looping, it jumps to the new start.
+   * Example: looping 1:10–1:25 at 1:20, drag the right edge to 1:15 → playhead jumps to 1:10.
+   */
+  function resizeSelection(a: number, b: number): void {
+    const e = engineRef;
+    if (!e || !region.sel) return;
+    region.sel = { a, b };
+    if (region.previewEnd !== null) region.previewEnd = b;
+    if (region.loop && !contains(region.sel, region.t)) { region.t = a; e.setTime(a); }
+  }
+
+  /** Edge drag released: widen to the minimum length. */
+  function endResize(): void {
+    if (!region.sel) return;
+    region.sel = enforceMinimumSelection(region.sel, duration.value);
+    if (region.previewEnd !== null) region.previewEnd = region.sel.b;
+  }
+
   /** Waveform Enter: select ±10 s around the playhead (only when nothing is selected). */
   function selectAroundPlayhead(): void {
     if (region.sel) return;
@@ -295,6 +316,9 @@ export const usePlaybackStore = defineStore('playback', () => {
     // Example: paused, select 1:10–1:25, press Loop -> still paused, playhead at 1:10.
     if (region.loop) {
       region.t = region.sel.a; region.previewEnd = region.sel.b; e.setTime(region.t);
+      // LIVE EXPLORE FIX - looping a passage opens Explore, so its live analysis is on screen.
+      const flow = useMomentFlowStore();
+      flow.explore = true; flow.describe = null; flow.nudge = false;
     }
     useListeningStore().emit(region.loop ? 'loop_enabled' : 'loop_disabled', 'user',
       { momentStartSec: region.sel.a, momentEndSec: region.sel.b });
@@ -357,7 +381,7 @@ export const usePlaybackStore = defineStore('playback', () => {
     ...toRefs(region), trackId, duration, playing, loading, volume, activeStem, peaks, queue, currentTrack,
     engine, attachEngine, onDuration, onFrame, checkRegionEnd, loadSettings,
     selectTrack, changeTrack, openRange, playQueue, playNext, togglePlay, playSelection, seekBy, stepBy,
-    clickSeek, beginSelection, updateSelection, commitSelection, selectAroundPlayhead, clearSelection,
+    clickSeek, beginSelection, updateSelection, commitSelection, resizeSelection, endResize, selectAroundPlayhead, clearSelection,
     toggleLoop, selectLast20s, switchStem, restoreFullMix, setVolume, beginScrub, scrubTo, endScrub,
   };
 });

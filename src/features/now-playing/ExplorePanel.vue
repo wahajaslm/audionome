@@ -3,12 +3,16 @@
  * Explore this moment: switch between separated stems (all / vocals / drums / bass / other),
  * see what the analysis measured for the selected passage, and save it with musical reasons.
  * Port of index.html's Explore panel. Stems are served by the local analysis service.
+ * LIVE EXPLORE FIX: the facts and measures follow the playhead window by window while the
+ * passage plays or loops (core/diagnostics.ts liveWindow), instead of freezing on its first window.
  */
 import { computed } from 'vue';
 import { storeToRefs } from 'pinia';
 import { usePlaybackStore } from '../../stores/playback';
 import { useMomentFlowStore } from '../../stores/momentFlow';
 import { useIntelligenceStore } from '../../stores/intelligence';
+import { useLibraryStore } from '../../stores/library';
+import { inSelection, liveWindow, songRelative } from '../../core/diagnostics';
 import { STEM_REASONS } from '../../core/moments';
 import Chip from '../../ui/Chip.vue';
 import Button from '../../ui/Button.vue';
@@ -17,7 +21,8 @@ import { formatTime } from '../../ui/format';
 const playback = usePlaybackStore();
 const flow = useMomentFlowStore();
 const intelligence = useIntelligenceStore();
-const { sel, activeStem } = storeToRefs(playback);
+const library = useLibraryStore();
+const { sel, activeStem, t, loop, loops, trackId } = storeToRefs(playback);
 const { stemReasons } = storeToRefs(flow);
 
 const STEMS = ['all', 'vocals', 'drums', 'bass', 'other'];
@@ -30,12 +35,18 @@ const STEM_INFO: Record<string, { title: string; sub: string }> = {
 };
 
 const analysis = computed(() => intelligence.currentAnalysis);
-/** Measured values for the first analysis window that overlaps the selection. */
+const segs = computed(() => analysis.value?.segments ?? []);
+/** The analysis window under the playhead (or the selection's first window). */
+const live = computed(() => (sel.value ? liveWindow(segs.value, sel.value, t.value) : null));
+/** Every window the selection touches, for the strip under the header. */
+const windows = computed(() => (sel.value ? segs.value.map((s, i) => ({ s, i })).filter(({ s }) => inSelection(s, sel.value!)) : []));
+const measures = computed(() => (live.value ? songRelative(segs.value, live.value.s) : []));
+const analyzingStep = computed(() => (trackId.value ? library.analyzing[trackId.value] : undefined));
+/** Measured values for the live window. */
 const facts = computed(() => {
-  const s = sel.value, an = analysis.value;
-  if (!s) return [];
-  const seg = an?.segments?.find(x => Math.max(x.startSec, s.a) < Math.min(x.endSec, s.b));
-  const desc = seg?.descriptors;
+  const an = analysis.value;
+  if (!sel.value) return [];
+  const desc = live.value?.s.descriptors;
   const dims = desc?.dimensions ?? an?.musicalDimensions;
   const key = desc?.key ?? dims?.melodyHarmony?.key;
   const chords = desc?.chords?.length ? desc.chords.join(' → ') : dims?.melodyHarmony?.chords?.join(' → ');
@@ -52,13 +63,35 @@ const facts = computed(() => {
 });
 const info = computed(() => STEM_INFO[activeStem.value] ?? { title: 'Full arrangement', sub: 'Explore musical layers' });
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+/** Measure value as text. Example: brightness 2873.4 → "2873 Hz"; vocals 0.57 → "57%". */
+function show(key: string, v: number): string {
+  if (key === 'brightness_hz') return Math.round(v) + ' Hz';
+  if (key === 'vocal_presence') return Math.round(v * 100) + '%';
+  return v.toFixed(2);
+}
+/** Clicking a window jumps there (kept inside the selection, so the loop keeps going). */
+function jump(start: number) { if (sel.value) playback.clickSeek(Math.max(start, sel.value.a)); }
 </script>
 
 <template>
   <section v-if="sel" class="panel" aria-label="Explore this moment">
     <div class="head">
       <h2 class="heading">Explore this moment</h2>
-      <span class="label rng">{{ formatTime(sel.a) }} — {{ formatTime(sel.b) }} · {{ analysis ? 'Musical intelligence' : 'Illustrative analysis' }}</span>
+      <span class="label rng">
+        {{ formatTime(sel.a) }} — {{ formatTime(sel.b) }}
+        <template v-if="live"> · <span class="now">now {{ formatTime(live.s.startSec) }}–{{ formatTime(live.s.endSec) }}</span></template>
+        <template v-if="loop"> · loop {{ loops + 1 }}</template>
+      </span>
+    </div>
+    <div v-if="windows.length > 1" class="strip" aria-label="Analysis windows in this passage">
+      <button
+        v-for="w in windows"
+        :key="w.i"
+        type="button"
+        class="win caption"
+        :aria-current="live?.i === w.i ? 'true' : undefined"
+        @click="jump(w.s.startSec)"
+      >{{ formatTime(w.s.startSec) }}</button>
     </div>
     <div class="row">
       <span class="lbl caption">Layers</span>
@@ -71,6 +104,18 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
       <div class="label sub">{{ info.sub }}</div>
       <div v-if="facts.length" class="facts">
         <span v-for="f in facts" :key="f" class="fact caption">{{ f }}</span>
+      </div>
+      <div v-if="measures.length" class="measures">
+        <div v-for="m in measures" :key="m.key" class="m">
+          <span class="caption mlbl">{{ m.label }}</span>
+          <span class="mbar"><span class="mfill" :style="{ width: Math.round(m.level * 100) + '%' }"></span></span>
+          <span class="caption mval">{{ show(m.key, m.value) }}</span>
+        </div>
+        <span class="caption note">Bars compare this window with the rest of the song.</span>
+      </div>
+      <div v-else-if="!analysis" class="none">
+        <span class="label sub">{{ analyzingStep ? 'Analysing · ' + analyzingStep : 'This song is not analysed yet, so there is nothing measured to show.' }}</span>
+        <Button v-if="!analyzingStep && trackId" size="sm" @click="library.analyze(trackId)">Analyze</Button>
       </div>
     </div>
     <div class="row">
@@ -108,6 +153,22 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 .sub { color: var(--ink-sub); }
 .facts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: var(--space-1); }
 .fact { color: var(--ink-sub); border: 1px solid var(--line-strong); border-radius: var(--radius-pill); padding: 2px var(--space-2); }
+.now { color: var(--accent); }
+.strip { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.win {
+  flex: 1 0 44px; height: 24px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+  background: none; color: var(--ink-mute); cursor: pointer; font-variant-numeric: tabular-nums;
+}
+.win:hover { color: var(--ink); }
+.win[aria-current='true'] { border-color: var(--accent-line); background: var(--accent-fill); color: var(--accent); }
+.measures { display: grid; gap: 6px; margin-top: var(--space-2); }
+.m { display: grid; grid-template-columns: 110px 1fr 70px; align-items: center; gap: var(--space-2); }
+.mlbl { color: var(--ink-sub); }
+.mbar { height: 4px; border-radius: 2px; background: var(--line-strong); overflow: hidden; }
+.mfill { display: block; height: 100%; background: var(--accent); transition: width 300ms ease; }
+.mval { color: var(--ink-sub); text-align: right; font-variant-numeric: tabular-nums; }
+.none { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-1); }
+@media (prefers-reduced-motion: reduce) { .mfill { transition: none; } }
 .foot { display: flex; align-items: center; gap: var(--space-2); }
 .note { flex: 1; color: var(--ink-mute); }
 </style>

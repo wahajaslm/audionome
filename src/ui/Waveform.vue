@@ -13,7 +13,9 @@
  *   select-start         a drag passed the 6 px threshold
  *   select(a, b)         while dragging (unordered; the consumer orders them)
  *   select-end           drag released
- *   step(deltaSec)       ← / → keys: −5 / +5
+ *   resize(a, b)         an edge of the selection is being dragged (ordered)
+ *   resize-end           edge drag released
+ *   step(deltaSec)       ← / → keys: −5 / +5 (Shift+← / → moves the selection's end by 1 s)
  *   select-around        Enter: select ±10 s around the playhead
  *   saved-click(id)      a saved-moment dot was clicked
  *
@@ -41,6 +43,8 @@ const emit = defineEmits<{
   'select-start': [];
   select: [a: number, b: number];
   'select-end': [];
+  resize: [a: number, b: number];
+  'resize-end': [];
   step: [deltaSec: number];
   'select-around': [];
   'saved-click': [id: string];
@@ -106,20 +110,41 @@ watchEffect(() => {
 });
 
 // Pointer: a press that moves more than 6 px is a drag (selection); otherwise a click (seek).
+// RESIZE FIX - a press on either edge of the selection drags that edge instead, so a loop can
+// be extended or shortened without redrawing it.
+// Example: loop 1:10–1:25, drag the right edge to 1:32 → loop 1:10–1:32, still looping.
 let x0: number | null = null;
 let px0 = 0;
 let dragging = false;
+/** Which edge is being dragged; `fixed` is the other edge's time. */
+let edge: { fixed: number } | null = null;
+const nearEdge = ref(false);
+/** The selection edge within reach of the pointer (wider for touch), or null. */
+function edgeAt(e: PointerEvent): 'a' | 'b' | null {
+  const sel = props.selection;
+  if (!sel || !root.value) return null;
+  const px = e.clientX - root.value.getBoundingClientRect().left, reach = e.pointerType === 'touch' ? 16 : 8;
+  const da = Math.abs(px - x(sel.a)), db = Math.abs(px - x(sel.b));
+  return Math.min(da, db) > reach ? null : da < db ? 'a' : 'b';
+}
 function timeAt(e: PointerEvent): number {
   const r = root.value!.getBoundingClientRect();
   return Math.max(0, Math.min(dur.value, ((e.clientX - r.left) / Math.max(1, r.width)) * dur.value));
 }
 function onDown(e: PointerEvent): void {
   if (e.button !== 0) return;
+  const which = edgeAt(e);
+  edge = which && props.selection ? { fixed: which === 'a' ? props.selection.b : props.selection.a } : null;
   x0 = timeAt(e); px0 = e.clientX; dragging = false;
   root.value?.setPointerCapture(e.pointerId);
 }
 function onMove(e: PointerEvent): void {
-  if (x0 === null) return;
+  if (x0 === null) { nearEdge.value = !!edgeAt(e); return; }
+  if (edge) {
+    const t = timeAt(e);
+    emit('resize', Math.min(t, edge.fixed), Math.max(t, edge.fixed));
+    return;
+  }
   const t = timeAt(e);
   if (!dragging && Math.abs(e.clientX - px0) > 6) { dragging = true; emit('select-start'); }
   if (dragging) emit('select', x0, t);
@@ -127,15 +152,20 @@ function onMove(e: PointerEvent): void {
 function onUp(e: PointerEvent): void {
   if (x0 === null) return;
   const t = timeAt(e);
-  if (dragging) emit('select-end'); else emit('seek', t);
-  x0 = null; dragging = false;
+  if (edge) emit('resize-end'); else if (dragging) emit('select-end'); else emit('seek', t);
+  x0 = null; dragging = false; edge = null;
 }
 function onCancel(): void {
-  if (x0 !== null && dragging) emit('select-end');
-  x0 = null; dragging = false;
+  if (x0 !== null && edge) emit('resize-end');
+  else if (x0 !== null && dragging) emit('select-end');
+  x0 = null; dragging = false; edge = null;
 }
 function onKey(e: KeyboardEvent): void {
-  if (e.key === 'ArrowRight') { emit('step', 5); e.preventDefault(); }
+  const sel = props.selection;
+  if (e.shiftKey && sel && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
+    const b = Math.max(sel.a, Math.min(dur.value, sel.b + (e.key === 'ArrowRight' ? 1 : -1)));
+    emit('resize', sel.a, b); emit('resize-end'); e.preventDefault();
+  } else if (e.key === 'ArrowRight') { emit('step', 5); e.preventDefault(); }
   else if (e.key === 'ArrowLeft') { emit('step', -5); e.preventDefault(); }
   else if (e.key === 'Enter') { emit('select-around'); e.preventDefault(); }
 }
@@ -146,6 +176,7 @@ function onKey(e: KeyboardEvent): void {
     <div
       ref="root"
       class="wf"
+      :class="{ 'near-edge': nearEdge }"
       role="slider"
       tabindex="0"
       aria-label="Song position. Drag to select a moment"
@@ -157,9 +188,14 @@ function onKey(e: KeyboardEvent): void {
       @pointermove="onMove"
       @pointerup="onUp"
       @pointercancel="onCancel"
+      @pointerleave="nearEdge = false"
       @keydown="onKey"
     >
       <div v-if="band" class="band" :style="band"></div>
+      <template v-if="selection">
+        <div class="grip" :style="{ left: x(selection.a) + 'px' }"></div>
+        <div class="grip" :style="{ left: x(selection.b) + 'px' }"></div>
+      </template>
       <canvas ref="canvas" class="bars"></canvas>
       <div class="playhead" :style="{ left: playheadLeft }"></div>
     </div>
@@ -185,6 +221,20 @@ function onKey(e: KeyboardEvent): void {
   cursor: pointer;
   touch-action: none;
   user-select: none;
+}
+.wf.near-edge { cursor: ew-resize; }
+/* Edge grips: show where to grab to extend or shorten the selection. */
+.grip {
+  position: absolute;
+  top: 50%;
+  width: 4px;
+  height: 32px;
+  margin-left: -2px;
+  transform: translateY(-50%);
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 2;
 }
 .bars {
   position: absolute;
