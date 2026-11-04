@@ -99,29 +99,28 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  /** Analyses every track that has no analysis yet, one at a time. */
+  /**
+   * Queues every track that has no analysis yet (BACKGROUND QUEUE). Runs at start-up, so this is
+   * also the crash recovery: a song is only marked analysed once its analysis is saved, so
+   * whatever was queued or half-done when the app or service went down is queued again.
+   * Example: 25-song playlist, the app crashes after 10 → on reopening, the other 15 are queued.
+   * Returns how many songs were queued.
+   */
   async function autoAnalyzeLibrary(): Promise<number> {
     if (!autoAnalyze.value) return 0;
-    const analyses = useIntelligenceStore().analyses;
-    const pending = tracks.value.filter(t => !analyses.some(a => a.trackId === t.id));
-    let done = 0;
-    for (const t of pending) {
-      if (await analyze(t.id, true)) done++;
-      else if (!done) break; // the first failure means the service is off: do not try every song
-    }
-    if (done > 0) useUiStore().notify('Automatically analyzed ' + done + ' song' + (done > 1 ? 's' : '') + ' for Music DNA.');
-    return done;
+    return queueUnanalysed();
   }
 
-  /** "Analyze all tracks" (Feature Analysis): analyses every unanalysed track once, as if auto-analysis were on. */
+  function queueUnanalysed(): number {
+    const analyses = useIntelligenceStore().analyses;
+    const pending = tracks.value.filter(t => !analyses.some(a => a.trackId === t.id)).map(t => t.id);
+    return queueAnalysis(pending);
+  }
+
+  /** "Analyze all tracks" (Feature Analysis): queues every unanalysed track, even with auto-analysis off. */
   async function analyzeAll(): Promise<void> {
-    const prev = autoAnalyze.value;
-    autoAnalyze.value = true;
-    useUiStore().notify('Analyzing all tracks with the local service…');
-    let done = 0;
-    try { done = await autoAnalyzeLibrary(); } finally { autoAnalyze.value = prev; }
-    const pending = tracks.value.some(t => !useIntelligenceStore().analyses.some(a => a.trackId === t.id));
-    if (!done && pending) useUiStore().notify('Could not reach the local analysis service. Start it and try again.');
+    const n = queueUnanalysed();
+    useUiStore().notify(n ? 'Analysing ' + n + ' song' + (n > 1 ? 's' : '') + ' in the background…' : 'Every song is already analysed.');
   }
 
   /**
@@ -168,12 +167,14 @@ export const useLibraryStore = defineStore('library', () => {
   const analysisQueue = ref<string[]>([]);
   let workers = 0;
 
-  function queueAnalysis(ids: string[]): void {
+  /** Adds songs to the end of the queue (skipping queued, running and analysed ones); returns how many. */
+  function queueAnalysis(ids: string[]): number {
     const intelligence = useIntelligenceStore();
     const add = ids.filter((id, i) => ids.indexOf(id) === i && !analysisQueue.value.includes(id) && !analyzing[id] && !intelligence.analysisFor(id));
     analysisQueue.value = [...analysisQueue.value, ...add];
     // runWorker takes its first song before its first await, so this loop always ends.
     while (workers < ANALYSIS_WORKERS && analysisQueue.value.length) runWorker();
+    return add.length;
   }
 
   async function runWorker(): Promise<void> {
