@@ -16,7 +16,8 @@ musicdna/
 ├── features/             per-window descriptors of a recording
 │   ├── dsp.py            25-D librosa vector + interpretable descriptors
 │   ├── structure.py      key, chords, rhythm, instruments, vocal expression, arrangement
-│   ├── vocal.py          pYIN pitch: glide, sustain, vibrato, ornaments
+│   ├── vocal.py          pYIN pitch (2-cent grid): glide, sustain, vibrato, ornaments
+│   ├── intonation.py     tonic (Sa) and microtonal note placement, never snapped to piano keys
 │   ├── spatial.py        stereo width, correlation, balance
 │   ├── embeddings.py     CLAP, MERT, DSP+deep fusion, weight-license gate
 │   ├── spectral.py       STFT / mel / CQT data for plots
@@ -35,6 +36,7 @@ musicdna/
 ├── experiments/          runnable studies, each writes to research-output/
 │   ├── pipeline.py       corpus -> features -> pairs -> R01, in one command
 │   ├── r01.py            R01: vocal pitch vs general embeddings
+│   ├── r02.py            R02: microtonal intonation vs general embeddings
 │   └── acoustic_explorer.py feature CSV + plots for one recording
 └── service/              localhost FastAPI the player calls
     ├── app.py, studio.py         HTTP routes
@@ -104,6 +106,7 @@ python -m musicdna.corpus.feature_store --set vocal.hop=160 --set vocal.vibrato_
 | `windows` | window length, hop, shortest tail window, pre/post-roll context, embedding context. One grid for every feature, signal and experiment |
 | `audio` | analysis and stereo sample rates, max duration, Demucs model |
 | `vocal` | pYIN rate/hop/range, vibrato band, ornament prominence and width, glide step limit |
+| `intonation` | held-note detection, slide (meend) thresholds, tonic search, off-grid threshold, annotated tonics |
 | `spatial` | the 4 band edges for low/mid/high stereo width, FFT size |
 | `signals` | overlap and "heard" thresholds, rewind/seek minimums, evidence weights |
 | `ranker` | PCA size, regularization, minimum data, bootstrap samples, seed |
@@ -127,3 +130,18 @@ The player's service reads the same config (`MUSIC_DNA_CONFIG` or `configs/defau
 
 `src/intelligence/personalize.ts` still reads listening events itself: it runs in the browser and
 cannot call Python.
+
+## R02: microtonal intonation
+
+Asks whether *where* a singer places held notes, relative to the song's own tonic, predicts preferred
+passages beyond CLAP/MERT. Intonation (note placement) is kept separate from ornamentation (vibrato,
+slides, ornaments in `features/vocal.py`).
+
+- Pitch is tracked on a 2-cent grid and never rounded to piano keys.
+- The tonic is estimated per song as a continuous value (Sa can sit between piano keys), supported by its fifth.
+- Per window: distance from the equal-tempered grid built on that tonic, distance from just-intonation ratios,
+  a tonic-independent grid alignment, held-note steadiness, slides into notes, and a 24-bin tonic-relative pitch profile.
+- Tonic accuracy is measured, not assumed: add `{"<video_id>": <tonic Hz>}` to `data/coke_studio/tonic_annotations.json`
+  and the R02 report gives the detection error in cents. Without annotations the report says accuracy is unmeasured.
+- Known limits: accompaniment leaking into the vocal stem (harmonium, sarangi) and pitch-tracker errors affect these values.
+

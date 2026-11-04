@@ -60,6 +60,26 @@ class VocalConfig:
     ornament_prominence_st: float = 0.75
     ornament_max_width_sec: float = 0.3
     max_step_st: float = 1.0      # larger frame-to-frame jumps are note changes, not glides
+    # Pitch grid of the tracker. Never snapped to piano keys: 2 cents keeps the shape of slides and
+    # vibrato (at 10 cents a held, vibrating note collapsed to 6 distinct values; at 2 cents, 28).
+    pitch_resolution_cents: float = 2.0
+
+
+@dataclass(frozen=True)
+class IntonationConfig:
+    """Where a singer places notes, measured against the song's own tonic (Sa), not A=440 / piano keys."""
+    smoothing_sec: float = 0.2              # removes vibrato to find the note's centre
+    stable_max_velocity_cents_per_sec: float = 150.0  # slower than this = a held note
+    stable_min_sec: float = 0.15            # shortest held note counted
+    glide_window_sec: float = 0.5           # look this far back for a slide into a note (meend)
+    glide_min_cents: float = 80.0           # smaller approaches are not counted as slides
+    histogram_bin_cents: float = 5.0        # tonic search resolution
+    histogram_smoothing_cents: float = 15.0
+    tonic_candidates: int = 5
+    tonic_fifth_weight: float = 0.5         # Sa is usually supported by Pa (+702 cents)
+    offgrid_threshold_cents: float = 20.0   # a held note this far from every equal-tempered step is "between keys"
+    profile_bins: int = 24                  # tonic-relative pitch profile, 50 cents per bin
+    use_annotated_tonic: bool = True        # use data/<corpus>/tonic_annotations.json when a song has one
 
 
 @dataclass(frozen=True)
@@ -104,6 +124,7 @@ class Config:
     windows: WindowConfig = field(default_factory=WindowConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
     vocal: VocalConfig = field(default_factory=VocalConfig)
+    intonation: IntonationConfig = field(default_factory=IntonationConfig)
     spatial: SpatialConfig = field(default_factory=SpatialConfig)
     signals: SignalConfig = field(default_factory=SignalConfig)
     ranker: RankerConfig = field(default_factory=RankerConfig)

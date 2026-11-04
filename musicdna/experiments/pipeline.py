@@ -1,4 +1,4 @@
-"""End-to-end R01 research pipeline: corpus -> features -> preference pairs -> experiment report.
+"""End-to-end research pipeline: corpus -> features -> preference pairs -> R01 and R02 reports.
 
 Every step reuses what is already on disk, so re-running after more listening only does new work.
 
@@ -18,12 +18,13 @@ from musicdna.corpus.coke_studio import CokeStudioManifest
 from musicdna.corpus.manifest import CorpusManifest
 from musicdna.corpus.feature_store import DEFAULT_STAGES, FeatureBuilder, FeatureStore
 from musicdna.experiments.r01 import R01Experiment
+from musicdna.experiments.r02 import R02Experiment
 from musicdna.paths import RESEARCH_OUTPUT_DIR
 from musicdna.preference.implicit_pairs import ImplicitPairBuilder
 
 
-class R01Pipeline:
-    """Runs the four R01 steps for one configuration and writes its pairs and report."""
+class ResearchPipeline:
+    """Runs the four steps for one configuration and writes its pairs and the R01 + R02 reports."""
 
     def __init__(self, config: Config, workers: int = 4, allow_nc_weights: bool = False, lyrics: bool = False,
                  output_directory: Path = RESEARCH_OUTPUT_DIR) -> None:
@@ -32,7 +33,7 @@ class R01Pipeline:
         self.builder = FeatureBuilder(self.store, workers, allow_nc_weights)
         self.stages = DEFAULT_STAGES + (['mert'] if allow_nc_weights else []) + (['lyrics'] if lyrics else [])
         self.output_directory = output_directory
-        self.tag = config.section_hash('windows', 'audio', 'vocal', 'spatial', 'signals', 'ranker')
+        self.tag = config.section_hash('windows', 'audio', 'vocal', 'intonation', 'spatial', 'signals', 'ranker')
 
     def run(self, profile: dict[str, Any]) -> dict[str, Any]:
         print(f'config {self.tag}: window {self.config.windows.window_sec}s, hop {self.config.windows.hop_sec}s')
@@ -67,15 +68,18 @@ class R01Pipeline:
         return pairs
 
     def run_experiment(self, pairs: list[dict[str, Any]], corpus: CorpusManifest) -> dict[str, Any]:
-        print('4/4 R01 experiment')
-        report = R01Experiment(self.store, corpus).run(pairs)
-        # One report per configuration, plus r01_report.json as the latest run.
-        for path in (self.output_directory / f'r01_report_{self.tag}.json', self.output_directory / 'r01_report.json'):
-            path.write_text(json.dumps(report, indent=2) + '\n', encoding='utf8')
-        print(f"   {report['status']} -> research-output/r01_report_{self.tag}.json")
-        if report['status'] == 'insufficient_data':
-            print(f"   need {report['needed']}; import corpus songs into the player, listen, then export the profile again")
-        return report
+        print('4/4 experiments')
+        reports = {}
+        for name, experiment in (('r01', R01Experiment), ('r02', R02Experiment)):
+            report = experiment(self.store, corpus).run(pairs)
+            # One report per configuration, plus <name>_report.json as the latest run.
+            for path in (self.output_directory / f'{name}_report_{self.tag}.json', self.output_directory / f'{name}_report.json'):
+                path.write_text(json.dumps(report, indent=2) + '\n', encoding='utf8')
+            print(f"   {name}: {report['status']} -> research-output/{name}_report_{self.tag}.json")
+            reports[name] = report
+        if reports['r01']['status'] == 'insufficient_data':
+            print(f"   need {reports['r01']['needed']}; import corpus songs into the player, listen, then export the profile again")
+        return reports
 
 
 def main() -> None:
@@ -87,7 +91,7 @@ def main() -> None:
     Config.add_arguments(parser)
     arguments = parser.parse_args()
 
-    pipeline = R01Pipeline(Config.from_arguments(arguments), arguments.workers, arguments.allow_nc_weights, arguments.lyrics)
+    pipeline = ResearchPipeline(Config.from_arguments(arguments), arguments.workers, arguments.allow_nc_weights, arguments.lyrics)
     pipeline.run(json.loads(arguments.profile.read_text(encoding='utf8')))
 
 

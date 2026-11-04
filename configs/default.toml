@@ -29,6 +29,22 @@ min_run_sec = 0.5
 ornament_prominence_st = 0.75
 ornament_max_width_sec = 0.3
 max_step_st = 1.0
+pitch_resolution_cents = 2.0
+
+# Microtonal intonation: note placement relative to the song's own tonic, never snapped to piano keys.
+[intonation]
+smoothing_sec = 0.2
+stable_max_velocity_cents_per_sec = 150.0
+stable_min_sec = 0.15
+glide_window_sec = 0.5
+glide_min_cents = 80.0
+histogram_bin_cents = 5.0
+histogram_smoothing_cents = 15.0
+tonic_candidates = 5
+tonic_fifth_weight = 0.5
+offgrid_threshold_cents = 20.0
+profile_bins = 24
+use_annotated_tonic = true
 
 # Stereo image analysis.
 [spatial]

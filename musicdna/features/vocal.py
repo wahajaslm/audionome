@@ -68,7 +68,7 @@ class VocalPitchAnalyzer:
         if sample_rate != s.sample_rate:
             vocals = librosa.resample(np.asarray(vocals, dtype=np.float32), orig_sr=sample_rate, target_sr=s.sample_rate)
         f0, voiced, _ = librosa.pyin(vocals, fmin=s.fmin_hz, fmax=s.fmax_hz, sr=s.sample_rate,
-                                     frame_length=1024, hop_length=s.hop)
+                                     frame_length=1024, hop_length=s.hop, resolution=s.pitch_resolution_cents / 100)
         semitones = np.where(voiced, librosa.hz_to_midi(np.nan_to_num(f0, nan=1.0)), np.nan)
         return PitchContour.from_semitones(semitones, s)
 
@@ -92,7 +92,7 @@ class VocalPitchAnalyzer:
         )
 
     def _velocity(self, semitones: np.ndarray, frame_rate: float) -> float:
-        # Mean, not median: pYIN pitch is quantized to 0.1 st, so the median step is almost always 0.
+        # Mean, not median: pYIN pitch is quantized (vocal.pitch_resolution_cents), so many steps are 0.
         steps = np.abs(np.diff(semitones))
         steps = steps[np.isfinite(steps) & (steps < self.settings.max_step_st)]
         return float(steps.mean() * frame_rate) if steps.size else 0.0

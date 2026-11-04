@@ -24,10 +24,13 @@ from musicdna.config import DEFAULT, Config
 from musicdna.corpus.coke_studio import CokeStudioManifest
 from musicdna.corpus.manifest import CorpusEntry, CorpusManifest
 from musicdna.features.spatial import SpatialAnalyzer
+from musicdna.features.intonation import IntonationAnalyzer, TonicEstimate
 from musicdna.features.vocal import PitchContour, VocalPitchAnalyzer
 from musicdna.paths import CORPUS_DIR
 
 FEATURE_DIRECTORY = CORPUS_DIR / 'features'
+TONIC_ANNOTATIONS = CORPUS_DIR / 'tonic_annotations.json'
+JSON_ARTIFACTS = {'lyrics', 'tonic'}
 
 
 class FeatureStore:
@@ -41,7 +44,7 @@ class FeatureStore:
     def path(self, video_id: str, artifact: str) -> Path:
         if artifact == 'vocals':
             return self.root / video_id / f'vocals_{self.config.audio.stem_model}_{self.config.vocal.sample_rate}.flac'
-        suffix = '.json' if artifact == 'lyrics' else '.npy'
+        suffix = '.json' if artifact in JSON_ARTIFACTS else '.npy'
         return self.root / video_id / f'{artifact}-{self.config.section_hash(*ARTIFACT_SECTIONS[artifact])}{suffix}'
 
     def has(self, video_id: str, artifact: str) -> bool:
@@ -54,11 +57,15 @@ class FeatureStore:
         self.record_config(artifact)
 
     def save_json(self, video_id: str, artifact: str, payload: dict[str, Any]) -> None:
+        self.path(video_id, artifact).parent.mkdir(parents=True, exist_ok=True)
         self.path(video_id, artifact).write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding='utf8')
         self.record_config(artifact)
 
     def load(self, video_id: str, artifact: str) -> np.ndarray:
         return np.load(self.path(video_id, artifact))
+
+    def load_json(self, video_id: str, artifact: str) -> dict[str, Any]:
+        return json.loads(self.path(video_id, artifact).read_text(encoding='utf8'))
 
     def vocals(self, video_id: str) -> np.ndarray:
         audio, _ = sf.read(self.path(video_id, 'vocals'), dtype='float32')
@@ -241,6 +248,47 @@ class MertStage(EmbeddingStage):
         return self.encoder.encode_clips_with_mert(clips, rate, allow_noncommercial=self.allow_nc_weights)
 
 
+class IntonationStage(FeatureStage):
+    """Tonic per song, then microtonal intonation descriptors and a tonic-relative pitch profile per window.
+
+    Reuses the cached pitch contour, so it is cheap. If tonic_annotations.json has a hand-labelled tonic
+    for the song ({"<video_id>": <tonic Hz>}) and intonation.use_annotated_tonic is on, that tonic is
+    used; the detected one is always stored too, so R02 can report how far detection was off.
+    Example: annotated Sa 220.0 Hz, detected 223.1 Hz -> detection error 24 cents.
+    """
+    name = 'intonation'
+    artifacts = {'intonation': ('windows', 'audio', 'vocal', 'intonation'),
+                 'intonation_profile': ('windows', 'audio', 'vocal', 'intonation'),
+                 'tonic': ('audio', 'vocal', 'intonation')}
+    parallel = True
+
+    def is_ready(self, store: FeatureStore, entry: CorpusEntry) -> bool:
+        return bool(entry.audio_file) and store.has(entry.video_id, 'pitch_contour')
+
+    def run(self, store: FeatureStore, entry: CorpusEntry) -> None:
+        analyzer = IntonationAnalyzer(store.config.intonation)
+        contour = PitchContour.from_semitones(store.load(entry.video_id, 'pitch_contour'), store.config.vocal)
+        detected = analyzer.estimate_tonic(contour)
+        annotated_hz = self.annotations().get(entry.video_id)
+        tonic = detected
+        if annotated_hz and store.config.intonation.use_annotated_tonic:
+            tonic = TonicEstimate(float(69 + 12 * np.log2(annotated_hz / 440.0)), 1.0, 'annotated')
+        store.save_json(entry.video_id, 'tonic', {
+            'used': {'midi': tonic.midi, 'hz': tonic.hz, 'source': tonic.source},
+            'detected': {'midi': detected.midi, 'hz': detected.hz, 'confidence': detected.confidence},
+            'annotated_hz': annotated_hz,
+        })
+        windows = store.windows(entry)
+        store.save(entry.video_id, 'intonation',
+                   np.array([analyzer.describe(contour, tonic, a, b).to_vector() for a, b in windows]))
+        store.save(entry.video_id, 'intonation_profile',
+                   np.array([analyzer.profile(contour, tonic, a, b) for a, b in windows]))
+
+    @staticmethod
+    def annotations() -> dict[str, float]:
+        return json.loads(TONIC_ANNOTATIONS.read_text()) if TONIC_ANNOTATIONS.exists() else {}
+
+
 class LyricsStage(FeatureStage):
     """Whisper transcript of the vocal stem (needs faster-whisper)."""
     name = 'lyrics'
@@ -260,10 +308,10 @@ class LyricsStage(FeatureStage):
 
 
 STAGES: dict[str, FeatureStage] = {stage.name: stage for stage in (
-    StemStage(), DspStage(), SpatialStage(), VocalStage(), ClapStage(), MertStage(), LyricsStage())}
+    StemStage(), DspStage(), SpatialStage(), VocalStage(), IntonationStage(), ClapStage(), MertStage(), LyricsStage())}
 ARTIFACT_SECTIONS: dict[str, tuple[str, ...]] = {
     artifact: sections for stage in STAGES.values() for artifact, sections in stage.artifacts.items()}
-DEFAULT_STAGES = ['stems', 'dsp', 'spatial', 'vocal', 'clap']
+DEFAULT_STAGES = ['stems', 'dsp', 'spatial', 'vocal', 'intonation', 'clap']
 
 
 def _run_in_worker(job: tuple[str, CorpusEntry, Config, Path]) -> str:
