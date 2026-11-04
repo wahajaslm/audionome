@@ -209,3 +209,29 @@ export function passageSummary(segs: AudioSegment[], r: { a: number; b: number }
   });
   return { key, tempoBpm: tempoN ? Math.round(tempoSum / tempoN) : undefined, chords, measures };
 }
+
+/**
+ * The same summary as passageSummary, but from an exact analysis of the passage (PASSAGE FIX):
+ * key, tempo and chords come from the passage's own audio, and the averages from its own
+ * windows, still compared with the rest of the song. Chords are spread evenly over the passage.
+ * Example: passage 5.2–10.9 with chords [F7, C#7, D7] → F7 5.2–7.1, C#7 7.1–9.0, D7 9.0–10.9.
+ */
+export function exactSummary(songSegs: AudioSegment[], p: { a: number; b: number; segments: AudioSegment[]; musicalDimensions?: TrackAnalysis['musicalDimensions'] }) {
+  const mh = p.musicalDimensions?.melodyHarmony, list = mh?.chords ?? [];
+  const span = (p.b - p.a) / Math.max(1, list.length);
+  const chords: { chord: string; from: number; to: number }[] = [];
+  list.forEach((c, i) => {
+    const last = chords[chords.length - 1];
+    if (last && last.chord === c) last.to = p.a + (i + 1) * span;
+    else chords.push({ chord: c, from: p.a + i * span, to: p.a + (i + 1) * span });
+  });
+  const measures = LIVE_MEASURES.map(({ key: k, label }) => {
+    const all = songSegs.length ? songSegs.map(x => num(x, k)) : p.segments.map(x => num(x, k));
+    const own = p.segments.map(x => num(x, k));
+    const v = own.reduce((s, x) => s + x, 0) / Math.max(1, own.length);
+    const lo = Math.min(...all, v), hi = Math.max(...all, v);
+    return { key: k, label, value: v, level: hi > lo ? (v - lo) / (hi - lo) : 0.5 };
+  });
+  const tempo = p.musicalDimensions?.rhythmGroove?.tempoBpm;
+  return { key: mh?.key, tempoBpm: tempo ? Math.round(tempo) : undefined, chords, measures };
+}

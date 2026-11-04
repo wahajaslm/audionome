@@ -4,7 +4,7 @@
  */
 import { db, ensureDemo, exportProfile, importFiles } from '../data/db';
 import { deleteTrackFromSQLite } from '../intelligence/client';
-import type { ListeningEvent, Moment, MomentRating, Track, TrackAnalysis } from '../data/types';
+import type { ListeningEvent, Moment, MomentRating, Track, TrackAnalysis, PassageAnalysis } from '../data/types';
 import { SERVICE } from './library';
 import { toDbMoment } from './moments';
 
@@ -64,7 +64,9 @@ export async function loadIntelligenceInputs(): Promise<{ analyses: TrackAnalysi
 
 export const putTrack = (t: Track) => db.tracks.put(t);
 export const putMoment = (m: Moment) => db.moments.put(toDbMoment(m));
-export const deleteMoment = (id: string) => db.moments.delete(String(id));
+export const deleteMoment = (id: string) => Promise.all([db.moments.delete(String(id)), db.passages.delete(String(id))]);
+export const loadPassages = (): Promise<PassageAnalysis[]> => db.passages.toArray();
+export const putPassage = (p: PassageAnalysis) => db.passages.put(p);
 export const putAnalysis = (a: TrackAnalysis) => db.analyses.put(a);
 export const updateTrackDuration = (id: string, durationSec: number) => db.tracks.update(id, { durationSec }).catch(() => { });
 

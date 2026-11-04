@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { ListeningEvent, Moment, Track, UserSetting, TrackAnalysis, MomentRating } from './types';
+import type { ListeningEvent, Moment, Track, UserSetting, TrackAnalysis, MomentRating, PassageAnalysis } from './types';
 export class MusicDatabase extends Dexie {
   tracks!: EntityTable<Track, 'id'>;
   moments!: EntityTable<Moment, 'id'>;
@@ -7,6 +7,7 @@ export class MusicDatabase extends Dexie {
   settings!: EntityTable<UserSetting, 'key'>;
   analyses!: EntityTable<TrackAnalysis, 'trackId'>;
   ratings!: EntityTable<MomentRating, 'id'>;
+  passages!: EntityTable<PassageAnalysis, 'id'>;
   constructor() {
     super('music-dna-v1');
     this.version(1).stores({
@@ -22,6 +23,16 @@ export class MusicDatabase extends Dexie {
       settings: 'key',
       analyses: 'trackId, method, modelId, analyzedAt',
       ratings: 'id, trackId, value, createdAt'
+    });
+    // v3: exact analyses of saved passages (one row per moment id). Existing data is untouched.
+    this.version(3).stores({
+      tracks: 'id, title, addedAt, source',
+      moments: 'id, trackId, createdAt, updatedAt',
+      events: 'id, trackId, sessionId, kind, at',
+      settings: 'key',
+      analyses: 'trackId, method, modelId, analyzedAt',
+      ratings: 'id, trackId, value, createdAt',
+      passages: 'id, trackId'
     });
   }
 }

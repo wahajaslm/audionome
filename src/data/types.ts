@@ -125,6 +125,21 @@ export interface ArrangementTransitions {
   stemEnergies: Record<string, number>;
 }
 
+/**
+ * Exact analysis of one saved passage (keyed by the moment's id), made by the service from just
+ * that passage's audio instead of the song's fixed 12 s windows.
+ */
+export interface PassageAnalysis {
+  id: string;
+  trackId: string;
+  a: number;
+  b: number;
+  analyzedAt: number;
+  modelId: string;
+  segments: AudioSegment[];
+  musicalDimensions?: MusicalDimensions;
+}
+
 export interface MusicalDimensions {
   melodyHarmony: MelodyHarmony;
   rhythmGroove: RhythmGroove;

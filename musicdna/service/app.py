@@ -57,6 +57,12 @@ app.add_middleware(
 class ResolveStreamRequest(BaseModel):
     url: str
 
+class PassageRequest(BaseModel):
+    trackId: str
+    a: float = Field(ge=0)
+    b: float = Field(gt=0)
+    src: str = ''
+
 class SaveAnalysisRequest(BaseModel):
     trackId: str
     title: str | None = None
@@ -241,6 +247,41 @@ async def proxy_audio_stream(url: str, request: Request):
         raise HTTPException(400, "Missing 'url' query parameter")
     range_header = request.headers.get('range')
     return await create_proxy_stream_response(url, range_header=range_header)
+
+
+@app.post('/api/analyze/passage')
+async def analyze_passage(
+    payload: PassageRequest,
+    service: AudioIntelligenceService = Depends(get_service),
+) -> dict[str, Any]:
+    """Analyses exactly one passage (a saved loop) of a song.
+
+    PASSAGE FIX - the song is analysed on a fixed grid (12 s windows every 6 s), so a loop was
+    only estimated from the windows around it. This loads just the loop's audio and analyses it:
+    one window when the loop is up to 12 s, plus key, chords and tempo over the whole loop.
+    Example: loop 0:44–0:49 → one window 44–49 and the chords heard in those 5 s.
+    """
+    a, b = payload.a, payload.b
+    if b - a < 1.0:
+        raise HTTPException(400, 'A passage must be at least one second long')
+    track_id = payload.trackId
+    audio_path = service.find_cached_audio(track_id) or await wait_for_cache_download(track_id)
+    if not audio_path and payload.src:
+        meta = await asyncio.to_thread(resolve_stream, payload.src)
+        remember_resolved(meta)
+        start_cache_download(track_id, meta['streamUrl'], AUDIO_CACHE_DIR)
+        audio_path = await wait_for_cache_download(track_id)
+    if not audio_path or not audio_path.is_file():
+        raise HTTPException(404, f"Audio for '{track_id}' is not on this computer")
+    analysis = await asyncio.to_thread(
+        service.feature_extractor.extract_track_analysis, audio_path, None, False, a, b - a
+    )
+    return {
+        'trackId': track_id, 'a': a, 'b': b,
+        'modelId': analysis.get('modelId'),
+        'segments': analysis['segments'],
+        'musicalDimensions': analysis.get('musicalDimensions'),
+    }
 
 
 @app.get('/api/analyze/stream/{track_id}')

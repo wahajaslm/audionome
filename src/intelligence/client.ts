@@ -136,6 +136,18 @@ export async function analyzeLocalTrack(
   };
 }
 
+/**
+ * Asks the service to analyse exactly one passage (PASSAGE FIX in musicdna/service/app.py).
+ * `src` is the original link of a streamed song, so the service can fetch it if not cached.
+ */
+export async function analyzePassage(trackId: string, a: number, b: number, src = ''): Promise<{ modelId: string; segments: TrackAnalysis['segments']; musicalDimensions?: TrackAnalysis['musicalDimensions'] }> {
+  const res = await fetch(`${ENDPOINT}/api/analyze/passage`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trackId, a, b, src }),
+  });
+  if (!res.ok) throw new Error(`Passage analysis failed (${res.status})`);
+  return res.json();
+}
+
 export function stemAudioUrl(trackId: string, stem: string): string {
   if (stem === 'all' && trackId === 'original-demo') return '/demo.wav';
   return `${ENDPOINT}/api/audio/stem/${encodeURIComponent(trackId)}/${encodeURIComponent(stem)}`;

@@ -1,7 +1,9 @@
 import { defineStore } from 'pinia';
 import { computed, shallowRef } from 'vue';
-import type { Moment } from '../data/types';
-import { deleteMoment, loadMoments, putMoment } from '../core/repository';
+import type { Moment, PassageAnalysis } from '../data/types';
+import type { PlayableTrack } from '../core/library';
+import { analyzePassage } from '../intelligence/client';
+import { deleteMoment, loadMoments, loadPassages, putMoment, putPassage } from '../core/repository';
 import { newMoment, savedRanges, withEdits, withTags } from '../core/moments';
 import { withoutTrait, type TraitDefinition } from '../core/dna';
 import { useUiStore } from './ui';
@@ -14,12 +16,47 @@ import { usePlaybackStore } from './playback';
 /** Saved moments (Dexie `moments`), newest first. */
 export const useMomentsStore = defineStore('moments', () => {
   const moments = shallowRef<Moment[]>([]);
+  /** Exact passage analyses by moment id (see analyzeExactly). */
+  const passages = shallowRef<Record<string, PassageAnalysis>>({});
+  const pending = new Set<string>();
 
   /** Saved ranges of the track that is loaded in the player. */
   const savedForCurrent = computed(() => savedRanges(moments.value, usePlaybackStore().trackId));
 
   async function load(): Promise<void> {
     moments.value = await loadMoments();
+    passages.value = Object.fromEntries((await loadPassages()).map(p => [p.id, p]));
+  }
+
+  /** The saved moment of the loaded track with this range (within 0.5 s), if any. */
+  function savedMatch(r: Range): Moment | undefined {
+    const trackId = usePlaybackStore().trackId;
+    return moments.value.find(m => m.trackId === trackId && Math.abs(m.startSec - r.a) < 0.5 && Math.abs(m.endSec - r.b) < 0.5);
+  }
+
+  /**
+   * PASSAGE FIX - analyses a saved moment's exact range on the service, in the background, and
+   * keeps the result on this device. Runs when a moment is saved, and when Explore opens on a
+   * saved moment that has none yet. Fails quietly (the estimate from song windows stays).
+   */
+  async function analyzeExactly(id: string): Promise<void> {
+    const m = moments.value.find(x => x.id === id);
+    if (!m || passages.value[id] || pending.has(id)) return;
+    pending.add(id);
+    try {
+      const t = useLibraryStore().track(m.trackId) as PlayableTrack | undefined;
+      const r = await analyzePassage(m.trackId, m.startSec, m.endSec, t?.originalUrl || '');
+      const p: PassageAnalysis = {
+        id, trackId: m.trackId, a: m.startSec, b: m.endSec, analyzedAt: Date.now(),
+        modelId: r.modelId, segments: r.segments, musicalDimensions: r.musicalDimensions,
+      };
+      await putPassage(p);
+      passages.value = { ...passages.value, [id]: p };
+    } catch (err) {
+      console.info('Exact passage analysis skipped:', (err as Error).message);
+    } finally {
+      pending.delete(id);
+    }
   }
 
   function persist(m: Moment): void {
@@ -49,7 +86,10 @@ export const useMomentsStore = defineStore('moments', () => {
   function ensure(r: Range): { id: string | null; isNew: boolean } {
     const trackId = usePlaybackStore().trackId;
     const same = moments.value.find(m => m.trackId === trackId && Math.abs(m.startSec - r.a) < 0.5 && Math.abs(m.endSec - r.b) < 0.5);
-    return same ? { id: same.id, isNew: false } : { id: add(r), isNew: true };
+    if (same) return { id: same.id, isNew: false };
+    const id = add(r);
+    if (id) analyzeExactly(id);
+    return { id, isNew: true };
   }
 
   /** Saves a moment for any track (e.g. confirming an attention hint). */
@@ -110,10 +150,12 @@ export const useMomentsStore = defineStore('moments', () => {
 
   async function remove(id: string): Promise<void> {
     await deleteMoment(id);
+    const { [id]: _gone, ...rest } = passages.value;
+    passages.value = rest;
     await load();
     await useIntelligenceStore().refresh();
   }
 
   return {
-    ensure, moments, savedForCurrent, load, add, addForTrack, applyTags, edit, correctTrait, play, playAll, remove };
+    ensure, passages, savedMatch, analyzeExactly, moments, savedForCurrent, load, add, addForTrack, applyTags, edit, correctTrait, play, playAll, remove };
 });

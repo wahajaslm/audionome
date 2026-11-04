@@ -6,13 +6,14 @@
  * LIVE EXPLORE FIX: the facts and measures follow the playhead window by window while the
  * passage plays or loops (core/diagnostics.ts liveWindow), instead of freezing on its first window.
  */
-import { computed } from 'vue';
+import { computed, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { usePlaybackStore } from '../../stores/playback';
 import { useMomentFlowStore } from '../../stores/momentFlow';
 import { useIntelligenceStore } from '../../stores/intelligence';
 import { useLibraryStore } from '../../stores/library';
-import { inSelection, liveWindow, measuresAt, passageSummary } from '../../core/diagnostics';
+import { exactSummary, inSelection, liveWindow, measuresAt, passageSummary } from '../../core/diagnostics';
+import { useMomentsStore } from '../../stores/moments';
 import { FEELINGS, QUALITIES } from '../../core/moments';
 import DescribeStrip from '../../ui/DescribeStrip.vue';
 import Chip from '../../ui/Chip.vue';
@@ -43,8 +44,21 @@ const live = computed(() => liveWindow(segs.value, t.value));
 const windows = computed(() => (sel.value ? segs.value.map((s, i) => ({ s, i })).filter(({ s }) => inSelection(s, sel.value!)) : []));
 /** Measures blended to the playhead: recomputed every frame while playing. */
 const measures = computed(() => (segs.value.length ? measuresAt(segs.value, t.value) : []));
-/** Exactly the selected passage (LOOP SYNC FIX): averages, key, tempo and its chords in order. */
-const passage = computed(() => (sel.value ? passageSummary(segs.value, sel.value) : null));
+const momentsStore = useMomentsStore();
+/** The saved moment for this exact selection, if any. */
+const saved = computed(() => (sel.value ? momentsStore.savedMatch(sel.value) : undefined));
+/** Its exact analysis (PASSAGE FIX), once the service has made it. */
+const exact = computed(() => (saved.value ? momentsStore.passages[saved.value.id] : undefined));
+// Explore on a saved moment without an exact analysis yet: ask for one in the background.
+watch(saved, m => { if (m) momentsStore.analyzeExactly(m.id); }, { immediate: true });
+/**
+ * The selected passage: exact when it is a saved moment the service has analysed, otherwise
+ * estimated from the song's windows (LOOP SYNC FIX).
+ */
+const passage = computed(() => (exact.value ? exactSummary(segs.value, exact.value)
+  : sel.value ? passageSummary(segs.value, sel.value) : null));
+const passageSource = computed(() => (exact.value ? 'Exact analysis of this passage'
+  : saved.value ? 'Estimated from the song · exact analysis running…' : 'Estimated from the song · save it for an exact analysis'));
 /** The passage's chords, with the one sounding now marked. */
 const chords = computed(() => (passage.value?.chords ?? []).map(c => ({ ...c, now: t.value >= c.from && t.value < c.to })));
 /** Passage average per measure, drawn as a tick on the live bar. */
@@ -111,6 +125,7 @@ function jump(start: number) { if (sel.value) playback.clickSeek(Math.max(start,
     <div class="about">
       <div class="item">{{ info.title }}</div>
       <div class="label sub">{{ info.sub }}</div>
+      <div v-if="passage" class="caption src" :class="{ ok: !!exact }">{{ passageSource }}</div>
       <div v-if="facts.length" class="facts">
         <span v-for="f in facts" :key="f" class="fact caption">{{ f }}</span>
       </div>
@@ -172,6 +187,8 @@ function jump(start: number) { if (sel.value) playback.clickSeek(Math.max(start,
 .facts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: var(--space-1); }
 .fact { color: var(--ink-sub); border: 1px solid var(--line-strong); border-radius: var(--radius-pill); padding: 2px var(--space-2); }
 .now { color: var(--accent); }
+.src { color: var(--ink-mute); margin-top: var(--space-1); }
+.src.ok { color: var(--accent); }
 .strip { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
 .win {
   flex: 1 0 44px; height: 24px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm);

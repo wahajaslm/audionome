@@ -254,7 +254,7 @@ test('moments: tags merge without losing earlier ones; rows keep index.html\'s f
 // ---------- phase 2: rules behind Library, My Moments, Discover, My Music DNA, Feature analysis ----------
 import { computeTraits, traitShare, traitLevel, levelWord, ringLayout, portraitParts, evidenceNote, withoutTrait } from '../src/core/dna.ts';
 import { suggestionFamily, whyLine, ratingRow, ratingOf, DISCOVER_TABS } from '../src/core/discover.ts';
-import { visibleWindows, slopeTag, windowSummary, dmerRows, studioUrl, liveWindow, valueAt, chordIndexAt, measuresAt, passageSummary } from '../src/core/diagnostics.ts';
+import { visibleWindows, slopeTag, windowSummary, dmerRows, studioUrl, liveWindow, valueAt, chordIndexAt, measuresAt, passageSummary, exactSummary } from '../src/core/diagnostics.ts';
 import { inTab, withEdits, totalSeconds, COLLECTIONS } from '../src/core/moments.ts';
 
 const mo = (id, qualities = [], feelings = [], trackId = 't1', startSec = 10, endSec = 20) =>
@@ -359,5 +359,17 @@ test('diagnostics: a loop that matches no analysis window is summarised exactly 
   assert.ok(p.chords.at(-1).to <= 25, 'and end at the loop end');
   assert.ok(p.chords.every((c, i) => i === 0 || c.chord !== p.chords[i - 1].chord), 'repeats are merged');
   assert.equal(passageSummary([], { a: 0, b: 5 }), null);
+});
+
+test('diagnostics: an exact passage analysis gives its own key, tempo and chords spread over the passage', () => {
+  const song = [{ startSec: 0, endSec: 12, descriptors: { energy: 0.1 } }, { startSec: 6, endSec: 18, descriptors: { energy: 0.3 } }];
+  const p = exactSummary(song, { a: 5.2, b: 10.9, segments: [{ startSec: 5.2, endSec: 10.9, descriptors: { energy: 0.2 } }],
+    musicalDimensions: { melodyHarmony: { key: 'B Minor', chords: ['F7', 'C#7', 'C#7'] }, rhythmGroove: { tempoBpm: 136.2 } } });
+  assert.equal(p.key, 'B Minor');
+  assert.equal(p.tempoBpm, 136);
+  assert.deepEqual(p.chords.map(c => c.chord), ['F7', 'C#7'], 'repeats merged');
+  assert.equal(p.chords[0].from, 5.2);
+  assert.ok(Math.abs(p.chords[1].to - 10.9) < 1e-9);
+  assert.ok(Math.abs(p.measures.find(m => m.key === 'energy').level - 0.5) < 1e-9, 'halfway between the song low and high');
 });
 
