@@ -7,6 +7,8 @@ import {
 } from '../src/core/playback.ts';
 import { computePeaks, placeholderPeaks } from '../src/core/waveformPeaks.ts';
 import { toDbMoment, withTags, collectionsOf, newMoment, savedRanges } from '../src/core/moments.ts';
+import { barAt, beatInBar, blockIndexAt, noteName, passageMoments, rankIn } from '../src/core/timeline.ts';
+import { computeSpectrum, fft, hzToMel, melFilters, melToHz, SPEC_SR } from '../src/core/spectrum.ts';
 
 /** Minimal HTMLMediaElement stand-in: an EventTarget with the fields the engine reads. */
 class FakeMedia extends EventTarget {
@@ -373,3 +375,55 @@ test('diagnostics: an exact passage analysis gives its own key, tempo and chords
   assert.ok(Math.abs(p.measures.find(m => m.key === 'energy').level - 0.5) < 1e-9, 'halfway between the song low and high');
 });
 
+
+test('timeline: bar and beat at the playhead, block lookup, note names', () => {
+  const beats = [17.1, 17.87, 18.64, 19.41, 20.22, 20.99, 21.76], downbeats = [17.1, 20.22];
+  assert.equal(barAt(downbeats, 10), 1, 'bar 1 before the first downbeat');
+  assert.equal(barAt(downbeats, 21), 2);
+  assert.equal(beatInBar(beats, downbeats, 21.8), 3);
+  const chords = [{ c: 'Dm', a: 0, b: 2 }, { c: 'C', a: 2, b: 5 }, { c: 'F', a: 5, b: 6 }];
+  assert.equal(blockIndexAt(chords, 2), 1, 'a block starts at its own start');
+  assert.equal(blockIndexAt(chords, 6), -1, 'past the end');
+  assert.equal(noteName(69), 'A4');
+  assert.equal(noteName(60), 'C4');
+  assert.equal(rankIn([1, 2, 3, 4], 3), 0.5);
+});
+
+test('timeline: moments name stems that drop out, repeats and the vocal range', () => {
+  const n = 600, on = Array(n).fill(0.6), hole = on.map((v, i) => (i >= 200 && i < 260 ? 0 : v));
+  const midi = Array(n).fill(null).map((_, i) => (i > 100 && i < 500 ? 55 + (i % 10) : null));
+  const tl = { trackId: 'x', version: 1, status: {}, fps: 10, repeats: [{ at: 30, same_as: 5, sim: 0.97 }],
+    stems: { vocals: on, drums: hole, bass: hole, other: on }, melody: { fps: 10, midi } };
+  const m = passageMoments(tl, { a: 10, b: 50 });
+  assert.equal(m.length, 3);
+  const drop = m.find(x => /drop out/.test(x.text));
+  assert.match(drop.text, /^Drums and Bass drop out\. The voice carries it alone until 0:2[56]\.$/);
+  assert.ok(Math.abs(drop.at - 20) < 1, 'at the drop');
+  assert.deepEqual(m.map(x => x.at), [...m.map(x => x.at)].sort((p, q) => p - q), 'in time order');
+  assert.equal(m.find(x => x.ghost != null).text, 'Same chords as 0:05.');
+  assert.match(m.find(x => /sung/.test(x.text)).text, /voice spans G3–E4/);
+  assert.deepEqual(passageMoments({ trackId: 'x', version: 1, status: {} }, { a: 0, b: 10 }), [], 'nothing before the tiers arrive');
+});
+
+test('spectrum: FFT finds a sine, mel scale round-trips, every band has a filter', () => {
+  const n = 1024, re = new Float32Array(n), im = new Float32Array(n);
+  for (let i = 0; i < n; i++) re[i] = Math.sin(2 * Math.PI * 64 * i / n);
+  fft(re, im);
+  const mags = Array.from(re, (v, i) => Math.hypot(v, im[i])).slice(0, n / 2);
+  assert.equal(mags.indexOf(Math.max(...mags)), 64);
+  for (const f of [30, 440, 1000, 5000, 11025]) assert.ok(Math.abs(melToHz(hzToMel(f)) - f) < 1e-6 * f);
+  assert.ok(melFilters().every(b => b.w.some(v => v > 0)), 'no empty rows in the image');
+});
+
+test('spectrum: a 1 kHz tone lights the 1 kHz band; loudness rises with the signal', () => {
+  const sec = 2, x = new Float32Array(SPEC_SR * sec);
+  for (let i = 0; i < x.length; i++) x[i] = (i > x.length / 2 ? 0.5 : 0.05) * Math.sin(2 * Math.PI * 1000 * i / SPEC_SR);
+  const s = computeSpectrum(x);
+  assert.ok(Math.abs(s.fps - 86.13) < 0.01);
+  const mid = Math.floor(s.frames * 0.75) * s.bands, row = Array.from(s.data.slice(mid, mid + s.bands));
+  const peak = row.indexOf(Math.max(...row));
+  const bandHz = melToHz(hzToMel(30) + (hzToMel(11025) - hzToMel(30)) * (peak + 1) / (s.bands + 1));
+  assert.ok(Math.abs(bandHz - 1000) < 60, 'peak band near 1 kHz, got ' + Math.round(bandHz));
+  assert.ok(s.loud[15] > s.loud[5], 'louder second half');
+  assert.ok(Math.abs(s.bright[15] - 1000) < 80, 'centroid of a pure tone is its frequency');
+});

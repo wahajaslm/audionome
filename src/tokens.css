@@ -50,3 +50,15 @@
 .body{font-family:var(--font-sans);font-size:15px;line-height:22px;font-weight:400}
 .label{font-family:var(--font-sans);font-size:13px;line-height:18px;font-weight:400}
 .caption{font-family:var(--font-sans);font-size:12px;line-height:16px;font-weight:400}
+
+/* Explore lanes: one colour per separated stem (vocals uses the accent). */
+:root{
+  --stem-vocals: #8ec5b8;
+  --stem-drums: #d9a86c;
+  --stem-bass: #9fa3e6;
+  --stem-other: #c99bc0;
+  --part-a: #5d7f78;
+  --part-b: #7a6c95;
+  --part-c: #8a7350;
+  --part-d: #5f7090;
+}

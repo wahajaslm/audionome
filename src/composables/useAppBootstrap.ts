@@ -8,6 +8,7 @@ import { useMomentsStore } from '../stores/moments';
 import { useIntelligenceStore } from '../stores/intelligence';
 import { usePlaybackStore } from '../stores/playback';
 import { useUiStore } from '../stores/ui';
+import { useTimelineStore } from '../stores/timeline';
 
 /**
  * Start-up, in the same order as index.html's initialize(): demo track, settings, library,
@@ -16,6 +17,8 @@ import { useUiStore } from '../stores/ui';
 export function useAppBootstrap(): void {
   const library = useLibraryStore(), listening = useListeningStore(), moments = useMomentsStore();
   const intelligence = useIntelligenceStore(), playback = usePlaybackStore(), ui = useUiStore();
+  // The loaded song's timeline (spectrum, beats, chords, stems) follows the player from here.
+  useTimelineStore().bind();
 
   onMounted(async () => {
     try {

@@ -25,6 +25,9 @@ import AskRow from '../../ui/AskRow.vue';
 import DescribeStrip from '../../ui/DescribeStrip.vue';
 import Button from '../../ui/Button.vue';
 import ExplorePanel from './ExplorePanel.vue';
+import SongStrip from './SongStrip.vue';
+import { useTimelineStore } from '../../stores/timeline';
+import { passageMoments } from '../../core/timeline';
 import { formatTime } from '../../ui/format';
 
 const playback = usePlaybackStore();
@@ -35,6 +38,7 @@ const library = useLibraryStore();
 const listening = useListeningStore();
 const router = useRouter();
 const wf = useWaveform();
+const timelineStore = useTimelineStore();
 
 const { sel, loop, loops, t, duration, playing, currentTrack } = storeToRefs(playback);
 const { ask, describe, feel, love, note, nudge, explore } = storeToRefs(flow);
@@ -57,6 +61,9 @@ const savedHere = computed(() => sel.value && moments.savedForCurrent.find(r => 
 const activeHint = computed(() => listening.learning
   ? intelligence.interest.find(r => r.n >= 2 && t.value >= r.a && t.value <= r.b) : undefined);
 
+/** Moments of the selected passage, as dots under the waveform. */
+const stripMoments = computed(() => (timelineStore.timeline && sel.value ? passageMoments(timelineStore.timeline, sel.value) : []));
+
 function onLoopButton(): void { playback.toggleLoop(); }
 </script>
 
@@ -67,14 +74,13 @@ function onLoopButton(): void { playback.toggleLoop(); }
       <div class="meta">
         <h1 class="title track-title">{{ currentTrack?.title || 'No track' }}</h1>
         <div class="artist body">{{ currentTrack?.artist || 'Import audio in Library' }}</div>
-        <div v-if="currentTrack" class="status">
-          <span v-if="analyzingStep" class="pill caption" role="status">◐ {{ analyzingStep }}</span>
-          <button v-else-if="analysis" type="button" class="pill caption" @click="router.push('/admin')">
-            ● Analyzed · {{ analysis.segments.length }} windows · {{ analysis.method }} · View features →
-          </button>
-          <button v-else type="button" class="pill caption" @click="library.analyze(currentTrack.id)">
-            ○ Not analyzed yet · Analyze
-          </button>
+        <!-- One status line for the song's analysis tiers (stores/timeline.ts), instead of a pill
+             that only knew about the window analysis. Example: "◐ Separating stems… · beats and chords ready". -->
+        <div v-if="currentTrack" class="status caption" role="status">
+          <span>{{ timelineStore.statusText.busy ? '◐' : '●' }} {{ timelineStore.statusText.text }}</span>
+          <span v-if="analyzingStep" class="sub">· window analysis: {{ analyzingStep }}</span>
+          <button v-else-if="analysis" type="button" class="link" @click="router.push('/admin')">· Features →</button>
+          <button v-else type="button" class="link" @click="library.analyze(currentTrack.id)">· Run window analysis</button>
         </div>
       </div>
     </header>
@@ -91,6 +97,7 @@ function onLoopButton(): void { playback.toggleLoop(); }
         @step="wf.step"
         @select-around="wf.selectAround"
       />
+      <SongStrip :timeline="timelineStore.timeline" :duration="duration" :t="t" :moments="stripMoments" @seek="s => playback.clickSeek(s)" />
       <SelectionToolbar
         v-if="sel"
         :range="sel"
@@ -174,21 +181,10 @@ function onLoopButton(): void { playback.toggleLoop(); }
 .meta { min-width: 0; }
 .title { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
 .artist { color: var(--ink-sub); margin-top: var(--space-1); }
-.status { margin-top: var(--space-3); }
-.pill {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  height: 26px;
-  padding: 0 10px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-pill);
-  background: none;
-  color: var(--ink-sub);
-  font-family: var(--font-sans);
-}
-button.pill { cursor: pointer; }
-button.pill:hover { color: var(--ink); border-color: var(--chip-on-line); }
+.status { margin-top: var(--space-3); display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; color: var(--ink-sub); }
+.status .sub { color: var(--ink-mute); }
+.link { background: none; border: none; padding: 0; color: var(--ink-mute); font: inherit; cursor: pointer; }
+.link:hover { color: var(--ink); }
 .stage { margin-top: var(--space-7); }
 .slot {
   display: grid;

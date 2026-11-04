@@ -352,18 +352,20 @@ export const usePlaybackStore = defineStore('playback', () => {
     const url = stemUrl(trackId.value, stem), id = trackId.value;
     const ok = stem === 'all' || await fetch(url, { headers: { Range: 'bytes=0-1' } }).then(r => r.ok, () => false);
     if (trackId.value !== id) return;
-    if (!ok) { useUiStore().notify(stem.charAt(0).toUpperCase() + stem.slice(1) + ' is not separated yet. Run the full analysis first.'); return; }
+    // 'no_drums' etc. is the song without that stem (Explore's Mute). Example: "Without drums".
+    const name = stem.startsWith('no_') ? 'Without ' + stem.slice(3) : stem.charAt(0).toUpperCase() + stem.slice(1);
+    if (!ok) { useUiStore().notify(name + ': stems are not separated yet. They are on the way.'); return; }
     const prevSrc = e.el.src, prevStem = activeStem.value;
     activeStem.value = stem;
     const pos = region.t, wasPlaying = playing.value;
-    useUiStore().notify('Loading ' + stem + ' stem…');
+    useUiStore().notify('Loading ' + name.toLowerCase() + '…');
     try {
       await e.load(url, pos);
       if (!e.hasSource()) throw new Error('stem failed to load');
       if (wasPlaying) { await e.play(); playing.value = true; }
     } catch (err) {
       console.warn('Stem loading notice:', err);
-      useUiStore().notify('Could not play the ' + stem + ' stem · back to what was playing.');
+      useUiStore().notify('Could not play ' + name.toLowerCase() + ' · back to what was playing.');
       activeStem.value = prevStem;
       await e.load(prevSrc, region.t || pos);
       if (wasPlaying) e.play().catch(console.warn);

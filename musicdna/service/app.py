@@ -23,6 +23,7 @@ from musicdna.service.repository import AnalysisRepository, _DEFAULT_REPOSITORY,
 from musicdna.audio.io import load_audio
 from musicdna.paths import PUBLIC_DIR
 from musicdna.service.studio import router as studio_router, DEMO_WAV
+from musicdna.service.timeline_api import router as timeline_router, JOBS as TIMELINE_JOBS
 from musicdna.service.streaming import (
     resolve_stream, create_proxy_stream_response, start_cache_download, wait_for_cache_download,
     remember_resolved, resolved_meta,
@@ -39,6 +40,7 @@ def get_repository() -> AnalysisRepository:
 
 app = FastAPI(title='Music DNA Local Intelligence Service', version='0.5.0')
 app.include_router(studio_router)
+app.include_router(timeline_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -157,6 +159,9 @@ async def cache_audio(
         content_type=file.content_type or 'audio/wav',
         track_title=track_title,
     )
+    # UPLOAD WAIT FIX - the player timeline (beats, chords, parts, then stems) starts as soon as
+    # the audio is here, behind the song being played. See musicdna.service.timeline_jobs.
+    TIMELINE_JOBS.request(track_id, front=False)
     return {'status': 'cached', 'trackId': track_id}
 
 
@@ -182,8 +187,16 @@ def serve_stem_audio(
     if stem_key in ('all', 'mix', 'master'):
         return serve_cached_audio(track_id, service=service)
 
+    # MUTE FIX - 'no_<stem>' is the song without that stem (Explore's M button), summed once from
+    # the separated stems. Example: no_drums = vocals + bass + other.
+    if stem_key.startswith('no_') and stem_key[3:] in ('vocals', 'drums', 'bass', 'other'):
+        mix_path = service.stem_separator.get_or_make_mix_without(track_id, stem_key[3:])
+        if mix_path:
+            return FileResponse(str(mix_path), media_type='audio/wav')
+        raise HTTPException(404, f"Stems are not separated yet for track '{track_id}'")
+
     if stem_key not in ('vocals', 'drums', 'bass', 'other'):
-        raise HTTPException(400, f"Invalid stem name '{stem_name}'. Must be one of: all, vocals, drums, bass, other")
+        raise HTTPException(400, f"Invalid stem name '{stem_name}'. Must be one of: all, vocals, drums, bass, other, no_<stem>")
 
     # STEM STALL FIX - serve a stem only when it already exists; never separate inside this
     # request. Before, a missing stem ran Demucs here, the player waited minutes, and every
