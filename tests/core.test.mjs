@@ -6,7 +6,7 @@ import {
   RegionController, enforceMinimumSelection, rangeAround, defaultLoopRange, previewStart, seekTarget, quickSaveRange,
 } from '../src/core/playback.ts';
 import { toDbMoment, withTags, collectionsOf, newMoment, savedRanges } from '../src/core/moments.ts';
-import { barAt, beatInBar, blockIndexAt, chordSheet, noteName, passageMoments, rankIn } from '../src/core/timeline.ts';
+import { barAt, beatInBar, blockIndexAt, chordChart, chordSheet, noteName, passageMoments, rankIn } from '../src/core/timeline.ts';
 import { computeSpectrum, fft, hzToMel, melFilters, melToHz, SPEC_SR } from '../src/core/spectrum.ts';
 
 /** Minimal HTMLMediaElement stand-in: an EventTarget with the fields the engine reads. */
@@ -425,4 +425,19 @@ test('timeline: the chord sheet puts chords in bars and bars in parts', () => {
   assert.deepEqual(sheet[0].bars.map(b => [b.n, b.chords.join(' ')]), [[0, 'Dm'], [1, 'Dm'], [2, 'C F']], 'pickup bar 0, then bars 1, 2');
   assert.deepEqual(sheet[1].bars.map(b => [b.n, b.chords.join(' ')]), [[3, 'Dm'], [4, 'Dm']], 'a chord under a quarter of the bar (F, 0.5 of 4 s) is left out');
   assert.deepEqual(chordSheet({ trackId: 'x', version: 1, status: {} }), []);
+});
+
+test('timeline: the chord chart shows each part once, as its repeating bar pattern', () => {
+  const downbeats = Array.from({ length: 16 }, (_, i) => i * 2);
+  const chords = downbeats.map((d, i) => ({ c: i % 2 ? 'D#m' : 'C#', a: d, b: d + 2, conf: 1 }));
+  chords[11] = { c: 'B', a: 22, b: 24, conf: 1 };   // one odd bar does not break the pattern
+  const tl = { trackId: 'x', version: 2, status: {}, durationSec: 32, downbeats, chords,
+    sections: [{ a: 0, b: 16, label: 'A', energy: 0.5 }, { a: 16, b: 24, label: 'B', energy: 0.5 }, { a: 24, b: 32, label: 'A', energy: 0.5 }] };
+  const { order, parts } = chordChart(tl);
+  assert.deepEqual(order.map(s => s.label), ['A', 'B', 'A']);
+  const a = parts.find(p => p.label === 'A');
+  assert.deepEqual(a.pattern, [['C#'], ['D#m']]);
+  assert.equal(a.repeats, 4);
+  assert.equal(a.times.length, 2, 'heard twice');
+  assert.deepEqual(parts.find(p => p.label === 'B').pattern, [['C#'], ['D#m']], '3 of 4 bars match a 2-bar loop');
 });

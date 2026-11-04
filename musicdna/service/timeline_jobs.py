@@ -31,7 +31,7 @@ from musicdna.audio.stems import StemSeparator
 from musicdna.features import timeline as tl
 
 LOGGER = logging.getLogger(__name__)
-TIMELINE_VERSION = 1
+TIMELINE_VERSION = 2   # 2: chords without the 7th bias and beat-to-beat flicker (CHORD NOISE FIX)
 DEMUCS_MODEL = 'htdemucs'
 STEM_SR = 44100   # stems are saved at full rate, they are played back
 

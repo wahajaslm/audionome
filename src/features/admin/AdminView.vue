@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * Song anatomy: how one song is built, from the timeline (musicdna/features/timeline.py).
- *   facts line · song map (parts, spectrum, loudness, stems) · chord sheet by bar, grouped
+ *   facts line · song map (parts, spectrum, loudness, stems) · song order · chord chart (each part once, as its repeating bars), grouped
  *   into parts · what has been analysed and how long it took.
  *
  * ANATOMY FIX - this screen was "Feature analysis": 12 s windows as raw numbers (RMS 0.0034,
@@ -13,7 +13,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRoute, useRouter } from 'vue-router';
-import { chordSheet, fetchTimeline, hasFull, startTimeline, type Timeline, type TierState } from '../../core/timeline';
+import { chordChart, fetchTimeline, hasFull, startTimeline, type Timeline, type TierState } from '../../core/timeline';
 import { STUDIO_URL } from '../../core/diagnostics';
 import { openStudio } from '../../core/studioLink';
 import { useIntelligenceStore } from '../../stores/intelligence';
@@ -83,12 +83,15 @@ const facts = computed(() => {
   return out;
 });
 
-const sheet = computed(() => (tl.value ? chordSheet(tl.value) : []));
+const chart = computed(() => (tl.value ? chordChart(tl.value) : { order: [], parts: [] }));
+/** The take under the playhead (lit in the song order) and its bar (lit in "every bar"). */
+const nowTake = computed(() => (isLoaded.value ? chart.value.order.findIndex(s => playback.t >= s.a && playback.t < s.b) : -1));
 const nowBar = computed(() => {
   if (!isLoaded.value) return -1;
-  for (const s of sheet.value) for (const b of s.bars) if (playback.t >= b.a && playback.t < b.b) return b.n;
+  for (const p of chart.value.parts) for (const b of p.bars) if (playback.t >= b.a && playback.t < b.b) return b.n;
   return -1;
 });
+const partVar = (label: string) => 'var(--part-' + 'abcd'[(label.charCodeAt(0) - 65) % 4] + ')';
 
 function seek(sec: number): void {
   if (isLoaded.value) playback.clickSeek(sec);
@@ -151,19 +154,40 @@ async function rerun(): Promise<void> {
         :spectrum-note="isLoaded ? 'Reading audio…' : 'Open this song in the player to see its spectrum'" @seek="seek" />
     </section>
 
-    <section v-if="sheet.length" class="block">
-      <h2 class="heading">Chords, bar by bar</h2>
-      <p class="caption sub">One row per part. Parts with the same letter sound alike. Click a part to play it.</p>
-      <div v-for="(s, i) in sheet" :key="i" class="part">
-        <button type="button" class="phead" :aria-label="'Play part ' + s.label + ' from ' + formatTime(s.a)" @click="playPart(s.a, s.b)">
-          <span class="tag" :style="{ background: 'var(--part-' + 'abcd'[(s.label.charCodeAt(0) - 65) % 4] + ')' }">{{ s.label || '·' }}</span>
-          <span class="caption num">{{ formatTime(s.a) }} – {{ formatTime(s.b) }} · {{ s.bars.length }} bars</span>
-          <Icon name="play" :size="11" />
+    <section v-if="chart.parts.length" class="block">
+      <h2 class="heading">Song order</h2>
+      <div class="order">
+        <button v-for="(s, i) in chart.order" :key="i" type="button" class="take" :class="{ now: i === nowTake }"
+          :style="{ '--c': partVar(s.label), flexGrow: s.b - s.a }" :aria-label="'Play part ' + s.label + ' from ' + formatTime(s.a)" @click="playPart(s.a, s.b)">
+          <span class="tl">{{ s.label }}</span><span class="tt caption">{{ formatTime(s.a) }}</span>
         </button>
-        <div class="bars">
-          <span v-for="b in s.bars" :key="b.n" class="bar" :class="{ now: b.n === nowBar }">
-            <small>{{ b.n }}</small>{{ b.chords.join(' ') }}
-          </span>
+      </div>
+    </section>
+
+    <section v-if="chart.parts.length" class="block">
+      <h2 class="heading">Chord chart</h2>
+      <p class="caption sub">Each kind of part once, as the bars it repeats. Click a time to play that take.</p>
+      <div v-for="p in chart.parts" :key="p.label" class="part">
+        <div class="phead">
+          <span class="tag" :style="{ background: partVar(p.label) }">{{ p.label }}</span>
+          <span class="caption sub">heard {{ p.times.length }}×</span>
+        </div>
+        <div class="pbody">
+          <div class="pattern">
+            <span class="bar-sep">‖</span>
+            <template v-for="(bar, k) in p.pattern" :key="k"><span class="pchord">{{ bar.join(' ') }}</span><span class="bar-sep">{{ k === p.pattern.length - 1 ? '‖' : '|' }}</span></template>
+            <span v-if="p.repeats > 1" class="rep caption">×{{ p.repeats }}</span>
+            <span v-if="p.more" class="rep caption">+{{ p.more }} more bars, no repeating pattern</span>
+          </div>
+          <div class="times">
+            <button v-for="(x, k) in p.times" :key="k" type="button" class="time caption" @click="playPart(x.a, x.b)">{{ formatTime(x.a) }}</button>
+          </div>
+          <details class="every">
+            <summary class="caption">Every bar of the longest take ({{ p.bars.length }})</summary>
+            <div class="bars">
+              <span v-for="b in p.bars" :key="b.n" class="bar" :class="{ now: b.n === nowBar }"><small>{{ b.n }}</small>{{ b.chords.join(' ') }}</span>
+            </div>
+          </details>
         </div>
       </div>
     </section>
@@ -211,11 +235,27 @@ async function rerun(): Promise<void> {
 .title-row h2, .block > h2 { margin: 0; color: var(--ink); }
 .sub { color: var(--ink-mute); }
 
-.part { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: var(--space-3); padding: var(--space-2) 0; border-top: 1px solid var(--line); align-items: start; }
-.phead { display: flex; align-items: center; gap: 8px; background: none; border: none; padding: 2px 0; color: var(--ink-sub); cursor: pointer; text-align: left; font-family: var(--font-sans); }
-.phead:hover { color: var(--ink); }
-.phead:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.tag { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; color: #0e0e10; font: 600 12px var(--font-sans); flex: none; }
+.order { display: flex; gap: 3px; min-width: 0; }
+.take { flex-basis: 0; min-width: 26px; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 6px 6px 5px;
+  border: none; border-top: 4px solid var(--c); border-radius: 4px; background: var(--bg-raise); cursor: pointer; color: var(--ink); font-family: var(--font-sans); overflow: hidden; }
+.take:hover { background: var(--chip-on); }
+.take.now { background: var(--accent-fill); outline: 1px solid var(--accent-line); }
+.take:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tl { font-weight: 600; font-size: 13px; }
+.tt { color: var(--ink-mute); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.part { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: var(--space-3); padding: var(--space-3) 0; border-top: 1px solid var(--line); align-items: start; }
+.phead { display: flex; align-items: center; gap: 8px; }
+.tag { width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center; color: #0e0e10; font: 600 12px var(--font-sans); flex: none; }
+.pbody { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.pattern { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; font-size: 20px; color: var(--ink); }
+.bar-sep { color: var(--ink-mute); }
+.pchord { font-weight: 500; }
+.rep { color: var(--ink-sub); font-size: 13px; }
+.times { display: flex; gap: 4px; flex-wrap: wrap; }
+.time { border: 1px solid var(--line-strong); border-radius: var(--radius-pill); background: none; color: var(--ink-sub); padding: 1px 9px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.time:hover { color: var(--ink); border-color: var(--chip-on-line); }
+.every summary { cursor: pointer; color: var(--ink-mute); }
+.every[open] summary { margin-bottom: 6px; }
 .num { font-variant-numeric: tabular-nums; }
 .bars { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 4px; }
 .bar { position: relative; padding: 14px 8px 6px; border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: 13px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -235,6 +275,7 @@ async function rerun(): Promise<void> {
 }
 @media (max-width: 600px) {
   .part { grid-template-columns: minmax(0, 1fr); }
+  .tt { display: none; }
   .status { grid-template-columns: minmax(0, 1fr); }
   .status dd { margin-bottom: 6px; }
 }

@@ -223,3 +223,55 @@ export function chordSheet(tl: Timeline): SheetSection[] {
   }
   return out;
 }
+
+export interface ChartPart {
+  label: string;
+  /** Every place this part is heard, in order. */
+  times: { a: number; b: number }[];
+  /** The bars that repeat, e.g. [['C#'], ['D#m']] for "| C# | D#m |". */
+  pattern: string[][];
+  /** How many times the pattern fills the part's longest take (rounded). */
+  repeats: number;
+  /** Bars not shown when the part has no repeating pattern (only its first 8 are). */
+  more: number;
+  /** Bars of the longest take, for "show every bar". */
+  bars: SheetBar[];
+}
+
+/**
+ * The chord sheet as a chord chart: each kind of part once, as its shortest repeating bar
+ * pattern, with every place it is heard. A pattern of 1, 2, 4 or 8 bars is used when its main chords
+ * match at least 75% of the bars; otherwise the first 8 bars are shown.
+ *
+ * CHART FIX - the sheet printed every bar of every take (127 cells for a 4:47 song), so the
+ * page was all chords and no structure.
+ * Example (song 06f0b181): part C, 23 bars → pattern "‖ D#m | G#m | G#m | C#m ‖" ×6, heard 5×.
+ */
+export function chordChart(tl: Timeline): { order: SheetSection[]; parts: ChartPart[] } {
+  const order = chordSheet(tl), byLabel = new Map<string, SheetSection[]>();
+  for (const s of order) { const list = byLabel.get(s.label) ?? []; list.push(s); byLabel.set(s.label, list); }
+  const parts: ChartPart[] = [];
+  for (const [label, takes] of byLabel) {
+    const longest = takes.reduce((x, y) => (y.bars.length > x.bars.length ? y : x));
+    // Bars are compared by their main (first) chord, so "D#m C#m" and "D#m" count as the same bar.
+    const cells = longest.bars.map(b => b.chords[0]);
+    let size = 0;
+    for (const L of [1, 2, 4, 8]) {
+      if (L * 2 > cells.length) break;
+      const hits = cells.filter((c, i) => c === cells[i % L]).length;
+      if (hits / cells.length >= 0.75) { size = L; break; }
+    }
+    // No repeating pattern: show the first 8 bars; "every bar" has the rest.
+    const shown = size || Math.min(8, cells.length);
+    parts.push({
+      label,
+      times: takes.map(t => ({ a: t.a, b: t.b })),
+      pattern: longest.bars.slice(0, shown).map(b => b.chords),
+      repeats: size ? Math.max(1, Math.round(cells.length / size)) : 1,
+      more: size ? 0 : cells.length - shown,
+      bars: longest.bars,
+    });
+  }
+  parts.sort((x, y) => x.label.localeCompare(y.label));
+  return { order, parts };
+}

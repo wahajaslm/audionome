@@ -48,8 +48,8 @@ def beat_chroma(harmony: np.ndarray, sr: int, beats: np.ndarray, hop: int = 512)
     return librosa.util.sync(chroma, frames, aggregate=np.median)
 
 
-def beat_chords(bchroma: np.ndarray, beats: np.ndarray, duration: float,
-                sharpness: float = 20.0, stay: float = 0.5) -> list[dict[str, Any]]:
+def beat_chords(bchroma: np.ndarray, beats: np.ndarray, duration: float, sharpness: float = 20.0,
+                stay: float = 0.85, seventh_penalty: float = 0.06, vocabulary_weight: float = 1.0) -> list[dict[str, Any]]:
     """
     One chord per beat, Viterbi-smoothed, merged into blocks with real start and end times.
 
@@ -58,13 +58,28 @@ def beat_chords(bchroma: np.ndarray, beats: np.ndarray, duration: float,
     the 12 s. Chords flickered and sat at the wrong time.
     Example (song 5580a385, 1:35-2:41): 44 chords listed before; on the beat it is 31 changes,
     a steady Dm-C loop, each block starting on a beat.
+
+    CHORD NOISE FIX - on a full mix the four-note 7th templates soaked up the voice and the
+    overtones and beat the plain triad almost every time, and a chord could change every beat.
+    Now: a 7th must beat its triad by `seventh_penalty`; staying on a chord is favoured
+    (`stay` 0.85 per beat); and a second pass weights each chord by how often the song uses it
+    (`vocabulary_weight`), so one-off flickers give way to the song's own progression.
+    Example (song 06f0b181, 4:47): 123 changes of which 83 were 7ths (G#7 C#7 D#7 F#7…) →
+    84 changes, 4 of them 7ths, the C# – D#m loop the song is built on.
     """
     names, templates = _chord_templates()
     unit = bchroma / (np.linalg.norm(bchroma, axis=0, keepdims=True) + 1e-9)
     similarity = templates @ unit
-    prob = np.exp(similarity * sharpness)
+    sevenths = np.array([n.endswith('7') for n in names])
+    prob = np.exp((similarity - seventh_penalty * sevenths[:, None]) * sharpness)
     prob /= prob.sum(axis=0, keepdims=True)
-    path = librosa.sequence.viterbi_discriminative(prob, librosa.sequence.transition_loop(len(names), stay))
+    transition = librosa.sequence.transition_loop(len(names), stay)
+    path = librosa.sequence.viterbi_discriminative(prob, transition)
+    if vocabulary_weight:
+        vocabulary = np.bincount(path, minlength=len(names)).astype(float) + 1.0
+        prob = prob * (vocabulary / vocabulary.sum())[:, None] ** vocabulary_weight
+        prob /= prob.sum(axis=0, keepdims=True)
+        path = librosa.sequence.viterbi_discriminative(prob, transition)
     edges = _beat_edges(beats, duration)
     blocks: list[dict[str, Any]] = []
     for i, k in enumerate(path):
