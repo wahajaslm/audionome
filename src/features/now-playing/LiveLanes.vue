@@ -8,18 +8,15 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { noteName, quantile, STEM_NAMES, type StemName, type Timeline } from '../../core/timeline';
-import { bandForHz, spectrumLabels, spectrumTiles, SPEC_TILE, type Spectrum, type SpectrumKind, type SpectrumView } from '../../core/spectrum';
-import SpectrumSwitch from '../../ui/SpectrumSwitch.vue';
+import { bandForHz, spectrumLabels, spectrumTiles, SPEC_TILE, type Spectrum, type SpectrumView } from '../../core/spectrum';
 import { useTimeDrag } from '../../composables/useTimeDrag';
 
 const props = defineProps<{
   timeline: Timeline | null;
   /** Mel view + instant curves (loudness lane). */
   spectrum: Spectrum | null;
-  /** The spectrum view to draw (mel, CQT or linear) and its switch. */
+  /** The spectrum view to draw (mel, CQT or linear). */
   view: SpectrumView | null;
-  kind: SpectrumKind;
-  viewBusy: boolean;
   range: { a: number; b: number };
   t: number;
   zoom: 'live' | 'all';
@@ -27,12 +24,12 @@ const props = defineProps<{
   activeStem: string;
   waitingText: { quick: string; full: string; spectrum: string };
 }>();
-const emit = defineEmits<{ seek: [sec: number]; loop: [a: number, b: number]; solo: [stem: StemName]; mute: [stem: StemName]; kind: [kind: SpectrumKind] }>();
+const emit = defineEmits<{ seek: [sec: number]; loop: [a: number, b: number]; solo: [stem: StemName]; mute: [stem: StemName] }>();
 
 type Row = { k: 'bar' | 'spec' | 'chord' | 'melody' | 'stem' | 'loud' | 'axis'; h: number; gap?: number; name: string; s?: StemName; y?: number };
 const ROWS: Row[] = [
   { k: 'bar', h: 22, name: 'Bar' },
-  { k: 'spec', h: 96, name: 'Spectrum', gap: 6 },
+  { k: 'spec', h: 150, name: 'Spectrum', gap: 6 },
   { k: 'chord', h: 34, name: 'Chord', gap: 6 },
   { k: 'melody', h: 54, name: 'Melody', gap: 6 },
   ...STEM_NAMES.map(s => ({ k: 'stem' as const, s, h: 28, name: s.charAt(0).toUpperCase() + s.slice(1), gap: 4 })),
@@ -225,8 +222,7 @@ const stemsReady = computed(() => !!props.timeline?.stems);
     <div class="lbl" :style="{ height: HEIGHT + 'px' }">
       <div v-for="r in ROWS.filter(x => x.name)" :key="r.name" class="l" :style="{ top: r.y + 'px', height: r.h + 'px' }">
         <span v-if="r.s" class="sw" :style="{ background: 'var(--stem-' + r.s + ')' }"></span>
-        <span v-if="r.k === 'spec'" class="specl"><span>{{ r.name }}</span><SpectrumSwitch :kind="kind" :busy="viewBusy" @select="k => emit('kind', k)" /></span>
-        <span v-else>{{ r.name }}</span>
+        <span>{{ r.name }}<small v-if="r.k === 'spec' && $props.view" class="kindl">{{ $props.view.kind === 'cqt' ? 'CQT' : $props.view.kind === 'linear' ? 'Linear' : 'Mel' }}</small></span>
         <template v-if="r.s">
           <button type="button" class="sm" :aria-pressed="soloed === r.s" :disabled="!stemsReady" :aria-label="'Solo ' + r.s" @click="emit('solo', r.s)">S</button>
           <button type="button" class="sm" :aria-pressed="mutedStem === r.s" :disabled="!stemsReady" :aria-label="'Mute ' + r.s" @click="emit('mute', r.s)">M</button>
@@ -242,7 +238,7 @@ const stemsReady = computed(() => !!props.timeline?.stems);
 .lbl { position: relative; }
 .l { position: absolute; left: 0; right: 6px; display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--ink-mute); }
 .sw { width: 7px; height: 7px; border-radius: 50%; flex: none; }
-.specl { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+.kindl { display: block; font-size: 10px; color: var(--ink-mute); opacity: .8; }
 .sm {
   padding: 0 5px; font-size: 10px; line-height: 15px; border-radius: 4px; margin-left: auto;
   border: 1px solid var(--line-strong); background: none; color: var(--ink-sub); cursor: pointer; font-family: var(--font-sans);

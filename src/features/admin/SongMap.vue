@@ -16,7 +16,7 @@ const dragRange = ref<[number, number] | null>(null);
 
 const ROWS = [
   { k: 'parts', h: 18, name: 'Parts' },
-  { k: 'spec', h: 84, name: 'Spectrum' },
+  { k: 'spec', h: 120, name: 'Spectrum' },
   { k: 'loud', h: 30, name: 'Loudness' },
   ...STEM_NAMES.map(s => ({ k: 'stem', s, h: 14, name: s.charAt(0).toUpperCase() + s.slice(1) })),
   { k: 'axis', h: 14, name: '' },
@@ -122,12 +122,12 @@ const drag = useTimeDrag(
 </script>
 
 <template>
+  <div class="maptools"><SpectrumSwitch :kind="kind" :busy="viewBusy" @select="k => emit('kind', k)" /></div>
   <div class="map">
     <div class="lbl" :style="{ height: HEIGHT + 'px' }">
       <span v-for="r in ROWS.filter(x => x.name)" :key="r.name" class="l" :style="{ top: r.y + 'px', height: r.h + 'px' }">
         <i v-if="r.s" class="sw" :style="{ background: 'var(--stem-' + r.s + ')' }"></i>
-        <span v-if="r.k === 'spec'" class="specl">{{ r.name }}<SpectrumSwitch :kind="kind" :busy="viewBusy" @select="k => emit('kind', k)" /></span>
-        <template v-else>{{ r.name }}</template>
+        {{ r.name }}
       </span>
     </div>
     <canvas ref="cv" class="cv" :style="{ height: HEIGHT + 'px' }" aria-label="The whole song: parts, spectrum, loudness and stems. Click to play from there, drag to loop a range." @pointerdown="drag.pointerdown" @pointermove="drag.pointermove" @pointerup="drag.pointerup" @pointercancel="drag.pointercancel"></canvas>
@@ -135,8 +135,8 @@ const drag = useTimeDrag(
 </template>
 
 <style scoped>
-.map { display: grid; grid-template-columns: 112px minmax(0, 1fr); }
-.specl { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+.map { display: grid; grid-template-columns: 92px minmax(0, 1fr); }
+.maptools { display: flex; justify-content: flex-end; margin-bottom: 6px; }
 .lbl { position: relative; }
 .l { position: absolute; left: 0; display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-mute); }
 .sw { width: 7px; height: 7px; border-radius: 50%; }

@@ -470,3 +470,26 @@ test('spectrum views: an A4 tone is the A4 row in CQT; a 1 kHz tone the 1 kHz ro
   assert.ok(Math.abs(lin.freqs[peakRow(lin)] - 1000) < 60);
   assert.equal(computeSpectrum(tone(1000)).kind, 'mel');
 });
+
+test('details: voice, groove, harmony and similar passages read the measurements in plain words', async () => {
+  const { voiceDetails, grooveDetails, harmonyDetails, similarPassages, teaser } = await import('../src/core/passageDetails.ts');
+  const midi = Array(200).fill(null).map((_, i) => (i >= 20 && i < 60 ? 62 : i >= 60 && i < 180 ? 57 + (i % 12) : null));
+  const beats = Array.from({ length: 40 }, (_, i) => i * 0.5), downbeats = beats.filter((_, i) => i % 4 === 0);
+  const tl = { trackId: 't', version: 2, status: {}, fps: 10, melody: { fps: 10, midi }, beats, downbeats,
+    chords: [{ c: 'Dm', a: 0, b: 12, conf: 1 }, { c: 'C', a: 12, b: 20, conf: 1 }] };
+  const voice = voiceDetails(tl, { a: 0, b: 20 });
+  assert.equal(voice.find(r => r.k === 'Longest note').v, '4.0 s on D4');
+  assert.match(teaser(voice, ['Range', 'Longest note']), /^.+–.+ · 4\.0 s on D4$/);
+  const groove = grooveDetails(tl, [], { a: 0, b: 20 });
+  assert.equal(groove.find(r => r.k === 'Tempo').v, '120 BPM');
+  assert.equal(groove.find(r => r.k === 'Steadiness').v, 'Steady (±0 ms)');
+  assert.equal(groove.find(r => r.k === 'Metre').v, '4 beats per bar');
+  assert.equal(harmonyDetails(tl, [], { a: 0, b: 20 }).find(r => r.k === 'Chords').v, 'Dm 60% · C 40%');
+  const seg = (a, e) => ({ startSec: a, endSec: a + 12, descriptors: {}, embedding: e });
+  const analyses = [
+    { trackId: 't', method: 'multimodal', segments: [seg(0, [1, 0]), seg(60, [0.9, 0.1])] },
+    { trackId: 'u', method: 'multimodal', segments: [seg(0, [0, 1]), seg(30, [1, 0.05])] },
+  ];
+  const sim = similarPassages(analyses, 't', { a: 0, b: 12 });
+  assert.deepEqual(sim.map(h => [h.trackId, h.a]), [['u', 30], ['t', 60], ['u', 0]], 'most alike first, own windows left out');
+});

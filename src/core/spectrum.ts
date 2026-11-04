@@ -21,7 +21,7 @@ export const SPEC_RANGE_DB = 75;
  * SPECTRUM VIEWS - three ways to draw the same sound (the switch in Explore and Song anatomy):
  *   mel     bands spaced as the ear hears pitch (default; 2048-pt FFT, hop 256, 128 bands, 30 Hz–11 kHz)
  *   cqt     one row per quarter tone on a piano scale, so notes and chords line up
- *           (pseudo-CQT: 8192-pt FFT, hop 512, 24 bands per octave, C2 65 Hz – C9 8.4 kHz)
+ *           (multi-resolution pseudo-CQT, 86 frames/s, 24 bands per octave, C2 65 Hz – C9 8.4 kHz)
  *   linear  plain frequency in Hz (2048-pt FFT, hop 256, 256 bands up to 11 kHz)
  * Example: a sung A4 is one bright line at row "A4" in CQT; in linear it sits low and thin.
  */
@@ -55,7 +55,9 @@ export const CQT_FMIN = 65.406;        // C2
 export const CQT_PER_OCTAVE = 24;
 export const CQT_BANDS = 24 * 7;       // C2 … C9
 export const CQT_FFT = 8192;
-export const CQT_HOP = 512;
+export const CQT_HOP = 256;
+/** CQT bands below this come from the 8192-point FFT, the rest from a 4096-point one. */
+export const CQT_SPLIT_HZ = 520;
 export const LINEAR_BANDS = 256;
 
 /** Slaney mel scale (librosa's default), so the bands match the service's mel features. */
@@ -128,7 +130,7 @@ export function fft(re: Float32Array, im: Float32Array): void {
 
 /** Hann-windowed STFT frames → filtered band energies in dB, quantised to 0..255 over SPEC_RANGE_DB. */
 function bandFrames(x: Float32Array, nfft: number, hop: number, filters: BandFilter[],
-  perFrame?: (f: number, re: Float32Array, im: Float32Array) => void): { data: Uint8Array; frames: number } {
+  perFrame?: (f: number, re: Float32Array, im: Float32Array) => void): { db: Float32Array; frames: number; maxDb: number } {
   const half = nfft / 2, bands = filters.length;
   const frames = Math.max(1, Math.floor((x.length - 1) / hop) + 1);
   const win = new Float32Array(nfft).map((_, i) => 0.5 - 0.5 * Math.cos(2 * Math.PI * i / nfft));
@@ -150,9 +152,24 @@ function bandFrames(x: Float32Array, nfft: number, hop: number, filters: BandFil
       if (d > maxDb) maxDb = d;
     }
   }
-  const data = new Uint8Array(frames * bands), lo = maxDb - SPEC_RANGE_DB;
-  for (let i = 0; i < db.length; i++) data[i] = Math.max(0, Math.min(255, Math.round((db[i] - lo) / SPEC_RANGE_DB * 255)));
-  return { data, frames };
+  return { db, frames, maxDb };
+}
+
+/**
+ * dB → 0..255 on this song's own levels.
+ * CONTRAST FIX - a fixed 75 dB below the loudest frame left most of the picture a flat teal
+ * wash. Now the 30th percentile is black and the 99.7th is white (at most 75 dB apart),
+ * so the quiet half of the song keeps its detail.
+ * Example: a dense pop master spans ~45 dB in practice → uses the whole colour ramp.
+ */
+function quantise(db: Float32Array, maxDb: number): Uint8Array {
+  const floor = maxDb - 120, hist = new Uint32Array(121);
+  for (let i = 0; i < db.length; i++) hist[Math.max(0, Math.min(120, Math.round(db[i] - floor)))]++;
+  const at = (q: number) => { let n = 0; for (let k = 0; k <= 120; k++) { n += hist[k]; if (n >= q * db.length) return floor + k; } return maxDb; };
+  const hi = at(0.997), lo = Math.max(at(0.3), hi - SPEC_RANGE_DB), span = Math.max(6, hi - lo);
+  const data = new Uint8Array(db.length);
+  for (let i = 0; i < db.length; i++) data[i] = Math.max(0, Math.min(255, Math.round((db[i] - lo) / span * 255)));
+  return data;
 }
 
 const centres = (edges: number[]) => Float32Array.from(edges.slice(1, -1));
@@ -160,13 +177,27 @@ const centres = (edges: number[]) => Float32Array.from(edges.slice(1, -1));
 /** Mono samples at SPEC_SR → the CQT or linear view (mel comes with the curves, computeSpectrum). */
 export function computeView(x: Float32Array, kind: Exclude<SpectrumKind, 'mel'>, sr = SPEC_SR): SpectrumView {
   if (kind === 'cqt') {
-    const { data, frames } = bandFrames(x, CQT_FFT, CQT_HOP, cqtFilters(sr));
+    // CQT RESOLUTION FIX - one 8192-point FFT every 512 samples gave 43 frames/s, which blurred
+    // when stretched. Now it is multi-resolution, like a real constant-Q transform: notes up to
+    // CQT_SPLIT_HZ from the long FFT (fine in pitch, every 512 samples, interpolated in time),
+    // the rest from a 4096-point FFT every 256 samples. Both land on 86 frames/s.
+    // Example: hi-hats and consonants are sharp in time again; bass notes stay one row each.
     const freqs = Float32Array.from({ length: CQT_BANDS }, (_, i) => CQT_FMIN * 2 ** (i / CQT_PER_OCTAVE));
-    return { kind, fps: sr / CQT_HOP, bands: CQT_BANDS, frames, fmin: CQT_FMIN, fmax: freqs[CQT_BANDS - 1], freqs, data };
+    const split = freqs.findIndex(f => f > CQT_SPLIT_HZ);
+    const all = cqtFilters(sr), low = all.slice(0, split);
+    const high = cqtFilters(sr, 4096).slice(split);
+    const L = bandFrames(x, CQT_FFT, CQT_HOP * 2, low), H = bandFrames(x, 4096, SPEC_HOP, high);
+    const frames = H.frames, db = new Float32Array(frames * CQT_BANDS), hb = CQT_BANDS - split;
+    for (let f = 0; f < frames; f++) {
+      const pos = f / 2, f0 = Math.min(L.frames - 1, Math.floor(pos)), f1 = Math.min(L.frames - 1, f0 + 1), w = pos - f0;
+      for (let b = 0; b < split; b++) db[f * CQT_BANDS + b] = L.db[f0 * split + b] * (1 - w) + L.db[f1 * split + b] * w;
+      for (let b = 0; b < hb; b++) db[f * CQT_BANDS + split + b] = H.db[f * hb + b];
+    }
+    return { kind, fps: sr / SPEC_HOP, bands: CQT_BANDS, frames, fmin: CQT_FMIN, fmax: freqs[CQT_BANDS - 1], freqs, data: quantise(db, Math.max(L.maxDb, H.maxDb)) };
   }
-  const { data, frames } = bandFrames(x, SPEC_FFT, SPEC_HOP, linearFilters(sr));
+  const { db, frames, maxDb } = bandFrames(x, SPEC_FFT, SPEC_HOP, linearFilters(sr));
   const freqs = Float32Array.from({ length: LINEAR_BANDS }, (_, i) => SPEC_FMAX * (i + 1) / (LINEAR_BANDS + 1));
-  return { kind, fps: sr / SPEC_HOP, bands: LINEAR_BANDS, frames, fmin: 0, fmax: SPEC_FMAX, freqs, data };
+  return { kind, fps: sr / SPEC_HOP, bands: LINEAR_BANDS, frames, fmin: 0, fmax: SPEC_FMAX, freqs, data: quantise(db, maxDb) };
 }
 
 /** Mono samples at SPEC_SR → mel spectrogram + 10 frames/s curves. */
@@ -175,7 +206,7 @@ export function computeSpectrum(x: Float32Array, sr = SPEC_SR): Spectrum {
   const fps = sr / hop, per10 = fps / 10;
   const nCurve = Math.ceil((Math.floor((x.length - 1) / hop) + 1) / per10);
   const centroidSum = new Float32Array(nCurve), centroidN = new Float32Array(nCurve);
-  const { data, frames } = bandFrames(x, n, hop, melFilters(sr, n), (f, re, im) => {
+  const { db, frames, maxDb } = bandFrames(x, n, hop, melFilters(sr, n), (f, re, im) => {
     let num = 0, den = 0;
     for (let k = 0; k <= half; k++) { const mag = Math.hypot(re[k], im[k]); num += mag * k * sr / n; den += mag; }
     const ci = Math.min(nCurve - 1, Math.floor(f / per10));
@@ -196,7 +227,7 @@ export function computeSpectrum(x: Float32Array, sr = SPEC_SR): Spectrum {
   const floor = sorted[Math.floor(0.02 * (sorted.length - 1))], top = sorted[sorted.length - 1];
   const loud = rmsDb.map(v => Math.max(0, Math.min(1, (v - floor) / Math.max(1e-6, top - floor))));
   const bright = centroidSum.map((v, i) => centroidN[i] ? v / centroidN[i] : 0);
-  return { kind: 'mel', fps, bands: SPEC_BANDS, frames, fmin: SPEC_FMIN, fmax: SPEC_FMAX, freqs, data, loud, bright };
+  return { kind: 'mel', fps, bands: SPEC_BANDS, frames, fmin: SPEC_FMIN, fmax: SPEC_FMAX, freqs, data: quantise(db, maxDb), loud, bright };
 }
 
 /** Row (0 = bottom band) whose centre is nearest `hz`, for axis labels. */

@@ -20,8 +20,11 @@ import { useTimelineStore } from '../../stores/timeline';
 import { exactSummary, passageSummary } from '../../core/diagnostics';
 import { barAt, passageMoments, quantile, rankIn, type StemName } from '../../core/timeline';
 import { FEELINGS, QUALITIES } from '../../core/moments';
+import { grooveDetails, harmonyDetails, similarPassages, teaser, voiceDetails } from '../../core/passageDetails';
+import { useLibraryStore } from '../../stores/library';
 import DescribeStrip from '../../ui/DescribeStrip.vue';
 import AskRow from '../../ui/AskRow.vue';
+import SpectrumSwitch from '../../ui/SpectrumSwitch.vue';
 import LiveLanes from './LiveLanes.vue';
 import { formatTime } from '../../ui/format';
 
@@ -115,6 +118,22 @@ const railNow = computed(() => rails.value.map(r => {
   return { left: q * 100, title: `${word.charAt(0).toUpperCase() + word.slice(1)} than ${Math.round((q >= 0.5 ? q : 1 - q) * 100)}% of the song` };
 }));
 
+/** Folded detail sections (DETAIL SECTIONS): Voice, Groove, Harmony, each with a one-line teaser. */
+const details = computed(() => {
+  const r = sel.value, tl = timeline.value;
+  if (!r) return [];
+  const voice = voiceDetails(tl, r), groove = grooveDetails(tl, segs.value, r), harmony = harmonyDetails(tl, segs.value, r);
+  return [
+    { k: 'voice', title: 'Voice', rows: voice, teaser: teaser(voice, ['Range', 'Longest note']), wait: tl?.melody ? '' : 'Arrives with the stems (vocal melody).' },
+    { k: 'groove', title: 'Groove', rows: groove, teaser: teaser(groove, ['Tempo', 'Steadiness', 'Beat']), wait: tl?.beats ? '' : 'Arrives with the beats.' },
+    { k: 'harmony', title: 'Harmony', rows: harmony, teaser: teaser(harmony, ['Chords', 'Tension']), wait: tl?.chords ? '' : 'Arrives with the chords.' },
+  ];
+});
+const library = useLibraryStore();
+/** Passages that sound most like this one (CLAP + DSP embeddings), in this song or others. */
+const similar = computed(() => (sel.value && playback.trackId ? similarPassages(intelligence.analyses, playback.trackId, sel.value) : []));
+function playSimilar(trackId: string, a: number, b: number): void { playback.openRange(a, b, trackId, true); }
+
 /** Measurements, with units, what they mean, and where they come from (plain words, no badges). */
 const measurements = computed(() => {
   const tl = timeline.value, r = sel.value, rows: [string, string, string, string][] = [];
@@ -141,9 +160,12 @@ const measurements = computed(() => {
         <h2 class="heading">Explore this passage</h2>
         <div class="caption sub">{{ formatTime(sel.a) }} – {{ formatTime(sel.b) }}<template v-if="facts"> · {{ facts }}</template></div>
       </div>
-      <div class="seg" role="group" aria-label="Lane zoom">
-        <button type="button" :aria-pressed="zoom === 'live'" @click="zoom = 'live'">Follow playhead</button>
-        <button type="button" :aria-pressed="zoom === 'all'" @click="zoom = 'all'">Whole passage</button>
+      <div class="tools">
+        <SpectrumSwitch :kind="spectrumKind" :busy="viewBusy" @select="k => timelineStore.setSpectrumKind(k)" />
+        <div class="seg" role="group" aria-label="Lane zoom">
+          <button type="button" :aria-pressed="zoom === 'live'" @click="zoom = 'live'">Follow playhead</button>
+          <button type="button" :aria-pressed="zoom === 'all'" @click="zoom = 'all'">Whole passage</button>
+        </div>
       </div>
     </header>
 
@@ -160,8 +182,6 @@ const measurements = computed(() => {
       :timeline="timeline"
       :spectrum="spectrum"
       :view="spectrumView"
-      :kind="spectrumKind"
-      :view-busy="viewBusy"
       :range="sel"
       :t="t"
       :zoom="zoom"
@@ -169,7 +189,6 @@ const measurements = computed(() => {
       :waiting-text="waitingText"
       @seek="s => playback.clickSeek(s)"
       @loop="setLoop"
-      @kind="k => timelineStore.setSpectrumKind(k)"
       @solo="solo"
       @mute="mute"
     />
@@ -187,6 +206,24 @@ const measurements = computed(() => {
       </template>
     </div>
 
+    <details v-for="d in details" :key="d.k" class="fold">
+      <summary>{{ d.title }}<span v-if="d.teaser" class="teaser"> · {{ d.teaser }}</span></summary>
+      <p v-if="d.wait && !d.rows.length" class="caption sub">{{ d.wait }}</p>
+      <dl class="drows">
+        <template v-for="row in d.rows" :key="row.k"><dt class="caption" :title="row.hint">{{ row.k }}</dt><dd :title="row.hint">{{ row.v }}</dd></template>
+      </dl>
+    </details>
+    <details class="fold">
+      <summary>Similar passages<span v-if="similar.length" class="teaser"> · {{ similar.length }} found</span></summary>
+      <p v-if="!similar.length" class="caption sub">Needs the similarity analysis (Song anatomy → Run similarity analysis) on this and other songs.</p>
+      <div class="sims">
+        <button v-for="h in similar" :key="h.trackId + h.a" type="button" class="sim" @click="playSimilar(h.trackId, h.a, h.b)">
+          <span class="st">{{ h.trackId === playback.trackId ? 'Elsewhere in this song' : library.track(h.trackId)?.title || h.trackId }}</span>
+          <span class="caption sub">{{ formatTime(h.a) }} – {{ formatTime(h.b) }}</span>
+          <span class="caption pct">{{ Math.round(h.sim * 100) }}% alike</span>
+        </button>
+      </div>
+    </details>
     <details class="fold">
       <summary>Measurements</summary>
       <div class="tbl">
@@ -230,6 +267,7 @@ const measurements = computed(() => {
 .head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; }
 .head h2 { margin: 0; color: var(--ink); }
 .sub { color: var(--ink-mute); font-variant-numeric: tabular-nums; }
+.tools { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
 .seg { display: flex; gap: 4px; }
 .seg button {
   height: 26px; padding: 0 10px; font-size: 12px; border-radius: var(--radius-pill);
@@ -263,6 +301,15 @@ const measurements = computed(() => {
 .fold { border-top: 1px solid var(--line); padding-top: 10px; }
 .fold summary { cursor: pointer; color: var(--ink-sub); font-size: 13px; }
 .fold[open] summary { margin-bottom: 8px; }
+.teaser { color: var(--ink-mute); }
+.drows { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 6px var(--space-3); margin: 0; }
+.drows dt { color: var(--ink-mute); cursor: help; }
+.drows dd { margin: 0; color: var(--ink); font-size: 13px; }
+.sims { display: flex; flex-direction: column; }
+.sim { display: grid; grid-template-columns: minmax(0, 1fr) 110px 80px; gap: 10px; align-items: baseline; text-align: left; border: none; border-bottom: 1px solid var(--line); background: none; padding: 7px 2px; cursor: pointer; font-family: var(--font-sans); color: var(--ink); }
+.sim:hover { background: var(--bg-raise); }
+.st { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pct { color: var(--accent); text-align: right; font-variant-numeric: tabular-nums; }
 .tbl { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 12px; }
 th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }

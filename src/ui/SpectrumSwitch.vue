@@ -24,10 +24,11 @@ const TITLES: Record<SpectrumKind, string> = {
 </template>
 
 <style scoped>
-.sw { display: flex; flex-wrap: nowrap; gap: 2px; }
+.sw { display: flex; flex-wrap: nowrap; gap: 4px; align-items: center; }
+.sw::before { content: 'Spectrum'; font: 12px var(--font-sans); color: var(--ink-mute); margin-right: 2px; }
 button {
-  padding: 0 5px; font: 10px/16px var(--font-sans); border-radius: 4px; cursor: pointer;
-  border: 1px solid var(--line-strong); background: none; color: var(--ink-mute);
+  height: 26px; padding: 0 10px; font: 12px var(--font-sans); border-radius: var(--radius-pill); cursor: pointer;
+  border: 1px solid var(--line-strong); background: none; color: var(--ink-sub);
 }
 button:hover { color: var(--ink); border-color: var(--chip-on-line); }
 button[aria-pressed='true'] { background: var(--chip-on); border-color: var(--chip-on-line); color: var(--ink); }
