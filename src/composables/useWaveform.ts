@@ -3,8 +3,8 @@ import { usePlaybackStore } from '../stores/playback';
 import { useMomentsStore } from '../stores/moments';
 
 /**
- * Binds the design-system Waveform to the stores: what to draw (peaks on the media timeline,
- * media-clock playhead, selection, saved moments) and what each gesture does.
+ * Binds the design-system Waveform (wavesurfer.js) to the stores: the app's <audio> element,
+ * the playhead, the selection, saved moments, and what each gesture does.
  * Usage: const wf = useWaveform(); <Waveform v-bind="wf.props.value" @seek="wf.seek" … />
  */
 export function useWaveform() {
@@ -12,7 +12,7 @@ export function useWaveform() {
   const moments = useMomentsStore();
 
   const props = computed(() => ({
-    peaks: playback.peaks,
+    media: (playback.engine()?.el as HTMLMediaElement | undefined) ?? null,
     duration: playback.duration,
     currentTime: playback.t,
     selection: playback.sel,
@@ -32,10 +32,5 @@ export function useWaveform() {
     resizeEnd: () => playback.endResize(),
     step: (delta: number) => playback.stepBy(delta),
     selectAround: () => playback.selectAroundPlayhead(),
-    /** A saved-moment dot: select that moment (same as clicking inside it). */
-    savedClick: (id: string) => {
-      const r = moments.savedForCurrent.find(x => x.id === id);
-      if (r) playback.clickSeek((r.a + r.b) / 2);
-    },
   };
 }

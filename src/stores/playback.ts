@@ -1,12 +1,11 @@
 import { defineStore } from 'pinia';
-import { computed, reactive, ref, shallowRef, toRefs } from 'vue';
+import { computed, reactive, ref, toRefs } from 'vue';
 import type { NativeAudioEngine } from '../core/audioEngine';
 import { fullMixUrl, resolveTrackSource, stemUrl, type PlayableTrack } from '../core/library';
 import {
   contains, defaultLoopRange, enforceMinimumSelection, quickSaveRange, rangeAround,
   RegionController, seekTarget, type Range, type RegionState,
 } from '../core/playback';
-import { PeakDecoder, placeholderPeaks } from '../core/waveformPeaks';
 import { putSetting, getSetting } from '../core/repository';
 import { useLibraryStore } from './library';
 import { useListeningStore } from './listening';
@@ -38,8 +37,6 @@ export const usePlaybackStore = defineStore('playback', () => {
   const loading = ref(false);
   const volume = ref(0.62);
   const activeStem = ref('all');
-  /** 400 amplitudes, 0–1, laid out on the media duration. */
-  const peaks = shallowRef<number[]>(placeholderPeaks());
   const queue = ref<QueuedRange[]>([]);
 
   let engineRef: NativeAudioEngine | null = null;
@@ -47,7 +44,6 @@ export const usePlaybackStore = defineStore('playback', () => {
   let loadSeq = 0;
   let loadedTrackId: string | null = null;
   let objectUrl: string | null = null;
-  const peakDecoder = new PeakDecoder({ mediaDuration: () => duration.value });
 
   const engine = () => engineRef;
   const currentTrack = computed<PlayableTrack | undefined>(() => useLibraryStore().track(trackId.value));
@@ -115,8 +111,6 @@ export const usePlaybackStore = defineStore('playback', () => {
     const src = await resolveTrackSource(t);
     if (seq !== loadSeq) { if (src.objectUrl) URL.revokeObjectURL(src.objectUrl); return; }
     objectUrl = src.objectUrl;
-    peaks.value = placeholderPeaks();
-    peakDecoder.invalidate(seq);
     try {
       await e.load(src.srcUrl, seconds, src.fallbackUrl);
       if (seq !== loadSeq) return;
@@ -132,7 +126,6 @@ export const usePlaybackStore = defineStore('playback', () => {
         duration.value = d;
         useLibraryStore().correctDuration(t.id, d);
       }
-      peakDecoder.schedule(src.blob || src.srcUrl, seq, p => { if (seq === loadSeq) peaks.value = p; });
     } catch (err) {
       if (seq !== loadSeq) return;
       loading.value = false; console.warn('Audio load status:', err);
@@ -394,7 +387,7 @@ export const usePlaybackStore = defineStore('playback', () => {
   }
 
   return {
-    ...toRefs(region), trackId, duration, playing, loading, volume, activeStem, peaks, queue, currentTrack,
+    ...toRefs(region), trackId, duration, playing, loading, volume, activeStem, queue, currentTrack,
     engine, attachEngine, onDuration, onFrame, checkRegionEnd, loadSettings,
     selectTrack, changeTrack, openRange, playQueue, playNext, togglePlay, playSelection, seekBy, stepBy,
     clickSeek, beginSelection, updateSelection, commitSelection, resizeSelection, endResize, selectAroundPlayhead, clearSelection,

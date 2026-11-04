@@ -1,37 +1,46 @@
 <script setup lang="ts">
 /**
- * Waveform (design-system component): navigation, selection and saved moments in one control.
+ * Waveform (design-system component), built on wavesurfer.js 8 (https://wavesurfer.xyz).
+ *
+ * LIBRARY FIX - the waveform used to be hand-drawn on a <canvas> with its own pointer, drag,
+ * resize and peak-decoding code. That is what wavesurfer.js and its Regions / Hover plugins
+ * already do, tested by many players, so it does that now:
+ *   - wavesurfer draws the bars and the cursor and seeks on click,
+ *   - Regions: drag on empty waveform = new selection; drag its edges = resize; drag its middle
+ *     = move it; saved moments are drawn as fixed, click-through regions,
+ *   - Hover: a line and the time under the pointer.
+ * wavesurfer is bound to the app's single <audio> element (`media`), so it only draws and
+ * listens; loading, playback, loops and logging stay with the playback store.
+ * Example: playing in Library, open Now playing -> the waveform appears at the current
+ * position and the song does not restart or pause.
  *
  * Props
- *   peaks        ≈400 amplitudes, 0–1, laid out on the media duration
+ *   media        the app's <audio> element (from useAudioEngine)
  *   duration     song length in seconds
- *   currentTime  playhead position in seconds (pass the media clock, updated every frame)
+ *   currentTime  playhead position in seconds (for the slider's accessible value)
  *   selection    { a, b } in seconds, or null
  *   saved        saved moments of this song: [{ id, a, b }]
  * Emits
  *   seek(sec)            click without drag
- *   select-start         a drag passed the 6 px threshold
- *   select(a, b)         while dragging (unordered; the consumer orders them)
+ *   select-start         a drag on empty waveform started a new selection
+ *   select(a, b)         while dragging
  *   select-end           drag released
- *   resize(a, b)         an edge of the selection is being dragged (ordered)
- *   resize-end           edge drag released
+ *   resize(a, b)         the selection's edge or body is being dragged
+ *   resize-end           that drag was released
  *   step(deltaSec)       ← / → keys: −5 / +5 (Shift+← / → moves the selection's end by 1 s)
  *   select-around        Enter: select ±10 s around the playhead
- *   saved-click(id)      a saved-moment dot was clicked
- *
- * Bars are drawn on a <canvas> (one draw per frame is cheap; ~200 rectangles). Colour per bar,
- * in priority order: inside the selection → accent; inside a saved moment → accent-saved;
- * before the playhead → wave-played; else wave-off. Inferred interest is not drawn here:
- * the design system keeps those signals in words, under the waveform.
  */
-import { computed, onBeforeUnmount, onMounted, ref, watchEffect } from 'vue';
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import WaveSurfer from 'wavesurfer.js';
+import RegionsPlugin, { type Region } from 'wavesurfer.js/plugins/regions';
+import HoverPlugin from 'wavesurfer.js/plugins/hover';
 import { formatTime, token } from './format';
 
 interface Range { a: number; b: number }
 interface SavedRange extends Range { id: string }
 
 const props = defineProps<{
-  peaks: number[];
+  media: HTMLMediaElement | null;
   duration: number;
   currentTime: number;
   selection: Range | null;
@@ -47,123 +56,151 @@ const emit = defineEmits<{
   'resize-end': [];
   step: [deltaSec: number];
   'select-around': [];
-  'saved-click': [id: string];
 }>();
 
-const root = ref<HTMLDivElement | null>(null);
-const canvas = ref<HTMLCanvasElement | null>(null);
-const width = ref(0);
-const height = ref(0);
-let colors = { accent: '#8ec5b8', saved: 'rgba(142,197,184,0.45)', played: 'rgba(220,220,224,0.78)', off: '#45454b' };
-let observer: ResizeObserver | null = null;
+/**
+ * Peaks per source URL, kept for the session, so coming back to Now playing draws the
+ * waveform at once instead of downloading and decoding the song again.
+ */
+const peakCache = new Map<string, { peaks: number[][]; duration: number }>();
 
-const dur = computed(() => (props.duration > 0 ? props.duration : 1));
-const x = (sec: number) => (sec / dur.value) * width.value;
+const SEL_ID = 'sel';
+const SAVED_PREFIX = 'saved:';
 
-const band = computed(() => props.selection && {
-  left: x(props.selection.a) - 4 + 'px',
-  width: x(props.selection.b) - x(props.selection.a) + 8 + 'px',
-});
-const playheadLeft = computed(() => Math.min(width.value, x(props.currentTime)) + 'px');
+const host = ref<HTMLDivElement | null>(null);
+let ws: WaveSurfer | null = null;
+let regions: ReturnType<typeof RegionsPlugin.create> | null = null;
+let loadedSrc = '';
+let colors = { selection: 'rgba(142,197,184,0.18)', saved: 'rgba(142,197,184,0.10)' };
 
-onMounted(() => {
-  colors = {
-    accent: token('--accent') || colors.accent,
-    saved: token('--accent-saved') || colors.saved,
-    played: token('--wave-played') || colors.played,
-    off: token('--wave-off') || colors.off,
-  };
-  observer = new ResizeObserver(() => {
-    if (!root.value) return;
-    width.value = root.value.clientWidth;
-    height.value = root.value.clientHeight;
-  });
-  if (root.value) observer.observe(root.value);
-});
-onBeforeUnmount(() => observer?.disconnect());
-
-// Redraws whenever any input changes (the playhead changes every frame while playing).
-watchEffect(() => {
-  const c = canvas.value, W = width.value, H = height.value;
-  if (!c || W <= 0 || H <= 0) return;
-  const dpr = window.devicePixelRatio || 1;
-  if (c.width !== Math.round(W * dpr) || c.height !== Math.round(H * dpr)) {
-    c.width = Math.round(W * dpr); c.height = Math.round(H * dpr);
-  }
-  const ctx = c.getContext('2d');
-  if (!ctx) return;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, W, H);
-  // Bars are 2px wide, 5px centre to centre; the count follows the width so bars never stretch.
-  const N = Math.max(40, Math.floor((W + 3) / 5));
-  const peaks = props.peaks, last = Math.max(0, peaks.length - 1);
-  const sel = props.selection, saved = props.saved, t = props.currentTime, d = dur.value;
-  for (let i = 0; i < N; i++) {
-    const r = (i + 0.5) / N, ts = r * d;
-    const amp = peaks.length ? peaks[Math.floor(r * last)] : 0.05;
-    ctx.fillStyle = (sel && ts >= sel.a && ts <= sel.b) ? colors.accent
-      : saved.some(s => ts >= s.a && ts <= s.b) ? colors.saved
-        : ts <= t ? colors.played : colors.off;
-    const h = Math.max(2, Math.round(amp * (H - 20)));
-    ctx.fillRect(Math.round(r * W) - 1, Math.round((H - h) / 2), 2, h);
-  }
-});
-
-// Pointer: a press that moves more than 6 px is a drag (selection); otherwise a click (seek).
-// RESIZE FIX - a press on either edge of the selection drags that edge instead, so a loop can
-// be extended or shortened without redrawing it.
-// Example: loop 1:10–1:25, drag the right edge to 1:32 → loop 1:10–1:32, still looping.
-let x0: number | null = null;
-let px0 = 0;
-let dragging = false;
-/** Which edge is being dragged; `fixed` is the other edge's time. */
-let edge: { fixed: number } | null = null;
-const nearEdge = ref(false);
-/** The selection edge within reach of the pointer (wider for touch), or null. */
-function edgeAt(e: PointerEvent): 'a' | 'b' | null {
-  const sel = props.selection;
-  if (!sel || !root.value) return null;
-  const px = e.clientX - root.value.getBoundingClientRect().left, reach = e.pointerType === 'touch' ? 16 : 8;
-  const da = Math.abs(px - x(sel.a)), db = Math.abs(px - x(sel.b));
-  return Math.min(da, db) > reach ? null : da < db ? 'a' : 'b';
+/**
+ * The <audio> element switched source (another song, a stem, a fallback URL): draw that one.
+ * The URL must be exactly `media.src` (absolute): wavesurfer then sees the same source and
+ * leaves the element alone instead of replacing it, so playback is not interrupted.
+ * (On creation wavesurfer loads the element's current source by itself; see onMounted.)
+ */
+function loadWave(): void {
+  const el = props.media;
+  if (!ws || !el || !el.src || el.src === loadedSrc) return;
+  loadedSrc = el.src;
+  const cached = peakCache.get(el.src);
+  ws.load(el.src, cached?.peaks, cached?.duration).catch(err => console.warn('Waveform notice:', err));
 }
-function timeAt(e: PointerEvent): number {
-  const r = root.value!.getBoundingClientRect();
-  return Math.max(0, Math.min(dur.value, ((e.clientX - r.left) / Math.max(1, r.width)) * dur.value));
+
+function selRegion(): Region | undefined {
+  return regions?.getRegions().find(r => r.id === SEL_ID);
 }
-function onDown(e: PointerEvent): void {
-  if (e.button !== 0) return;
-  const which = edgeAt(e);
-  edge = which && props.selection ? { fixed: which === 'a' ? props.selection.b : props.selection.a } : null;
-  x0 = timeAt(e); px0 = e.clientX; dragging = false;
-  root.value?.setPointerCapture(e.pointerId);
-}
-function onMove(e: PointerEvent): void {
-  if (x0 === null) { nearEdge.value = !!edgeAt(e); return; }
-  if (edge) {
-    const t = timeAt(e);
-    emit('resize', Math.min(t, edge.fixed), Math.max(t, edge.fixed));
+
+/** Store -> waveform: draw the selection where the store has it. */
+function syncSelection(): void {
+  if (!regions) return;
+  const sel = props.selection, r = selRegion();
+  if (!sel) { r?.remove(); return; }
+  if (r) {
+    if (Math.abs(r.start - sel.a) > 0.01 || Math.abs(r.end - sel.b) > 0.01) r.setOptions({ start: sel.a, end: sel.b });
     return;
   }
-  const t = timeAt(e);
-  if (!dragging && Math.abs(e.clientX - px0) > 6) { dragging = true; emit('select-start'); }
-  if (dragging) emit('select', x0, t);
+  regions.addRegion({ id: SEL_ID, start: sel.a, end: sel.b, color: colors.selection, drag: true, resize: true });
 }
-function onUp(e: PointerEvent): void {
-  if (x0 === null) return;
-  const t = timeAt(e);
-  if (edge) emit('resize-end'); else if (dragging) emit('select-end'); else emit('seek', t);
-  x0 = null; dragging = false; edge = null;
+
+/** Store -> waveform: saved moments as fixed regions the pointer passes through. */
+function syncSaved(): void {
+  if (!regions) return;
+  const want = new Map(props.saved.map(s => [SAVED_PREFIX + s.id, s]));
+  for (const r of regions.getRegions()) {
+    if (r.id.startsWith(SAVED_PREFIX) && !want.has(r.id)) r.remove();
+  }
+  const have = new Set(regions.getRegions().map(r => r.id));
+  for (const [id, s] of want) {
+    if (have.has(id)) continue;
+    const r = regions.addRegion({ id, start: s.a, end: s.b, color: colors.saved, drag: false, resize: false });
+    // Click-through: a click seeks (and the store selects the moment); a drag starts a selection.
+    if (r.element) r.element.style.pointerEvents = 'none';
+    else r.once('render', () => { if (r.element) r.element.style.pointerEvents = 'none'; });
+  }
 }
-function onCancel(): void {
-  if (x0 !== null && edge) emit('resize-end');
-  else if (x0 !== null && dragging) emit('select-end');
-  x0 = null; dragging = false; edge = null;
-}
+
+onMounted(() => {
+  if (!host.value) return;
+  colors = {
+    selection: token('--accent-fill') || colors.selection,
+    saved: colors.saved,
+  };
+  regions = RegionsPlugin.create();
+  loadedSrc = props.media?.src ?? '';
+  const cached = peakCache.get(loadedSrc);
+  ws = WaveSurfer.create({
+    container: host.value,
+    media: props.media ?? undefined,
+    // Cached peaks: drawn at once, no second download and decode of the song.
+    peaks: cached?.peaks,
+    duration: cached?.duration,
+    height: 'auto',
+    waveColor: token('--wave-off') || '#45454b',
+    progressColor: token('--wave-played') || 'rgba(220,220,224,0.78)',
+    cursorColor: token('--playhead') || '#fff',
+    cursorWidth: 1,
+    barWidth: 2,
+    barGap: 3,
+    barRadius: 1,
+    normalize: true,
+    interact: true,
+    plugins: [
+      regions,
+      HoverPlugin.create({
+        lineColor: token('--ink-mute') || '#888',
+        lineWidth: 1,
+        labelBackground: token('--bg-panel') || '#1b1b1f',
+        labelColor: token('--ink') || '#eee',
+        labelSize: 11,
+        formatTimeCallback: formatTime,
+      }),
+    ],
+  });
+
+  ws.on('decode', d => {
+    if (loadedSrc && ws) peakCache.set(loadedSrc, { peaks: ws.exportPeaks({ maxLength: 4000 }), duration: d });
+  });
+  ws.on('interaction', t => emit('seek', t));
+
+  // A drag on empty waveform: Regions makes a new region with its own id.
+  regions.on('region-initialized', r => {
+    if (r.id === SEL_ID || r.id.startsWith(SAVED_PREFIX)) return;
+    emit('select-start');
+    r.on('update', () => emit('select', r.start, r.end));
+  });
+  regions.on('region-created', r => {
+    if (r.id === SEL_ID || r.id.startsWith(SAVED_PREFIX)) return;
+    // The drag is done: drop the plugin's region; the store's selection is drawn as 'sel'.
+    selRegion()?.remove();
+    emit('select', r.start, r.end);
+    r.remove();
+    emit('select-end');
+    syncSelection();
+  });
+  regions.on('region-update', r => { if (r.id === SEL_ID) emit('resize', r.start, r.end); });
+  regions.on('region-updated', r => { if (r.id === SEL_ID) { emit('resize-end'); syncSelection(); } });
+  regions.enableDragSelection({ color: colors.selection }, 6);
+
+  props.media?.addEventListener('loadedmetadata', loadWave);
+  syncSaved();
+  syncSelection();
+});
+
+onBeforeUnmount(() => {
+  props.media?.removeEventListener('loadedmetadata', loadWave);
+  // The <audio> element is the app's, not wavesurfer's: destroy() leaves it playing.
+  ws?.destroy();
+  ws = null; regions = null; loadedSrc = '';
+});
+
+watch(() => props.selection, syncSelection, { deep: true });
+watch(() => props.saved, syncSaved, { deep: true });
+
 function onKey(e: KeyboardEvent): void {
-  const sel = props.selection;
+  const sel = props.selection, dur = props.duration > 0 ? props.duration : 1;
   if (e.shiftKey && sel && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
-    const b = Math.max(sel.a, Math.min(dur.value, sel.b + (e.key === 'ArrowRight' ? 1 : -1)));
+    const b = Math.max(sel.a, Math.min(dur, sel.b + (e.key === 'ArrowRight' ? 1 : -1)));
     emit('resize', sel.a, b); emit('resize-end'); e.preventDefault();
   } else if (e.key === 'ArrowRight') { emit('step', 5); e.preventDefault(); }
   else if (e.key === 'ArrowLeft') { emit('step', -5); e.preventDefault(); }
@@ -172,123 +209,39 @@ function onKey(e: KeyboardEvent): void {
 </script>
 
 <template>
-  <div class="waveform">
-    <div
-      ref="root"
-      class="wf"
-      :class="{ 'near-edge': nearEdge }"
-      role="slider"
-      tabindex="0"
-      aria-label="Song position. Drag to select a moment"
-      aria-valuemin="0"
-      :aria-valuemax="Math.round(duration)"
-      :aria-valuenow="Math.round(currentTime)"
-      :aria-valuetext="formatTime(currentTime) + ' of ' + formatTime(duration)"
-      @pointerdown="onDown"
-      @pointermove="onMove"
-      @pointerup="onUp"
-      @pointercancel="onCancel"
-      @pointerleave="nearEdge = false"
-      @keydown="onKey"
-    >
-      <div v-if="band" class="band" :style="band"></div>
-      <template v-if="selection">
-        <div class="grip" :style="{ left: x(selection.a) + 'px' }"></div>
-        <div class="grip" :style="{ left: x(selection.b) + 'px' }"></div>
-      </template>
-      <canvas ref="canvas" class="bars"></canvas>
-      <div class="playhead" :style="{ left: playheadLeft }"></div>
-    </div>
-    <div class="dots">
-      <button
-        v-for="s in saved"
-        :key="s.id"
-        type="button"
-        class="dot"
-        :style="{ left: x((s.a + s.b) / 2) + 'px' }"
-        :title="'Saved ' + formatTime(s.a) + ' – ' + formatTime(s.b)"
-        :aria-label="'Saved moment ' + formatTime(s.a) + ' to ' + formatTime(s.b)"
-        @click="emit('saved-click', s.id)"
-      ></button>
-    </div>
-  </div>
+  <div
+    ref="host"
+    class="waveform mdna-wave"
+    role="slider"
+    tabindex="0"
+    aria-label="Song position. Drag to select a moment"
+    aria-valuemin="0"
+    :aria-valuemax="Math.round(duration)"
+    :aria-valuenow="Math.round(currentTime)"
+    :aria-valuetext="formatTime(currentTime) + ' of ' + formatTime(duration)"
+    @keydown="onKey"
+  ></div>
 </template>
 
 <style scoped>
-.wf {
-  position: relative;
+.waveform {
   height: 160px;
   cursor: pointer;
   touch-action: none;
   user-select: none;
 }
-.wf.near-edge { cursor: ew-resize; }
-/* Edge grips: show where to grab to extend or shorten the selection. */
-.grip {
-  position: absolute;
-  top: 50%;
-  width: 4px;
-  height: 32px;
-  margin-left: -2px;
-  transform: translateY(-50%);
-  border-radius: var(--radius-pill);
-  background: var(--accent);
-  pointer-events: none;
-  z-index: 2;
-}
-.bars {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-}
-/* Selection band: accent-fill, accent-line border, radius-sm, 4px wider each side. */
-.band {
-  position: absolute;
-  top: 6px;
-  bottom: 6px;
-  border-radius: var(--radius-sm);
-  background: var(--accent-fill);
-  border: 1px solid var(--accent-line);
-  box-sizing: border-box;
-  pointer-events: none;
-}
-/* Playhead: 1px, 6px taller than the waveform at top and bottom. */
-.playhead {
-  position: absolute;
-  top: -6px;
-  bottom: -6px;
-  width: 1px;
-  background: var(--playhead);
-  pointer-events: none;
-}
-.dots {
-  position: relative;
-  height: 12px;
-}
-/* Saved moment: 5px accent dot centred under it; the button around it is the hit area. */
-.dot {
-  position: absolute;
-  top: -2px;
-  width: 16px;
-  height: 16px;
-  margin-left: -8px;
-  padding: 0;
-  border: 0;
-  background: none;
-  cursor: pointer;
-}
-.dot::after {
-  content: '';
-  position: absolute;
-  left: 5.5px;
-  top: 5.5px;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--accent);
-}
 @media (max-width: 600px) {
-  .wf { height: 120px; }
+  .waveform { height: 120px; }
 }
+</style>
+
+<style>
+/* wavesurfer renders in a shadow root; its parts are styled from outside with ::part(). */
+.mdna-wave ::part(region) { border-radius: var(--radius-sm); }
+.mdna-wave ::part(region-handle-left),
+.mdna-wave ::part(region-handle-right) {
+  border-color: var(--accent) !important;
+  border-width: 3px !important;
+}
+.mdna-wave ::part(hover-label) { font-family: var(--font-sans); border-radius: var(--radius-sm); }
 </style>

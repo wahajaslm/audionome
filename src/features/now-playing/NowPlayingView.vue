@@ -90,7 +90,6 @@ function onLoopButton(): void { playback.toggleLoop(); }
         @resize-end="wf.resizeEnd"
         @step="wf.step"
         @select-around="wf.selectAround"
-        @saved-click="wf.savedClick"
       />
       <SelectionToolbar
         v-if="sel"
