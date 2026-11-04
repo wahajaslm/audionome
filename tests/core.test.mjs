@@ -5,7 +5,6 @@ import { ListeningLog, readMediaTime } from '../src/core/listening.ts';
 import {
   RegionController, enforceMinimumSelection, rangeAround, defaultLoopRange, previewStart, seekTarget, quickSaveRange,
 } from '../src/core/playback.ts';
-import { computePeaks, placeholderPeaks } from '../src/core/waveformPeaks.ts';
 import { toDbMoment, withTags, collectionsOf, newMoment, savedRanges } from '../src/core/moments.ts';
 import { barAt, beatInBar, blockIndexAt, noteName, passageMoments, rankIn } from '../src/core/timeline.ts';
 import { computeSpectrum, fft, hzToMel, melFilters, melToHz, SPEC_SR } from '../src/core/spectrum.ts';
@@ -224,18 +223,6 @@ test('selection helpers match the classic player', () => {
   assert.equal(previewStart(6, { a: 5, b: 9 }), null);
   assert.equal(seekTarget(10, -15, 100), 0);
   assert.equal(seekTarget(95, 15, 100), 100);
-});
-
-test('peaks are laid out on the media duration, not the decoded length (SYNC FIX 9)', () => {
-  const rate = 100, decoded = 10.05, media = 10;
-  const ch = new Float32Array(Math.round(decoded * rate));
-  ch[999] = 1;   // 9.99 s: inside the media, must land in the last bar
-  ch[1004] = 1;  // 10.04 s: encoder padding past the media end, must be ignored
-  const peaks = computePeaks(ch, rate, media, decoded, 400);
-  assert.equal(peaks.length, 400);
-  assert.ok(peaks[399] > 0.99, 'last bar holds the 9.99 s peak');
-  assert.ok(peaks.slice(0, 399).every(v => v < 0.1));
-  assert.equal(placeholderPeaks().length, 400);
 });
 
 test('moments: tags merge without losing earlier ones; rows keep index.html\'s fields', () => {

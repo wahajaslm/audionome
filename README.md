@@ -1,6 +1,6 @@
 # Music DNA Player · M3.1
 
-The player is a **Vue 3 app** (`index.html` → `src/main.ts`) built on the Music DNA design system (`reference/music-dna/design-system/`). It has real playback, persistent listener data and cautious personal insights; nothing about the listener is invented. The original single-page player is kept, working, at **`/legacy/original-player.html`**. Both read the same IndexedDB database (`music-dna-v1`), so songs, moments and settings carry over between them.
+The player is a **Vue 3 app** (`index.html` → `src/main.ts`) built on the Music DNA design system (`reference/music-dna/design-system/`). It has real playback, persistent listener data and cautious personal insights; nothing about the listener is invented. Songs, moments and settings live in the browser's IndexedDB database (`music-dna-v1`).
 
 ## Run
 
@@ -11,7 +11,7 @@ npm install
 npm run dev
 ```
 
-Open the local Vite address (typically `http://localhost:5173`). That is the Vue player. The original player is at `http://localhost:5173/legacy/original-player.html` (also in `npm run build` output). The included **original, 32-second WAV recording** makes the player usable without importing music.
+Open the local Vite address (typically `http://localhost:5173`). That is the player. The included **original, 32-second WAV recording** makes the player usable without importing music.
 
 For authorized local music analysis, run the Python service in a second terminal:
 
@@ -55,7 +55,7 @@ python -m pytest -q tests/python
 npm run build
 ```
 
-See `docs/ACCEPTANCE.md` for manual browser checks. `npm test` covers the Vue app's sources (routes, components, no Dexie in components, honest copy), the legacy page, and the framework-free rules in `src/core` (playback, listening log, DNA, Discover, diagnostics).
+See `docs/ACCEPTANCE.md` for manual browser checks. `npm test` covers the Vue app's sources (routes, components, no Dexie in components, honest copy) and the framework-free rules in `src/core` (playback, listening log, DNA, Discover, diagnostics).
 
 ## Privacy and rights
 

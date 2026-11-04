@@ -2,9 +2,8 @@
 
 **Entry:** `index.html` mounts the Vue 3 app (`src/main.ts`): Pinia stores, hash router, one screen per route (Now playing, Library, My Moments, Discover, My Music DNA, Settings, Feature analysis). Styling uses only the design-system tokens (`src/tokens.css` = `reference/music-dna/design-system/tokens.css`) and its components, implemented in `src/ui/` (Waveform, SelectionToolbar, AskRow, DescribeStrip, PlaybackBar, Chip, Button, NavItem, Toast, TraitRing, TraitRow, MomentRow, Cover, plus Switch and Tabs).
 
-**Layers** (see `src/README.md`): `core/` (no Vue: audio engine, listening log, loop/preview controller, peaks, moment / DNA / Discover / diagnostics rules, Dexie wrappers) ← `stores/` (Pinia, one per domain) ← `features/` and `composables/` ← `router/`, `App.vue`. Components never touch Dexie or the engine; they call store actions, which call `core/`.
+**Layers** (see `src/README.md`): `core/` (no Vue: audio engine, listening log, loop/preview controller, timeline and spectrum, moment / DNA / Discover / diagnostics rules, Dexie wrappers) ← `stores/` (Pinia, one per domain) ← `features/` and `composables/` ← `router/`, `App.vue`. Components never touch Dexie or the engine; they call store actions, which call `core/`.
 
-**Legacy player:** the original single-page player lives at `legacy/original-player.html` with its exact CSS. It imports the same `src/core` engine, listening log and peaks, and the same Dexie schema, so it still plays and shares data with the Vue app. It is built as a second Vite page.
 
 **Playback:** one `NativeAudioEngine` (HTML5 audio) for the whole app. Every timestamp comes from the media clock (`readMediaTime`). Each SYNC FIX / DELAY FIX is explained with an example where it lives in `src/core` or the stores.
 

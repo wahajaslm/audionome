@@ -7,7 +7,7 @@ feature build. Written 2026-11-04 for a fresh session.
 - Research code: `musicdna/` (see `musicdna/README.md`). Pipeline: `musicdna.experiments.pipeline.ResearchPipeline`
   = corpus -> feature stages (`stems, dsp, spatial, vocal, intonation, clap, mert, lyrics`) -> preference pairs -> R01 + R02.
 - All parameters: `musicdna/config.py` + `configs/default.toml` (override with `--set section.field=value`).
-- Player: Vue app at `/` (`src/`, layers in `src/README.md`); legacy player at `/legacy/original-player.html`.
+- Player: Vue app at `/` (`src/`, layers in `src/README.md`).
 - Data was **cleared** on purpose: no corpus features, empty service DB, empty `research-output/`.
   Kept: 60 songs in `data/coke_studio/audio/` + `data/coke_studio/manifest.json`, models in `~/.cache/huggingface`.
 - MERT is approved by the user (CC BY-NC weights, research use, `trust_remote_code`). Hugging Face models load locally (`musicdna/local_models.py`).

@@ -14,9 +14,6 @@ function walk(dir) {
 const vueFiles = walk('src/');
 const app = vueFiles.map(read).join('\n');
 const entry = read('index.html');
-const legacy = read('legacy/original-player.html');
-const original = read('reference/music-dna/player/index.html');
-const style = s => s.split('<style>')[1].split('</style>')[0];
 
 // ---------- the Vue app is the player ----------
 
@@ -26,7 +23,8 @@ test('index.html mounts the Vue app; the classic player is not the entry any mor
   assert.doesNotMatch(entry, /function renderPlayer\(\)/);
   const vite = read('vite.config.ts');
   assert.match(vite, /main: 'index\.html'/);
-  assert.match(vite, /legacy: 'legacy\/original-player\.html'/);
+  assert.doesNotMatch(vite, /legacy/, 'the legacy player is gone');
+  assert.ok(!existsSync(new URL('legacy/original-player.html', root)));
 });
 
 test('every screen is a real Vue route, none is a placeholder', () => {
@@ -79,24 +77,10 @@ test('No fabricated listener traits or demo song data in the Vue app; honest DNA
 });
 
 test('every SYNC FIX / DELAY FIX keeps its explanation in the shared core or the Vue app', () => {
-  const all = app + read('legacy/original-player.html');
-  for (const fix of ['SYNC FIX 1', 'SYNC FIX 2', 'SYNC FIX 5', 'SYNC FIX 6', 'SYNC FIX 7', 'SYNC FIX 8', 'SYNC FIX 9', 'DELAY FIX 3', 'DELAY FIX 4']) {
-    assert.ok(all.includes(fix), fix);
+  for (const fix of ['SYNC FIX 1', 'SYNC FIX 2', 'SYNC FIX 5', 'SYNC FIX 6', 'SYNC FIX 7', 'SYNC FIX 8', 'DELAY FIX 3', 'DELAY FIX 4']) {
+    assert.ok(app.includes(fix), fix);
   }
   assert.ok(app.includes('SYNC FIX 8'), 'SYNC FIX 8 in the Vue playback store');
-});
-
-// ---------- the legacy original player still exists and still works ----------
-
-test('legacy player keeps the exact supplied CSS, shell and its real behaviour', () => {
-  assert.equal(style(legacy), style(original));
-  for (const part of ['<aside class="side"', 'id="nav"', 'id="main"', 'function renderPlayer()', 'function renderDNA()', 'id="ring"', "music.on('timeupdate'", 'db.moments.put(', 'importFiles(files)']) {
-    assert.ok(legacy.includes(part), part);
-  }
-  // Imports were rewritten for the new folder: ../src/…, never ./src/….
-  assert.match(legacy, /from '\.\.\/src\/core\/audioEngine\.ts'/);
-  assert.doesNotMatch(legacy, /from '\.\/src\//);
-  assert.doesNotMatch(legacy, /Ines Moreau|Halflight|Kalbim/);
 });
 
 test('M2 research and safe original sample remain available', () => {

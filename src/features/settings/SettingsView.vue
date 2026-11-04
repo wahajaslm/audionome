@@ -3,7 +3,7 @@
  * Settings (port of index.html's renderSettings() and its 'toggle-tracking',
  * 'toggle-auto-analyze', 'clearevents', 'export' actions) plus the volume that the classic
  * player kept in the playback bar. Every switch is stored in Dexie `settings` through the
- * stores, so it is the same after a reload — and the same in the legacy player.
+ * stores, so it is the same after a reload.
  */
 import { computed, ref } from 'vue';
 import { storeToRefs } from 'pinia';
@@ -129,13 +129,6 @@ async function resetAll() {
           <Button variant="outline" @click="router.push('/admin')">Feature analysis</Button>
           <a class="ext label" :href="STUDIO_URL" target="music-dna-studio" @click.prevent="openStudio()">Research studio ↗</a>
         </div>
-      </li>
-      <li class="row">
-        <div class="info">
-          <div class="item s">Original player</div>
-          <div class="label meta">The earlier single-page player. It reads the same library and moments.</div>
-        </div>
-        <a class="ext label" href="/legacy/original-player.html">Open ↗</a>
       </li>
     </ol>
   </div>

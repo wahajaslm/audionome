@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * PlaybackBar: the one bottom player, docked under every screen (same look as the original
- * player's Spotify-style bar in legacy/original-player.html).
+ * player's Spotify-style bar).
  * Left: track (opens Now playing) + ♡ save the last 20 s. Centre: prev · play · next · loop over
  * a scrubber with times. Right: mute + volume. Below 820px: compact, above the tab bar.
  * Props: title, artist; currentTime, duration (seconds); playing; loop (pressed); volume (0–1).
@@ -106,7 +106,7 @@ function toggleMute() {
 </template>
 
 <style scoped>
-/* Values copied from the original bar (legacy/original-player.html, #spotify-player-bar). */
+/* Values copied from the original player's bar (#spotify-player-bar). */
 .bar {
   position: fixed;
   bottom: 0;
