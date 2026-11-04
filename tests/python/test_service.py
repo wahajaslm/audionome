@@ -330,3 +330,13 @@ def test_deep_encoder_separates_clearly_different_sounds():
     vectors /= np.linalg.norm(vectors, axis=1, keepdims=True)
     similarity = vectors @ vectors.T
     assert similarity[np.triu_indices(3, k=1)].max() < 0.9
+
+
+def test_projection_survives_concurrent_threads():
+    """CRASH FIX: two PaCMAP projections at once used to abort the process (Numba workqueue)."""
+    from concurrent.futures import ThreadPoolExecutor
+    rng = np.random.default_rng(0)
+    batches = [rng.normal(size=(60, 16)).tolist() for _ in range(4)]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(EmbeddingProjector().project_to_2d, batches))
+    assert all(len(r) == 60 for r in results)

@@ -7,7 +7,17 @@ Projection is descriptive, never an emotion classifier or calibrated similarity 
 This code receives embeddings only, not audio, and retains nothing after the request.
 """
 from __future__ import annotations
+import threading
+
 import numpy as np
+
+# CRASH FIX - PaCMAP runs Numba code with parallel=True. Numba's only threading layer here
+# ("workqueue"; tbb/omp are not installed) aborts the whole process when two threads use it at
+# once: "Numba workqueue threading layer is terminating: Concurrent access has been detected".
+# The service runs requests in threads, so the studio building a song map while an analysis
+# built another killed the service and the studio stalled. One PaCMAP at a time; each takes
+# well under a second, so nothing waits noticeably.
+_PACMAP_LOCK = threading.Lock()
 
 
 class EmbeddingProjector:
@@ -43,7 +53,8 @@ class EmbeddingProjector:
         if num_vectors >= self.pacmap_min_vectors:
             import pacmap
             reducer = pacmap.PaCMAP(n_components=k, n_neighbors=min(10, num_vectors - 1), random_state=0)
-            projected = reducer.fit_transform(centered_matrix, init='pca')
+            with _PACMAP_LOCK:
+                projected = reducer.fit_transform(centered_matrix, init='pca')
             self.last_method = 'PaCMAP'
         else:
             from sklearn.decomposition import PCA
