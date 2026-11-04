@@ -1,5 +1,6 @@
 import { onMounted } from 'vue';
-import { ensureDemo } from '../core/repository';
+import { db } from '../data/db';
+import { deleteTrackEverywhere, ensureDemo } from '../core/repository';
 import { scheduleSequentialUploads } from '../core/library';
 import { uploadAudioToCache } from '../intelligence/client';
 import { useLibraryStore } from '../stores/library';
@@ -9,6 +10,14 @@ import { useIntelligenceStore } from '../stores/intelligence';
 import { usePlaybackStore } from '../stores/playback';
 import { useUiStore } from '../stores/ui';
 import { useTimelineStore } from '../stores/timeline';
+
+/**
+ * TEST SONG CLEANUP - while debugging (2026-11-05) a test analysis was sent to the service as
+ * 'probe-test'. The start-up sync copied it into Library as a song called "audio" before it was
+ * removed from the service, so it had no audio: it could not play and showed up in Discover.
+ * It is deleted here, with its analyses, so the sync never brings it back.
+ */
+const LEAKED_TEST_IDS = ['probe-test'];
 
 /**
  * Start-up, in the same order as index.html's initialize(): demo track, settings, library,
@@ -23,6 +32,7 @@ export function useAppBootstrap(): void {
   onMounted(async () => {
     try {
       await ensureDemo();
+      for (const id of LEAKED_TEST_IDS) if (await db.tracks.get(id)) await deleteTrackEverywhere(id);
       await Promise.all([listening.loadSettings(), library.loadSettings(), playback.loadSettings()]);
       await library.load();
       await moments.load();
