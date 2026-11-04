@@ -85,7 +85,9 @@ export const useIntelligenceStore = defineStore('intelligence', () => {
   async function rate(s: Pick<PreferenceSuggestion, 'trackId' | 'startSec' | 'endSec'>, value: 'like' | 'dislike'): Promise<void> {
     await putRating(ratingRow(s, value));
     await refresh();
-    useUiStore().notify('Your feedback has been saved.');
+    useUiStore().notify(value === 'like'
+      ? 'Liked. Discover now ranks passages like this higher.'
+      : 'Noted. Discover now ranks passages like this lower.');
   }
 
   return {

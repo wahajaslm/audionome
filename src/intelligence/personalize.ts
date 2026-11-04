@@ -142,29 +142,37 @@ function backgroundFor(analyses:TrackAnalysis[],modelId:string,labeled:Passage[]
     .filter(s=>!labeled.some(l=>l.trackId===a.trackId&&spanOverlap(l,{...s,trackId:a.trackId})>0))
     .map(s=>s.embedding));
 }
+/**
+ * Up to 3 plain reasons a window resembles the saved passage it matched (Discover's pills).
+ * EVIDENCE FIX - key, tempo and instruments were read only from the top level of descriptors,
+ * which CLAP / multimodal windows do not have, so most suggestions showed no reasons. They now
+ * fall back to the nested musical dimensions, and vocals and texture count too.
+ * Example: two windows in B Minor at 103 and 106 BPM → ['shared B Minor key', 'matching groove (103 BPM)'].
+ */
 function featureEvidence(segment:AudioSegment,ref:AudioSegment):string[] {
+  const d=segment.descriptors,r=ref.descriptors;
+  const near=(a:unknown,b:unknown,tol=0.3)=>typeof a==='number'&&typeof b==='number'&&Number.isFinite(a)&&Number.isFinite(b)&&
+    Math.abs(a-b)/Math.max(Math.abs(a),Math.abs(b),0.05)<tol;
+  const key=(x:AudioSegment['descriptors'])=>x.key||x.dimensions?.melodyHarmony?.key;
+  const tempo=(x:AudioSegment['descriptors'])=>x.tempoBpm||x.dimensions?.rhythmGroove?.tempoBpm;
+  const instruments=(x:AudioSegment['descriptors'])=>x.topInstruments||x.dimensions?.instrumentationTimbre?.topInstruments||[];
+  const vocals=(x:AudioSegment['descriptors'])=>x.vocal_presence??x.dimensions?.vocalsExpression?.presence;
+  const texture=(x:AudioSegment['descriptors'])=>x.dimensions?.instrumentationTimbre?.texture;
+  const list:string[]=[];
+  // Musical traits first: they mean more to a listener than signal measures.
+  if(key(d)&&key(d)===key(r))list.push(`shared ${key(d)} key`);
+  const td=tempo(d),tr=tempo(r);
+  if(td&&tr&&Math.abs(td-tr)<6)list.push(`matching groove (${Math.round(td)} BPM)`);
+  const common=instruments(d).filter(i=>instruments(r).includes(i));
+  if(common.length)list.push(`same instruments (${common.slice(0,2).join(', ')})`);
+  const vd=vocals(d),vr=vocals(r);
+  if(typeof vd==='number'&&typeof vr==='number'&&vd>0.5&&vr>0.5)list.push('vocals up front');
+  if(texture(d)&&texture(d)===texture(r))list.push(`${texture(d)} texture`);
+  // At most two signal measures, in the original order.
   const checks:[keyof AudioSegment['descriptors'],string][]=[
     ['energy','similar energy'],['brightness_hz','similar brightness'],['onset_activity','similar rhythmic activity'],['noisiness','similar tonal/noise balance']];
-  const list = checks.filter(([k])=>{
-    const a=segment.descriptors[k],b=ref.descriptors[k];
-    return typeof a==='number'&&typeof b==='number'&&Number.isFinite(a)&&Number.isFinite(b)&&
-      Math.abs(a-b)/Math.max(Math.abs(a),Math.abs(b),0.05)<0.3;
-  }).slice(0,2).map(([,name])=>name);
-
-  // M3 Musical Structure & Instrument Intelligence evidence
-  if (segment.descriptors.key && ref.descriptors.key && segment.descriptors.key === ref.descriptors.key) {
-    list.push(`shared ${segment.descriptors.key} tonality`);
-  }
-  if (segment.descriptors.tempoBpm && ref.descriptors.tempoBpm && Math.abs(segment.descriptors.tempoBpm - ref.descriptors.tempoBpm) < 6) {
-    list.push(`matching groove (${Math.round(segment.descriptors.tempoBpm)} BPM)`);
-  }
-  if (segment.descriptors.topInstruments && ref.descriptors.topInstruments) {
-    const common = segment.descriptors.topInstruments.filter(inst => ref.descriptors.topInstruments?.includes(inst));
-    if (common.length) {
-      list.push(`instrumentation (${common.slice(0, 2).join(', ')})`);
-    }
-  }
-  return list.slice(0, 3);
+  list.push(...checks.filter(([k])=>near(d[k],r[k])).slice(0,2).map(([,name])=>name));
+  return list.slice(0,3);
 }
 /** Only output real analyzed windows, grouped by compatible embedding model. */
 export function personalRecommendations(analyses:TrackAnalysis[], moments:Moment[],ratings:MomentRating[],limit=15):PreferenceSuggestion[] {

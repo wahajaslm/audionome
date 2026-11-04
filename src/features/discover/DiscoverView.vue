@@ -32,7 +32,20 @@ const { suggestions, analyses, ratings } = storeToRefs(intelligence);
 
 /** "Find more like these" on My Music DNA opens Discover on that trait's tab (?t=1..4). */
 const tab = ref(Number(route.query.t) || 0);
-const rows = computed(() => suggestions.value.filter(s => tab.value === 0 || suggestionFamily(s, moments.value) === tab.value - 1));
+const inTab = (s: PreferenceSuggestion) => tab.value === 0 || suggestionFamily(s, moments.value) === tab.value - 1;
+const same = (a: PreferenceSuggestion, b: PreferenceSuggestion) => a.trackId === b.trackId && a.startSec === b.startSec;
+
+/**
+ * ANSWER STAYS FIX - an answered passage becomes a training example, so the ranker drops it
+ * from the suggestions and the row vanished the moment you pressed "I like it". Rows answered
+ * on this visit now stay where they were, showing the pressed answer, until you leave the page.
+ */
+const answered = ref<{ s: PreferenceSuggestion; at: number }[]>([]);
+const rows = computed(() => {
+  const list = suggestions.value.filter(inTab);
+  for (const a of answered.value) if (inTab(a.s) && !list.some(x => same(x, a.s))) list.splice(Math.min(a.at, list.length), 0, a.s);
+  return list;
+});
 
 /**
  * Honest empty state: says which input is missing instead of showing invented examples.
@@ -49,6 +62,20 @@ const title = (s: PreferenceSuggestion) => library.track(s.trackId)?.title || 'U
 const artist = (s: PreferenceSuggestion) => library.track(s.trackId)?.artist || '';
 const why = (s: PreferenceSuggestion) => whyLine(s.matchingMoment && library.track(s.matchingMoment.trackId)?.title);
 const answer = (s: PreferenceSuggestion) => ratingOf(s, ratings.value);
+async function rate(s: PreferenceSuggestion, value: 'like' | 'dislike') {
+  if (!answered.value.some(a => same(a.s, s))) answered.value.push({ s, at: rows.value.findIndex(x => same(x, s)) });
+  await intelligence.rate(s, value);
+}
+
+/**
+ * Reason pills: how strong the match is, then up to 3 traits it shares with the saved passage it
+ * resembles (from the ranker's evidence). Voice rule: worded as resemblance, never as a feeling.
+ * Example: ['Strong match', 'shared B Minor key', 'matching groove (103 BPM)'].
+ */
+function pills(s: PreferenceSuggestion): string[] {
+  const strength = s.score >= 0.7 ? 'Strong match' : s.score >= 0.5 ? 'Good match' : 'Loose match';
+  return ['Suggested', strength, ...s.evidence];
+}
 const isPlaying = (s: PreferenceSuggestion) => playback.playing && playback.trackId === s.trackId && playback.t >= s.startSec - 0.5 && playback.t <= s.endSec + 0.5;
 
 async function preview(s: PreferenceSuggestion) {
@@ -105,15 +132,15 @@ function selectTab(i: number) {
           :start="s.startSec"
           :end="s.endSec"
           :what="why(s)"
-          :tags="['Suggested']"
+          :tags="pills(s)"
           :playing="isPlaying(s)"
           :song-duration="library.track(s.trackId)?.durationSec"
           :removable="false"
           @play="preview(s)"
           @open="open(s)"
         >
-          <Button size="sm" class="ans" :aria-pressed="answer(s) === 'dislike'" :class="{ on: answer(s) === 'dislike' }" @click="intelligence.rate(s, 'dislike')">Not for me</Button>
-          <Button size="sm" variant="outline" class="ans" :aria-pressed="answer(s) === 'like'" :class="{ on: answer(s) === 'like' }" @click="intelligence.rate(s, 'like')">I like it</Button>
+          <Button size="sm" class="ans" :aria-pressed="answer(s) === 'dislike'" :class="{ on: answer(s) === 'dislike' }" @click="rate(s, 'dislike')">Not for me</Button>
+          <Button size="sm" variant="outline" class="ans" :aria-pressed="answer(s) === 'like'" :class="{ on: answer(s) === 'like' }" @click="rate(s, 'like')">I like it</Button>
         </MomentRow>
       </ol>
     </template>
