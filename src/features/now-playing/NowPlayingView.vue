@@ -36,7 +36,7 @@ const listening = useListeningStore();
 const router = useRouter();
 const wf = useWaveform();
 
-const { sel, loop, loops, t, duration, currentTrack } = storeToRefs(playback);
+const { sel, loop, loops, t, duration, playing, currentTrack } = storeToRefs(playback);
 const { ask, describe, feel, love, note, nudge, explore } = storeToRefs(flow);
 
 useKeyboardShortcuts({ ' ': () => { playback.togglePlay(); } });
@@ -50,6 +50,8 @@ const slot = computed(() => (explore.value && sel.value) ? 'explore' : describe.
 
 /** A saved moment overlapping the selection (offers Remove). */
 const matchedSaved = computed(() => sel.value && moments.savedForCurrent.find(r => overlaps(r, sel.value!)));
+/** A saved moment with this exact range (within 0.5 s): the loop bar shows "Saved". */
+const savedHere = computed(() => sel.value && moments.savedForCurrent.find(r => Math.abs(r.a - sel.value!.a) < 0.5 && Math.abs(r.b - sel.value!.b) < 0.5));
 
 /** "You often come back to this part": an attention hint under the playhead (words, not marks). */
 const activeHint = computed(() => listening.learning
@@ -95,8 +97,13 @@ function onLoopButton(): void { playback.toggleLoop(); }
         :range="sel"
         :duration="duration"
         :loop="loop"
-        @save="flow.saveSelection()"
+        :playing="playing"
+        :exploring="explore"
+        :saved="!!savedHere"
+        @play="playback.playSelection()"
         @loop="onLoopButton"
+        @explore="flow.toggleExplore()"
+        @save="flow.saveSelection()"
         @clear="playback.clearSelection()"
       />
 
@@ -145,9 +152,8 @@ function onLoopButton(): void { playback.toggleLoop(); }
           <Button size="sm" @click="intelligence.dismissCandidate(activeHint.trackId, activeHint.a)">Dismiss</Button>
         </span>
         <span v-else class="guide">Drag across the waveform to pick a passage. Playback never stops.</span>
-        <span v-if="sel && !explore" class="extras">
-          <Button size="sm" @click="flow.toggleExplore()">Explore layers</Button>
-          <Button v-if="matchedSaved" size="sm" @click="flow.removeMoment(matchedSaved.id)">Remove saved moment</Button>
+        <span v-if="sel && matchedSaved" class="extras">
+          <Button size="sm" @click="flow.removeMoment(matchedSaved.id)">Remove saved moment</Button>
         </span>
       </div>
     </div>

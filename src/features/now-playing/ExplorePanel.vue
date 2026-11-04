@@ -12,8 +12,9 @@ import { usePlaybackStore } from '../../stores/playback';
 import { useMomentFlowStore } from '../../stores/momentFlow';
 import { useIntelligenceStore } from '../../stores/intelligence';
 import { useLibraryStore } from '../../stores/library';
-import { inSelection, liveWindow, songRelative } from '../../core/diagnostics';
-import { STEM_REASONS } from '../../core/moments';
+import { inSelection, liveWindow, measuresAt, passageSummary } from '../../core/diagnostics';
+import { FEELINGS, QUALITIES } from '../../core/moments';
+import DescribeStrip from '../../ui/DescribeStrip.vue';
 import Chip from '../../ui/Chip.vue';
 import Button from '../../ui/Button.vue';
 import { formatTime } from '../../ui/format';
@@ -23,7 +24,7 @@ const flow = useMomentFlowStore();
 const intelligence = useIntelligenceStore();
 const library = useLibraryStore();
 const { sel, activeStem, t, loop, loops, trackId } = storeToRefs(playback);
-const { stemReasons } = storeToRefs(flow);
+const { feel, love, note } = storeToRefs(flow);
 
 const STEMS = ['all', 'vocals', 'drums', 'bass', 'other'];
 const STEM_INFO: Record<string, { title: string; sub: string }> = {
@@ -36,11 +37,18 @@ const STEM_INFO: Record<string, { title: string; sub: string }> = {
 
 const analysis = computed(() => intelligence.currentAnalysis);
 const segs = computed(() => analysis.value?.segments ?? []);
-/** The analysis window under the playhead (or the selection's first window). */
-const live = computed(() => (sel.value ? liveWindow(segs.value, sel.value, t.value) : null));
+/** The analysis window centred nearest the playhead (LIVE SYNC FIX). */
+const live = computed(() => liveWindow(segs.value, t.value));
 /** Every window the selection touches, for the strip under the header. */
 const windows = computed(() => (sel.value ? segs.value.map((s, i) => ({ s, i })).filter(({ s }) => inSelection(s, sel.value!)) : []));
-const measures = computed(() => (live.value ? songRelative(segs.value, live.value.s) : []));
+/** Measures blended to the playhead: recomputed every frame while playing. */
+const measures = computed(() => (segs.value.length ? measuresAt(segs.value, t.value) : []));
+/** Exactly the selected passage (LOOP SYNC FIX): averages, key, tempo and its chords in order. */
+const passage = computed(() => (sel.value ? passageSummary(segs.value, sel.value) : null));
+/** The passage's chords, with the one sounding now marked. */
+const chords = computed(() => (passage.value?.chords ?? []).map(c => ({ ...c, now: t.value >= c.from && t.value < c.to })));
+/** Passage average per measure, drawn as a tick on the live bar. */
+const avgLevel = (key: string) => passage.value?.measures.find(m => m.key === key)?.level;
 const analyzingStep = computed(() => (trackId.value ? library.analyzing[trackId.value] : undefined));
 /** Measured values for the live window. */
 const facts = computed(() => {
@@ -48,14 +56,15 @@ const facts = computed(() => {
   if (!sel.value) return [];
   const desc = live.value?.s.descriptors;
   const dims = desc?.dimensions ?? an?.musicalDimensions;
-  const key = desc?.key ?? dims?.melodyHarmony?.key;
-  const chords = desc?.chords?.length ? desc.chords.join(' → ') : dims?.melodyHarmony?.chords?.join(' → ');
-  const tempo = desc?.tempoBpm ?? dims?.rhythmGroove?.tempoBpm;
+  const key = passage.value?.key ?? desc?.key ?? dims?.melodyHarmony?.key;
+  // The passage's chords are shown in time order below; the song-level progression only when there are none.
+  const chordsText = passage.value?.chords.length ? '' : dims?.melodyHarmony?.chords?.join(' → ');
+  const tempo = passage.value?.tempoBpm ?? desc?.tempoBpm ?? dims?.rhythmGroove?.tempoBpm;
   const inst = desc?.topInstruments?.length ? desc.topInstruments.join(', ') : dims?.instrumentationTimbre?.topInstruments?.join(', ');
   const stems = desc?.activeStems ? desc.activeStems.join(' + ') : 'all stems';
   return [
     key && 'Key · ' + key,
-    chords && 'Chords · ' + chords,
+    chordsText && 'Chords · ' + chordsText,
     tempo && tempo + ' BPM',
     inst && 'Instruments · ' + inst,
     stems && stems + ' active',
@@ -105,30 +114,39 @@ function jump(start: number) { if (sel.value) playback.clickSeek(Math.max(start,
       <div v-if="facts.length" class="facts">
         <span v-for="f in facts" :key="f" class="fact caption">{{ f }}</span>
       </div>
+      <div v-if="chords.length" class="chords" aria-label="Chords in this passage; the highlighted one is playing">
+        <span class="caption mlbl">Chords</span>
+        <span v-for="(ch, i) in chords" :key="i" class="chord caption" :class="{ now: ch.now }" :title="formatTime(ch.from) + '–' + formatTime(ch.to)">{{ ch.chord }}</span>
+      </div>
       <div v-if="measures.length" class="measures">
         <div v-for="m in measures" :key="m.key" class="m">
           <span class="caption mlbl">{{ m.label }}</span>
-          <span class="mbar"><span class="mfill" :style="{ width: Math.round(m.level * 100) + '%' }"></span></span>
+          <span class="mbar">
+            <span class="mfill" :style="{ width: Math.round(m.level * 100) + '%' }"></span>
+            <span v-if="avgLevel(m.key) !== undefined" class="mavg" :style="{ left: Math.round(avgLevel(m.key)! * 100) + '%' }"></span>
+          </span>
           <span class="caption mval">{{ show(m.key, m.value) }}</span>
         </div>
-        <span class="caption note">Bars compare this window with the rest of the song.</span>
+        <span class="caption note">Bar: now. Tick: this passage on average. Both compared with the rest of the song.</span>
       </div>
       <div v-else-if="!analysis" class="none">
         <span class="label sub">{{ analyzingStep ? 'Analysing · ' + analyzingStep : 'This song is not analysed yet, so there is nothing measured to show.' }}</span>
         <Button v-if="!analyzingStep && trackId" size="sm" @click="library.analyze(trackId)">Analyze</Button>
       </div>
     </div>
-    <div class="row">
-      <span class="lbl caption">Love</span>
-      <div class="chips">
-        <Chip v-for="r in STEM_REASONS" :key="r" square size="sm" :pressed="stemReasons.includes(r)" @click="flow.toggleStemReason(r)">{{ r }}</Chip>
-      </div>
-    </div>
-    <div class="foot">
-      <span class="caption note">Music DNA learns which musical elements matter to you from your feedback.</span>
-      <Button size="sm" @click="flow.closeExplore()">Close</Button>
-      <Button size="sm" variant="primary" @click="flow.saveExplore()">Save moment</Button>
-    </div>
+    <!-- ONE SAVE PATH: the same Feels / Love / Note strip and the same save as after ♡ Save. -->
+    <DescribeStrip
+      :feelings="FEELINGS"
+      :qualities="QUALITIES"
+      :feel="feel"
+      :love="love"
+      :note="note"
+      @toggle-feel="flow.toggleFeel"
+      @toggle-love="flow.toggleLove"
+      @update:note="v => (note = v)"
+      @cancel="flow.closeExplore()"
+      @done="flow.finishDescribe()"
+    />
   </section>
 </template>
 
@@ -164,8 +182,13 @@ function jump(start: number) { if (sel.value) playback.clickSeek(Math.max(start,
 .measures { display: grid; gap: 6px; margin-top: var(--space-2); }
 .m { display: grid; grid-template-columns: 110px 1fr 70px; align-items: center; gap: var(--space-2); }
 .mlbl { color: var(--ink-sub); }
-.mbar { height: 4px; border-radius: 2px; background: var(--line-strong); overflow: hidden; }
-.mfill { display: block; height: 100%; background: var(--accent); transition: width 300ms ease; }
+.mbar { position: relative; height: 4px; border-radius: 2px; background: var(--line-strong); }
+.mavg { position: absolute; top: -3px; width: 2px; height: 10px; margin-left: -1px; background: var(--ink); border-radius: 1px; }
+.mfill { display: block; height: 100%; border-radius: 2px; background: var(--accent); transition: width 80ms linear; }
+.chords { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-top: var(--space-1); }
+.chords .mlbl { width: 110px; flex: none; }
+.chord { min-width: 34px; text-align: center; padding: 2px 6px; border-radius: var(--radius-sm); color: var(--ink-mute); border: 1px solid transparent; }
+.chord.now { color: var(--accent); border-color: var(--accent-line); background: var(--accent-fill); }
 .mval { color: var(--ink-sub); text-align: right; font-variant-numeric: tabular-nums; }
 .none { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-1); }
 @media (prefers-reduced-motion: reduce) { .mfill { transition: none; } }

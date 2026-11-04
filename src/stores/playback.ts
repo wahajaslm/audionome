@@ -196,10 +196,16 @@ export const usePlaybackStore = defineStore('playback', () => {
     }
   }
 
+  /**
+   * The loop bar's ▶ / ⏸: pauses, or plays the passage — from the playhead when it is inside
+   * the passage, else from its start. Playback carries on past the end unless Loop is on.
+   */
   async function playSelection(): Promise<void> {
     const e = engineRef;
     if (!e || !region.sel) return;
-    region.t = region.sel.a; region.previewEnd = region.sel.b; e.setTime(region.sel.a);
+    if (e.isPlaying()) { e.pause(); useListeningStore().emit('pause'); return; }
+    region.previewEnd = null;
+    if (!contains(region.sel, region.t)) { region.t = region.sel.a; e.setTime(region.sel.a); }
     try { await e.play(); useListeningStore().emit('play'); } catch (err) { console.warn(err); }
   }
 

@@ -41,6 +41,17 @@ export const useMomentsStore = defineStore('moments', () => {
     return m.id;
   }
 
+  /**
+   * NO DUPLICATES FIX - Save (and Save in Explore) used to add a new moment on every press, so
+   * saving one loop twice gave two moments. This returns the saved moment with the same range
+   * (within 0.5 s), or adds one. Example: save 0:44–1:09, press Save again → same id.
+   */
+  function ensure(r: Range): { id: string | null; isNew: boolean } {
+    const trackId = usePlaybackStore().trackId;
+    const same = moments.value.find(m => m.trackId === trackId && Math.abs(m.startSec - r.a) < 0.5 && Math.abs(m.endSec - r.b) < 0.5);
+    return same ? { id: same.id, isNew: false } : { id: add(r), isNew: true };
+  }
+
   /** Saves a moment for any track (e.g. confirming an attention hint). */
   function addForTrack(trackId: string, r: Range, note = ''): string {
     const m = { ...newMoment(trackId, r), note };
@@ -103,5 +114,6 @@ export const useMomentsStore = defineStore('moments', () => {
     await useIntelligenceStore().refresh();
   }
 
-  return { moments, savedForCurrent, load, add, addForTrack, applyTags, edit, correctTrait, play, playAll, remove };
+  return {
+    ensure, moments, savedForCurrent, load, add, addForTrack, applyTags, edit, correctTrait, play, playAll, remove };
 });

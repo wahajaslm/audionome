@@ -254,7 +254,7 @@ test('moments: tags merge without losing earlier ones; rows keep index.html\'s f
 // ---------- phase 2: rules behind Library, My Moments, Discover, My Music DNA, Feature analysis ----------
 import { computeTraits, traitShare, traitLevel, levelWord, ringLayout, portraitParts, evidenceNote, withoutTrait } from '../src/core/dna.ts';
 import { suggestionFamily, whyLine, ratingRow, ratingOf, DISCOVER_TABS } from '../src/core/discover.ts';
-import { visibleWindows, slopeTag, windowSummary, dmerRows, studioUrl, liveWindow, songRelative } from '../src/core/diagnostics.ts';
+import { visibleWindows, slopeTag, windowSummary, dmerRows, studioUrl, liveWindow, valueAt, chordIndexAt, measuresAt, passageSummary } from '../src/core/diagnostics.ts';
 import { inTab, withEdits, totalSeconds, COLLECTIONS } from '../src/core/moments.ts';
 
 const mo = (id, qualities = [], feelings = [], trackId = 't1', startSec = 10, endSec = 20) =>
@@ -327,15 +327,16 @@ test('diagnostics: windows follow the selection, slope words, summary values, of
   assert.match(studioUrl('original-demo'), /\/api\/studio\/demo$/);
 });
 
-test('diagnostics: the live window follows the playhead inside the selection; measures are song-relative', () => {
-  const segs = Array.from({ length: 10 }, (_, i) => ({ startSec: i * 12, endSec: i * 12 + 12, descriptors: { energy: 0.05 + i * 0.02 } }));
-  const sel = { a: 30, b: 70 };
-  assert.equal(liveWindow(segs, sel, 50).i, 4, 'playhead 0:50 → window 0:48–1:00');
-  assert.equal(liveWindow(segs, sel, 100).i, 2, 'playhead outside → first window of the selection');
-  assert.equal(liveWindow(segs, { a: 500, b: 510 }, 0), null);
-  const e = songRelative(segs, segs[0]).find(m => m.key === 'energy');
-  assert.equal(e.level, 0);
-  assert.equal(songRelative(segs, segs[9])[0].level, 1);
+test('diagnostics: the live window is the one centred on the playhead; measures blend between windows', () => {
+  // Overlapping windows like the service makes: 12 s long, one every 6 s.
+  const segs = Array.from({ length: 10 }, (_, i) => ({ startSec: i * 6, endSec: i * 6 + 12, descriptors: { energy: 0.1 * (i + 1), chords: ['Am', 'F', 'C', 'G'] } }));
+  assert.equal(liveWindow(segs, 13).i, 1, '0:13 → window 6–18 (centre 0:12), not 0–12');
+  assert.equal(liveWindow([], 5), null);
+  assert.ok(Math.abs(valueAt(segs, 'energy', 9) - 0.15) < 1e-9, 'halfway between centres 0:06 and 0:12');
+  assert.equal(valueAt(segs, 'energy', 0), 0.1);
+  assert.equal(chordIndexAt(segs[1], 13), 2, 'third quarter of 6–18 → C');
+  const m = measuresAt(segs, 6).find(x => x.key === 'energy');
+  assert.equal(m.level, 0);
 });
 
 test('library: songs saved with an expiring YouTube proxy URL play from the stream endpoint instead', async () => {
@@ -346,5 +347,17 @@ test('library: songs saved with an expiring YouTube proxy URL play from the stre
   assert.equal(fallbackUrl({ id: 'youtube-abc', streamPlaybackUrl: fresh }), fresh);
   assert.match(fallbackUrl({ id: 'youtube-abc' }), /\/api\/stream\/audio\/youtube-abc\?src=/, 'synced YouTube song without a link');
   assert.match(fallbackUrl({ id: 'imported-1' }), /\/api\/audio\/imported-1$/);
+});
+
+test('diagnostics: a loop that matches no analysis window is summarised exactly over its own range', () => {
+  const segs = Array.from({ length: 10 }, (_, i) => ({ startSec: i * 6, endSec: i * 6 + 12,
+    descriptors: { energy: i < 5 ? 0.1 : 0.3, key: i < 5 ? 'A Minor' : 'C Major', tempoBpm: 120, chords: ['Am', 'F', 'C', 'G'] } }));
+  const p = passageSummary(segs, { a: 13, b: 25 });
+  assert.equal(p.key, 'A Minor', 'most of 0:13–0:25 is heard in A minor windows');
+  assert.equal(p.tempoBpm, 120);
+  assert.equal(p.chords[0].from, 13, 'chords start at the loop start, not at a window start');
+  assert.ok(p.chords.at(-1).to <= 25, 'and end at the loop end');
+  assert.ok(p.chords.every((c, i) => i === 0 || c.chord !== p.chords[i - 1].chord), 'repeats are merged');
+  assert.equal(passageSummary([], { a: 0, b: 5 }), null);
 });
 

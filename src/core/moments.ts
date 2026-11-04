@@ -82,4 +82,3 @@ export function savedRanges(moments: Moment[], trackId: string | null): SavedRan
 export const FEELINGS = ['♡ Love', 'Chills', 'Nostalgia', 'Excitement', 'Calm', 'Sadness', 'Other'];
 export const QUALITIES = ['Vocals', 'Melody', 'Harmony', 'Rhythm', 'Lyrics', 'Instruments', 'Build-up', 'Drop', 'Atmosphere'];
 export const ASK_DEFAULT_CHIPS = ['Vocals', 'Melody', 'Instruments', 'Rhythm', 'Build-up'];
-export const STEM_REASONS = ['Melody', 'Harmony', 'Groove', 'Instruments', 'Vocals', 'The combination'];

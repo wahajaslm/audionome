@@ -27,28 +27,33 @@ export const useMomentFlowStore = defineStore('momentFlow', () => {
   const nudged = ref(false);
   const justSaved = ref(false);
   const explore = ref(false);
-  const stemReasons = ref<string[]>([]);
 
   /** 1 listen · 2 selected · 3 describing · 4 saved. */
   const step = computed(() => (describe.value || ask.value) ? 3 : usePlaybackStore().sel ? 2 : justSaved.value ? 4 : 1);
 
   function resetForTrack(): void {
-    describe.value = null; ask.value = null; explore.value = false; stemReasons.value = [];
+    describe.value = null; ask.value = null; explore.value = false;
     justSaved.value = false;
   }
 
-  /** Save: stores the selection and asks one question about it. */
+  /**
+   * Save (the loop bar's ♡): stores the selection once and asks one question about it.
+   * KEEP LOOPING FIX - saving used to clear the selection and stop the loop you were
+   * listening to. Now the passage stays selected and keeps looping.
+   * When Explore is open its own Feels / Love section is the question, so no ask row.
+   */
   function saveSelection(): void {
     const playback = usePlaybackStore();
     const r = playback.sel;
     if (!r) return;
-    const id = useMomentsStore().add(r);
+    const { id, isNew } = useMomentsStore().ensure(r);
     if (!id) return;
+    nudge.value = false; justSaved.value = true;
+    useUiStore().notify(isNew ? 'Saved to My Moments' : 'Already in My Moments', 'View', '/moments');
+    if (explore.value) return;
     const aq = useIntelligenceStore().questionFor(playback.trackId || '', r.a, r.b);
-    playback.sel = null; playback.loop = false; playback.loops = 0;
-    describe.value = null; nudge.value = false; justSaved.value = true;
+    describe.value = null;
     ask.value = { q: aq.question, chips: aq.chips, a: r.a, b: r.b, mid: id };
-    useUiStore().notify('Saved to My Moments', 'View', '/moments');
   }
 
   /** Heart in the playback bar: saves the last 20 s. */
@@ -87,15 +92,19 @@ export const useMomentFlowStore = defineStore('momentFlow', () => {
 
   function closeDescribe(): void { describe.value = null; }
 
-  /** Done in the describe strip: merges feelings, qualities and the note into the moment. */
+  /**
+   * Done in the describe strip or in Explore (ONE SAVE PATH): merges feelings, qualities and
+   * the note into the moment for that passage, saving it first if needed. Both places use the
+   * same chips and this same function, so a moment means the same thing wherever it was made.
+   */
   function finishDescribe(): void {
-    const D = describe.value;
+    const D = describe.value ?? usePlaybackStore().sel;
     if (!D) return;
     const moments = useMomentsStore();
-    const id = D.mid || moments.add(D);
+    const id = describe.value?.mid || moments.ensure(D).id;
     if (!id) return;
     const q = moments.applyTags(id, feel.value, love.value, note.value);
-    describe.value = null; justSaved.value = true; feel.value = []; love.value = []; note.value = '';
+    describe.value = null; explore.value = false; justSaved.value = true; feel.value = []; love.value = []; note.value = '';
     useUiStore().notify('Saved your moment' + (q.length ? ' · ' + q.join(', ') : ''), 'View', '/moments');
   }
 
@@ -111,26 +120,13 @@ export const useMomentFlowStore = defineStore('momentFlow', () => {
   function toggleExplore(): void {
     if (!usePlaybackStore().sel) return;
     explore.value = !explore.value;
-    describe.value = null; nudge.value = false;
+    describe.value = null; ask.value = null; nudge.value = false;
+    if (explore.value) { feel.value = []; love.value = []; note.value = ''; }
   }
 
   function closeExplore(): void {
     explore.value = false;
     usePlaybackStore().restoreFullMix();
-  }
-
-  const toggleStemReason = (v: string) => { stemReasons.value = toggle(stemReasons.value, v); };
-
-  /** Save from the Explore panel, tagging the chosen musical reasons. */
-  function saveExplore(): void {
-    const playback = usePlaybackStore();
-    const r = playback.sel;
-    if (!r) return;
-    const moments = useMomentsStore();
-    const mid = moments.add(r);
-    if (mid && stemReasons.value.length) moments.applyTags(mid, [], stemReasons.value, 'Musical structure & instrument exploration');
-    explore.value = false; justSaved.value = true;
-    useUiStore().notify('Saved moment with musical layers: ' + (stemReasons.value.join(', ') || 'Explored moment'));
   }
 
   /** Remove a saved moment from the player. */
@@ -143,8 +139,8 @@ export const useMomentFlowStore = defineStore('momentFlow', () => {
   }
 
   return {
-    ask, describe, feel, love, note, nudge, nudged, justSaved, explore, stemReasons, step,
+    ask, describe, feel, love, note, nudge, nudged, justSaved, explore, step,
     resetForTrack, saveSelection, quickSave, answer, skipAsk, more, toggleFeel, toggleLove, closeDescribe,
-    finishDescribe, onLoopCycle, dismissNudge, toggleExplore, closeExplore, toggleStemReason, saveExplore, removeMoment,
+    finishDescribe, onLoopCycle, dismissNudge, toggleExplore, closeExplore, removeMoment,
   };
 });
