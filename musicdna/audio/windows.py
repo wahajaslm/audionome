@@ -25,6 +25,17 @@ class WindowGrid:
             index += 1
         return grid
 
+    def context_span(self, start_sec: float, end_sec: float, duration_sec: float,
+                     preroll_sec: float | None = None, postroll_sec: float | None = None) -> tuple[float, float]:
+        """The window widened by pre/post-roll, clipped to the recording (never padded with silence).
+
+        Example (defaults 1 s / 1 s): window 12-24 s of a 466 s song -> analyse 11-25 s.
+        The first window 0-12 s -> 0-13 s, because there is no audio before 0 s.
+        """
+        before = self.settings.preroll_sec if preroll_sec is None else preroll_sec
+        after = self.settings.postroll_sec if postroll_sec is None else postroll_sec
+        return max(0.0, start_sec - before), min(duration_sec, end_sec + after)
+
     def index(self, start_sec: float) -> int:
         return int(round(start_sec / self.settings.hop_sec))
 

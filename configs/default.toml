@@ -6,6 +6,9 @@
 window_sec = 12.0
 hop_sec = 6.0
 min_window_sec = 0.5
+preroll_sec = 1.0
+postroll_sec = 1.0
+embedding_context_sec = 0.0
 
 # Sample rates and limits for decoding.
 [audio]

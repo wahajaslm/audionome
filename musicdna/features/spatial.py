@@ -35,16 +35,29 @@ class SpatialAnalyzer:
             raise ValueError('spatial.band_edges_hz needs exactly 4 edges: low | mid | high')
         self.settings = settings
 
-    def describe(self, stereo: np.ndarray, sample_rate: int) -> SpatialDescriptors:
-        """`stereo` is shape (2, n)."""
-        left, right = stereo[0].astype(np.float64), stereo[1].astype(np.float64)
-        mid, side = (left + right) / 2.0, (left - right) / 2.0
+    def describe(self, stereo: np.ndarray, sample_rate: int, core: tuple[float, float] | None = None) -> SpatialDescriptors:
+        """`stereo` is shape (2, n). `core` is the window's (start, end) in seconds inside the clip.
+
+        With pre/post-roll, spectra are computed on the whole clip so the first and last FFT frames
+        of the window are complete; only frames centred in the core are summarised.
+        Example: window 12-24 s (song time), clip 11-25 s, core (1.0, 13.0) in clip time. The FFT frame
+        centred at song time 12.02 s now contains real audio from 11.97 s instead of being cut off.
+        """
+        core_start, core_end = core if core is not None else (0.0, stereo.shape[-1] / sample_rate)
+        core_samples = stereo[:, int(core_start * sample_rate):int(core_end * sample_rate)]
+        left, right = core_samples[0].astype(np.float64), core_samples[1].astype(np.float64)
         energy_left, energy_right = float(np.sum(left ** 2)), float(np.sum(right ** 2))
         if energy_left + energy_right <= 1e-12:
             return SpatialDescriptors(0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         correlation = float(np.corrcoef(left, right)[0, 1]) if np.std(left) > 0 and np.std(right) > 0 else 1.0
 
-        mid_power, side_power = self._power(mid), self._power(side)
+        full_left, full_right = stereo[0].astype(np.float64), stereo[1].astype(np.float64)
+        mid_power, side_power = self._power((full_left + full_right) / 2.0), self._power((full_left - full_right) / 2.0)
+        hop = self.settings.n_fft // 2
+        centres = (np.arange(mid_power.shape[0]) * hop + self.settings.n_fft / 2) / sample_rate
+        in_core = (centres >= core_start) & (centres < core_end)
+        if in_core.any():
+            mid_power, side_power = mid_power[in_core], side_power[in_core]
         frequencies = np.fft.rfftfreq(self.settings.n_fft, d=1.0 / sample_rate)
         edges = self.settings.band_edges_hz
         band_widths = [self._side_share(side_power[:, band], mid_power[:, band])

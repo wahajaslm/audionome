@@ -30,6 +30,13 @@ class WindowConfig:
     window_sec: float = 12.0
     hop_sec: float = 6.0
     min_window_sec: float = 0.5  # shorter tail windows are dropped
+    # Extra real audio analysed before/after each window so frame features have context at the
+    # edges; results still describe only the window. Clipped at the start/end of the song.
+    preroll_sec: float = 1.0
+    postroll_sec: float = 1.0
+    # Context given to neural embeddings (CLAP/MERT) on each side. 0 = window audio only.
+    # Kept separate because extra context makes neighbouring windows share audio; R01 can compare.
+    embedding_context_sec: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -150,6 +157,9 @@ class Config:
         result = replace(self, **changes)
         if result.windows.hop_sec <= 0 or result.windows.window_sec <= 0:
             raise ValueError('windows.window_sec and windows.hop_sec must be positive')
+        w = result.windows
+        if min(w.preroll_sec, w.postroll_sec, w.embedding_context_sec) < 0:
+            raise ValueError('windows.preroll_sec, postroll_sec and embedding_context_sec cannot be negative')
         return result
 
     def to_dict(self) -> dict[str, Any]:

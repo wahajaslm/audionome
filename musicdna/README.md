@@ -100,7 +100,7 @@ python -m musicdna.corpus.feature_store --set vocal.hop=160 --set vocal.vibrato_
 
 | Section | Controls |
 | :--- | :--- |
-| `windows` | window length, hop, shortest tail window. One grid for every feature, signal and experiment |
+| `windows` | window length, hop, shortest tail window, pre/post-roll context, embedding context. One grid for every feature, signal and experiment |
 | `audio` | analysis and stereo sample rates, max duration, Demucs model |
 | `vocal` | pYIN rate/hop/range, vibrato band, ornament prominence and width, glide step limit |
 | `spatial` | the 4 band edges for low/mid/high stereo width, FFT size |

@@ -25,7 +25,8 @@ from musicdna.features.vocal import PitchContour, VocalDescriptors, VocalPitchAn
 SAMPLE_RATE: int = DEFAULT.audio.analysis_sr
 WINDOW_SECONDS: float = DEFAULT.windows.window_sec
 HOP_SECONDS: float = DEFAULT.windows.hop_sec
-FEATURE_VERSION: str = 'librosa-m3-segment-v3'
+# v4: pre/post-roll context (windows.preroll_sec / postroll_sec); v3 values are not comparable.
+FEATURE_VERSION: str = 'librosa-m3-segment-v4'
 DSP_REFERENCE_FILE: Path = Path(__file__).resolve().parent / 'dsp_reference.json'
 
 
@@ -122,6 +123,17 @@ class AcousticFeatureExtractor:
         # True = load the bundled reference; None/False = no z-scoring (used to compute the reference).
         self.dsp_reference = load_dsp_reference() if dsp_reference is True else (dsp_reference or None)
 
+    def context_clip(self, waveform: np.ndarray, sample_rate: int, start_sec: float,
+                     end_sec: float) -> tuple[np.ndarray, tuple[float, float]]:
+        """The window plus pre/post-roll, and where the window sits inside it (pass as `core`).
+
+        Example: window 12-24 s with 1 s / 1 s roll -> clip of 11-25 s, core = (1.0, 13.0).
+        """
+        duration = len(waveform) / sample_rate
+        context_start, context_end = self.grid.context_span(start_sec, end_sec, duration)
+        clip = waveform[int(context_start * sample_rate):int(context_end * sample_rate)]
+        return clip, (start_sec - context_start, end_sec - context_start)
+
     def extract_window_features(
         self,
         audio_clip: np.ndarray,
@@ -129,19 +141,50 @@ class AcousticFeatureExtractor:
         separated_clip_stems: dict[str, np.ndarray] | None = None,
         beat_times: np.ndarray | None = None,
         vocal_pitch: VocalDescriptors | None = None,
+        core: tuple[float, float] | None = None,
     ) -> tuple[dict[str, Any], list[float]]:
-        """Computes descriptors and normalized 25-D DSP embedding vector for a window."""
-        rms_frames = librosa.feature.rms(y=audio_clip, frame_length=2048, hop_length=512)[0]
-        rms_energy = _compute_scalar_mean(rms_frames)
-        spectral_centroid = _compute_scalar_mean(librosa.feature.spectral_centroid(y=audio_clip, sr=sample_rate, hop_length=512))
-        spectral_flatness = _compute_scalar_mean(librosa.feature.spectral_flatness(y=audio_clip, hop_length=512))
-        zero_crossing_rate = _compute_scalar_mean(librosa.feature.zero_crossing_rate(audio_clip, hop_length=512))
-        onset_strengths = librosa.onset.onset_strength(y=audio_clip, sr=sample_rate, hop_length=512)
-        onset_activity = _compute_scalar_mean(onset_strengths)
-        chroma_vector = np.mean(librosa.feature.chroma_stft(y=audio_clip, sr=sample_rate, hop_length=512), axis=1)
-        mfcc_vector = np.mean(librosa.feature.mfcc(y=audio_clip, sr=sample_rate, n_mfcc=8, hop_length=512), axis=1)
+        """Computes descriptors and normalized 25-D DSP embedding vector for a window.
 
-        # 1. Energy intensification slope (crescendo)
+        core: (start, end) in seconds *within audio_clip* of the window being described. When the
+        clip includes pre/post-roll (see `WindowGrid.context_span`), every frame-level feature is
+        computed on the whole clip and then averaged over the core frames only.
+
+        Why: features such as onset strength and spectral flux compare each frame with the one
+        before it. A clip that starts in the middle of a held note has no "before", so its first
+        frames look like a sudden new sound.
+        Example: a steady tone across 0-30 s, window 12-24 s. Without pre-roll the window starts
+        with a false onset at 12.0 s; with 1 s of pre-roll the analysis hears 11-12 s, sees the
+        tone was already sounding, and reports no onset. The values still describe only 12-24 s.
+        Stems, structure and beats stay on the core span (they have their own track-level context).
+        """
+        hop = 512
+        core_start, core_end = core if core is not None else (0.0, len(audio_clip) / sample_rate)
+        core_clip = audio_clip[int(core_start * sample_rate):int(core_end * sample_rate)]
+
+        def frame_mask(n_frames: int) -> np.ndarray:
+            """Frames whose centre lies inside the core span (librosa frames are centred)."""
+            centres = librosa.frames_to_time(np.arange(n_frames), sr=sample_rate, hop_length=hop)
+            mask = (centres >= core_start) & (centres < core_end)
+            return mask if mask.any() else np.ones(n_frames, dtype=bool)
+
+        def core_mean(frames: np.ndarray) -> float:
+            """Mean of a (n_frames,) or (n, n_frames) feature over core frames only."""
+            values = frames[..., frame_mask(frames.shape[-1])]
+            return _compute_scalar_mean(values)
+
+        rms_all = librosa.feature.rms(y=audio_clip, frame_length=2048, hop_length=hop)[0]
+        rms_frames = rms_all[frame_mask(rms_all.size)]
+        rms_energy = _compute_scalar_mean(rms_frames)
+        spectral_centroid = core_mean(librosa.feature.spectral_centroid(y=audio_clip, sr=sample_rate, hop_length=hop)[0])
+        spectral_flatness = core_mean(librosa.feature.spectral_flatness(y=audio_clip, hop_length=hop)[0])
+        zero_crossing_rate = core_mean(librosa.feature.zero_crossing_rate(audio_clip, hop_length=hop)[0])
+        onset_activity = core_mean(librosa.onset.onset_strength(y=audio_clip, sr=sample_rate, hop_length=hop))
+        chroma_all = librosa.feature.chroma_stft(y=audio_clip, sr=sample_rate, hop_length=hop)
+        chroma_vector = np.mean(chroma_all[:, frame_mask(chroma_all.shape[1])], axis=1)
+        mfcc_all = librosa.feature.mfcc(y=audio_clip, sr=sample_rate, n_mfcc=8, hop_length=hop)
+        mfcc_vector = np.mean(mfcc_all[:, frame_mask(mfcc_all.shape[1])], axis=1)
+
+        # 1. Energy intensification slope (crescendo), over the core frames
         if rms_frames.size >= 4:
             normalized_time = np.linspace(0.0, 1.0, rms_frames.size)
             polynomial_slope = float(np.polyfit(normalized_time, rms_frames, 1)[0])
@@ -149,28 +192,30 @@ class AcousticFeatureExtractor:
         else:
             energy_slope = 0.0
 
-        # 2. Vocal presence (using vocal stem or band-pass spectral ratio)
+        # 2. Vocal presence (using vocal stem or band-pass spectral ratio), over the core span
+        spectral_magnitude = np.abs(librosa.stft(audio_clip, n_fft=2048, hop_length=hop))
+        core_magnitude = spectral_magnitude[:, frame_mask(spectral_magnitude.shape[1])]
         if separated_clip_stems and 'vocals' in separated_clip_stems:
             vocal_rms = float(np.mean(separated_clip_stems['vocals'] ** 2) ** 0.5)
             vocal_presence = float(np.clip(vocal_rms / max(rms_energy, 1e-6), 0.0, 1.0))
         else:
-            spectral_magnitude = np.abs(librosa.stft(audio_clip, n_fft=2048, hop_length=512))
             fft_frequencies = librosa.fft_frequencies(sr=sample_rate, n_fft=2048)
             vocal_frequency_mask = (fft_frequencies >= 300.0) & (fft_frequencies <= 3400.0)
-            total_spectral_energy = float(np.sum(spectral_magnitude)) or 1.0
-            vocal_presence = float(np.sum(spectral_magnitude[vocal_frequency_mask, :])) / total_spectral_energy
+            total_spectral_energy = float(np.sum(core_magnitude)) or 1.0
+            vocal_presence = float(np.sum(core_magnitude[vocal_frequency_mask, :])) / total_spectral_energy
 
-        # 3. Spectral flux
-        spectral_magnitude = np.abs(librosa.stft(audio_clip, n_fft=2048, hop_length=512))
+        # 3. Spectral flux: change from each frame to the next, kept where the later frame is in the core.
+        # With pre-roll, the first core frame is compared with real audio before the window.
         if spectral_magnitude.shape[1] >= 2:
             normalized_spectrum = spectral_magnitude / (np.linalg.norm(spectral_magnitude, axis=0, keepdims=True) + 1e-8)
-            spectral_flux = float(np.mean(np.linalg.norm(np.diff(normalized_spectrum, axis=1), axis=0)))
+            flux_frames = np.linalg.norm(np.diff(normalized_spectrum, axis=1), axis=0)
+            spectral_flux = _compute_scalar_mean(flux_frames[frame_mask(spectral_magnitude.shape[1])[1:]])
         else:
             spectral_flux = 0.0
 
-        # 4. Five musical dimensions
+        # 4. Five musical dimensions (core span; stems and beats are already sliced to it)
         musical_dimensions = self.structure_analyzer.analyze_dimensions(
-            audio_clip, sample_rate, stems=separated_clip_stems, beat_times=beat_times, vocal_pitch=vocal_pitch
+            core_clip, sample_rate, stems=separated_clip_stems, beat_times=beat_times, vocal_pitch=vocal_pitch
         )
 
         window_descriptors = WindowAcousticDescriptors(
@@ -244,7 +289,7 @@ class AcousticFeatureExtractor:
 
         analysis_segments: list[AudioAnalysisSegment] = []
         for start_time, end_time in self.grid.windows(duration_seconds):
-            clip_waveform = audio_waveform[int(start_time * sample_rate):int(end_time * sample_rate)]
+            clip_waveform, core = self.context_clip(audio_waveform, sample_rate, start_time, end_time)
             clip_stems = None
             if separated_stems:
                 clip_stems = {
@@ -256,7 +301,7 @@ class AcousticFeatureExtractor:
                             if pitch_contour is not None else None)
             descriptors_dict, embedding_vector = self.extract_window_features(
                 clip_waveform, sample_rate, separated_clip_stems=clip_stems, beat_times=window_beats,
-                vocal_pitch=window_pitch,
+                vocal_pitch=window_pitch, core=core,
             )
             analysis_segments.append(AudioAnalysisSegment(
                 start_seconds=round(float(start_offset + start_time), 3),
@@ -323,8 +368,8 @@ def compute_dsp_reference(audio_paths: list[str | Path], out_path: Path = DSP_RE
     for audio_path in audio_paths:
         waveform = load_audio(audio_path, sample_rate, duration_sec=config.audio.max_duration_sec)
         for start_time, end_time in extractor.grid.windows(len(waveform) / sample_rate):
-            clip = waveform[int(start_time * sample_rate):int(end_time * sample_rate)]
-            extractor.extract_window_features(clip, sample_rate)
+            clip, core = extractor.context_clip(waveform, sample_rate, start_time, end_time)
+            extractor.extract_window_features(clip, sample_rate, core=core)
             raw_rows.append(extractor.last_raw_vector)
     matrix = np.stack(raw_rows)
     reference = {

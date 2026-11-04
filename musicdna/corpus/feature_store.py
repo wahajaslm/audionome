@@ -79,9 +79,21 @@ class FeatureStore:
     def windows(self, entry: CorpusEntry) -> list[tuple[float, float]]:
         return self.grid.windows(self.duration(entry))
 
-    def clips(self, entry: CorpusEntry, rate: int, mono: bool = True) -> list[np.ndarray]:
+    def context_clips(self, entry: CorpusEntry, rate: int, mono: bool = True, preroll_sec: float | None = None,
+                      postroll_sec: float | None = None) -> list[tuple[np.ndarray, tuple[float, float]]]:
+        """Each window's audio widened by pre/post-roll, with the window's (start, end) inside the clip.
+
+        Defaults come from windows.preroll_sec / postroll_sec. Example: window 12-24 s with 1 s / 1 s
+        -> clip covering 11-25 s and core (1.0, 13.0). Pass 0 / 0 for the bare window.
+        """
         audio = self.audio(entry, rate, mono)
-        return [audio[..., int(start * rate): int(end * rate)] for start, end in self.windows(entry)]
+        duration = audio.shape[-1] / rate
+        clips = []
+        for start, end in self.windows(entry):
+            context_start, context_end = self.grid.context_span(start, end, duration, preroll_sec, postroll_sec)
+            clip = audio[..., int(context_start * rate): int(context_end * rate)]
+            clips.append((clip, (start - context_start, end - context_start)))
+        return clips
 
     def window_index(self, start_sec: float) -> int:
         return self.grid.index(start_sec)
@@ -148,8 +160,8 @@ class DspStage(FeatureStage):
         from musicdna.features.dsp import AcousticFeatureExtractor
         extractor = AcousticFeatureExtractor(store.config)
         vectors, loudness = [], []
-        for clip in store.clips(entry, extractor.sample_rate):
-            descriptors, vector = extractor.extract_window_features(clip, extractor.sample_rate)
+        for clip, core in store.context_clips(entry, extractor.sample_rate):
+            descriptors, vector = extractor.extract_window_features(clip, extractor.sample_rate, core=core)
             vectors.append(vector)
             loudness.append([descriptors['energy']])
         store.save(entry.video_id, 'dsp', np.array(vectors))
@@ -165,7 +177,7 @@ class SpatialStage(FeatureStage):
     def run(self, store: FeatureStore, entry: CorpusEntry) -> None:
         analyzer = SpatialAnalyzer(store.config.spatial)
         rate = store.config.audio.stereo_sr
-        rows = [analyzer.describe(clip, rate).to_vector() for clip in store.clips(entry, rate, mono=False)]
+        rows = [analyzer.describe(clip, rate, core).to_vector() for clip, core in store.context_clips(entry, rate, mono=False)]
         store.save(entry.video_id, 'spatial', np.array(rows))
 
 
@@ -197,8 +209,13 @@ class EmbeddingStage(FeatureStage):
         self.allow_nc_weights = allow_nc_weights
 
     def run(self, store: FeatureStore, entry: CorpusEntry) -> None:
+        # Embeddings see the whole clip (models take no core span), so their context is a separate
+        # setting, windows.embedding_context_sec (default 0 = window only). Example: 2.0 gives each
+        # 12 s window 16 s of audio; neighbouring windows then share audio, so R01 should compare.
         rate = store.config.audio.stereo_sr
-        store.save(entry.video_id, self.name, np.array(self.encode(store.clips(entry, rate), rate)))
+        context = store.config.windows.embedding_context_sec
+        clips = [clip for clip, _ in store.context_clips(entry, rate, preroll_sec=context, postroll_sec=context)]
+        store.save(entry.video_id, self.name, np.array(self.encode(clips, rate)))
 
     @abstractmethod
     def encode(self, clips: list[np.ndarray], rate: int) -> list[np.ndarray]: ...
