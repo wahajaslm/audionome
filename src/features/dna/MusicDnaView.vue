@@ -1,7 +1,19 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { playerState, showToast, selectTrack } from '../../stores/player';
-import Icon from '../shell/Icon.vue';
+import { storeToRefs } from 'pinia';
+import { useRouter } from 'vue-router';
+import type { Moment } from '../../data/types';
+import { useLibraryStore } from '../../stores/library';
+import { useMomentsStore } from '../../stores/moments';
+import { usePlaybackStore } from '../../stores/playback';
+import { useUiStore } from '../../stores/ui';
+import Icon from '../../ui/Icon.vue';
+
+const library = useLibraryStore();
+const playback = usePlaybackStore();
+const ui = useUiStore();
+const router = useRouter();
+const { moments } = storeToRefs(useMomentsStore());
 
 const definitions = [
   { name: 'Vocals and lyrics', short: 'vocals', label: 'Vocals', keys: ['Vocals', 'Lyrics'], desc: 'The voice and words you explicitly marked' },
@@ -13,9 +25,8 @@ const definitions = [
 const selectedTraitIndex = ref(0);
 
 const computedTraits = computed(() => {
-  const moments = playerState.moments;
   return definitions.map(d => {
-    const items = moments.filter(m => (m.qualities || []).some((q: string) => d.keys.includes(q)));
+    const items = moments.value.filter(m => (m.qualities || []).some((q: string) => d.keys.includes(q)));
     return {
       ...d,
       n: items.length,
@@ -97,18 +108,15 @@ function level(n: number): number {
   return Math.min(4, n);
 }
 
-function playMoment(m: any) {
-  const t = playerState.tracks.find(tr => tr.id === m.trackId);
-  if (t) {
-    selectTrack(t, m.startSec);
-    playerState.activeView = 'player';
-  } else {
-    showToast('This song is no longer in your library.');
-  }
+/** Opens the moment in the player with the passage selected and plays it once. */
+async function playMoment(m: Moment) {
+  if (!library.track(m.trackId)) { ui.notify('This song is no longer in your library.'); return; }
+  router.push('/');
+  await playback.openRange(m.startSec, m.endSec, m.trackId, false);
 }
 
-function trackTitle(m: any): string {
-  return playerState.tracks.find(tr => tr.id === m.trackId)?.title || 'Unknown song';
+function trackTitle(m: Moment): string {
+  return library.track(m.trackId)?.title || 'Unknown song';
 }
 
 function formatTime(sec: number): string {

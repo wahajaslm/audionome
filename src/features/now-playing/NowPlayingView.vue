@@ -1,0 +1,233 @@
+<script setup lang="ts">
+/**
+ * Now playing (design-system layout): cover + title → waveform → selection toolbar →
+ * ask row / describe strip / explore / nudge slot → caption line → playback bar.
+ * Behaviour is ported from index.html's player screen; state lives in the stores.
+ */
+import { computed } from 'vue';
+import { storeToRefs } from 'pinia';
+import { useRouter } from 'vue-router';
+import { usePlaybackStore } from '../../stores/playback';
+import { useMomentFlowStore } from '../../stores/momentFlow';
+import { useMomentsStore } from '../../stores/moments';
+import { useIntelligenceStore } from '../../stores/intelligence';
+import { useLibraryStore } from '../../stores/library';
+import { useListeningStore } from '../../stores/listening';
+import { useWaveform } from '../../composables/useWaveform';
+import { useKeyboardShortcuts } from '../../composables/useKeyboardShortcuts';
+import { ASK_DEFAULT_CHIPS, FEELINGS, QUALITIES } from '../../core/moments';
+import { overlaps } from '../../core/playback';
+import Cover from '../../ui/Cover.vue';
+import Waveform from '../../ui/Waveform.vue';
+import SelectionToolbar from '../../ui/SelectionToolbar.vue';
+import AskRow from '../../ui/AskRow.vue';
+import DescribeStrip from '../../ui/DescribeStrip.vue';
+import PlaybackBar from '../../ui/PlaybackBar.vue';
+import Button from '../../ui/Button.vue';
+import ExplorePanel from './ExplorePanel.vue';
+import { formatTime } from '../../ui/format';
+
+const playback = usePlaybackStore();
+const flow = useMomentFlowStore();
+const moments = useMomentsStore();
+const intelligence = useIntelligenceStore();
+const library = useLibraryStore();
+const listening = useListeningStore();
+const router = useRouter();
+const wf = useWaveform();
+
+const { sel, loop, loops, t, duration, playing, volume, currentTrack } = storeToRefs(playback);
+const { ask, describe, feel, love, note, nudge, explore } = storeToRefs(flow);
+
+useKeyboardShortcuts({ ' ': () => { playback.togglePlay(); } });
+
+const analyzingStep = computed(() => (currentTrack.value ? library.analyzing[currentTrack.value.id] : undefined));
+const analysis = computed(() => intelligence.currentAnalysis);
+
+/** Which panel the slot under the toolbar shows (one at a time, index.html's priority). */
+const slot = computed(() => (explore.value && sel.value) ? 'explore' : describe.value ? 'describe'
+  : ask.value ? 'ask' : (nudge.value && sel.value) ? 'nudge' : null);
+
+/** A saved moment overlapping the selection (offers Remove). */
+const matchedSaved = computed(() => sel.value && moments.savedForCurrent.find(r => overlaps(r, sel.value!)));
+
+/** "You often come back to this part": an attention hint under the playhead (words, not marks). */
+const activeHint = computed(() => listening.learning
+  ? intelligence.interest.find(r => r.n >= 2 && t.value >= r.a && t.value <= r.b) : undefined);
+
+function onLoopButton(): void { playback.toggleLoop(); }
+</script>
+
+<template>
+  <div class="pcol">
+    <header class="track">
+      <Cover :size="96" />
+      <div class="meta">
+        <h1 class="title track-title">{{ currentTrack?.title || 'No track' }}</h1>
+        <div class="artist body">{{ currentTrack?.artist || 'Import audio in Library' }}</div>
+        <div v-if="currentTrack" class="status">
+          <span v-if="analyzingStep" class="pill caption" role="status">◐ {{ analyzingStep }}</span>
+          <button v-else-if="analysis" type="button" class="pill caption" @click="router.push('/admin')">
+            ● Analyzed · {{ analysis.segments.length }} windows · {{ analysis.method }} · View features →
+          </button>
+          <button v-else type="button" class="pill caption" @click="library.analyze(currentTrack.id)">
+            ○ Not analyzed yet · Analyze
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <div class="stage">
+      <Waveform
+        v-bind="wf.props.value"
+        @seek="wf.seek"
+        @select-start="wf.selectStart"
+        @select="wf.select"
+        @select-end="wf.selectEnd"
+        @step="wf.step"
+        @select-around="wf.selectAround"
+        @saved-click="wf.savedClick"
+      />
+      <SelectionToolbar
+        v-if="sel"
+        :range="sel"
+        :duration="duration"
+        :loop="loop"
+        @save="flow.saveSelection()"
+        @loop="onLoopButton"
+        @clear="playback.clearSelection()"
+      />
+
+      <!-- AskRow rule: the slot opens with a 280 ms grid-rows transition; never a modal. -->
+      <div class="slot" :class="{ open: !!slot }">
+        <div class="slot-in">
+          <ExplorePanel v-if="slot === 'explore'" />
+          <DescribeStrip
+            v-else-if="slot === 'describe'"
+            :feelings="FEELINGS"
+            :qualities="QUALITIES"
+            :feel="feel"
+            :love="love"
+            :note="note"
+            @toggle-feel="flow.toggleFeel"
+            @toggle-love="flow.toggleLove"
+            @update:note="v => (note = v)"
+            @cancel="flow.closeDescribe()"
+            @done="flow.finishDescribe()"
+          />
+          <AskRow
+            v-else-if="slot === 'ask' && ask"
+            :question="ask.q"
+            :chips="ask.chips?.length ? ask.chips : ASK_DEFAULT_CHIPS"
+            @answer="flow.answer"
+            @more="flow.more()"
+            @skip="flow.skipAsk()"
+          />
+          <AskRow
+            v-else-if="slot === 'nudge' && sel"
+            :question="'Enjoying this moment? You have played ' + formatTime(sel.a) + ' – ' + formatTime(sel.b) + ' ' + (loops + 1) + ' times.'"
+          >
+            <template #actions>
+              <Button size="sm" @click="flow.dismissNudge()">Not now</Button>
+              <Button size="sm" variant="primary" @click="flow.saveSelection()">Save moment</Button>
+            </template>
+          </AskRow>
+        </div>
+      </div>
+
+      <div class="caption-line label">
+        <span v-if="loop && sel" class="loopflag">Looping {{ formatTime(sel.a) }} – {{ formatTime(sel.b) }}</span>
+        <span v-else-if="activeHint" class="hint">
+          <span>You often come back to this part<template v-if="activeHint.reasons[0]"> · {{ activeHint.reasons[0] }}</template></span>
+          <Button size="sm" @click="intelligence.confirmCandidate(activeHint.trackId, activeHint.a)">Save</Button>
+          <Button size="sm" @click="intelligence.dismissCandidate(activeHint.trackId, activeHint.a)">Dismiss</Button>
+        </span>
+        <span v-else class="guide">Drag across the waveform to pick a passage. Playback never stops.</span>
+        <span v-if="sel && !explore" class="extras">
+          <Button size="sm" @click="flow.toggleExplore()">Explore layers</Button>
+          <Button v-if="matchedSaved" size="sm" @click="flow.removeMoment(matchedSaved.id)">Remove saved moment</Button>
+        </span>
+      </div>
+    </div>
+
+    <PlaybackBar
+      class="pbar"
+      :current-time="t"
+      :duration="duration"
+      :playing="playing"
+      :loop="loop && !!sel"
+      :volume="volume"
+      @save-last="flow.quickSave()"
+      @prev="playback.seekBy(-15)"
+      @toggle-play="playback.togglePlay()"
+      @next="playback.seekBy(15)"
+      @loop="onLoopButton"
+      @volume="playback.setVolume"
+    />
+  </div>
+</template>
+
+<style scoped>
+/* Layout rule "Now playing": centred column; the playback bar sits low and sticks to the bottom. */
+.pcol {
+  max-width: var(--content-max);
+  margin: 0 auto;
+  min-height: calc(100vh - 2 * var(--space-5));
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-6) var(--space-4) 0;
+  box-sizing: border-box;
+}
+.track { display: flex; align-items: center; gap: var(--space-5); }
+.meta { min-width: 0; }
+.title { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+.artist { color: var(--ink-sub); margin-top: var(--space-1); }
+.status { margin-top: var(--space-3); }
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--ink-sub);
+  font-family: var(--font-sans);
+}
+button.pill { cursor: pointer; }
+button.pill:hover { color: var(--ink); border-color: var(--chip-on-line); }
+.stage { margin-top: var(--space-7); }
+.slot {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 280ms ease;
+}
+.slot.open { grid-template-rows: 1fr; }
+.slot-in { min-height: 0; overflow: hidden; }
+.slot.open .slot-in { padding-top: var(--space-2); }
+.caption-line {
+  min-height: 30px;
+  margin-top: var(--space-3);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  color: var(--ink-sub);
+}
+.guide { color: var(--ink-mute); }
+.loopflag { color: var(--accent); font-variant-numeric: tabular-nums; }
+.hint { display: inline-flex; align-items: center; gap: var(--space-1); }
+.extras { margin-left: auto; display: inline-flex; gap: var(--space-1); }
+.pbar { margin-top: auto; position: sticky; bottom: 0; }
+@media (prefers-reduced-motion: reduce) { .slot { transition: none; } }
+/* Below breakpoint-tabs the tab bar (space-8 tall) is fixed at the bottom: the bar sits above it. */
+@media (max-width: 820px) {
+  .pcol { min-height: calc(100vh - var(--space-4) - var(--space-8) - var(--space-5)); padding-top: var(--space-4); }
+  .pbar { bottom: var(--space-8); }
+}
+@media (max-width: 600px) {
+  .track { gap: var(--space-4); }
+  .stage { margin-top: var(--space-5); }
+}
+</style>

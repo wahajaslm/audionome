@@ -1,0 +1,66 @@
+/**
+ * Data access for the Vue app. Stores call these; components never touch Dexie directly.
+ * Same database ('music-dna-v1') and row shapes as index.html, so both UIs share data.
+ */
+import { db, ensureDemo } from '../data/db';
+import type { ListeningEvent, Moment, MomentRating, Track, TrackAnalysis } from '../data/types';
+import { SERVICE } from './library';
+import { toDbMoment } from './moments';
+
+export { ensureDemo };
+
+/** Newest first, like the classic Library. */
+export const loadTracks = (): Promise<Track[]> => db.tracks.orderBy('addedAt').reverse().toArray();
+export const loadMoments = (): Promise<Moment[]> => db.moments.orderBy('createdAt').reverse().toArray();
+
+export async function loadIntelligenceInputs(): Promise<{ analyses: TrackAnalysis[]; ratings: MomentRating[]; events: ListeningEvent[] }> {
+  const [analyses, ratings, events] = await Promise.all([db.analyses.toArray(), db.ratings.toArray(), db.events.toArray()]);
+  return { analyses, ratings, events };
+}
+
+export const putTrack = (t: Track) => db.tracks.put(t);
+export const putMoment = (m: Moment) => db.moments.put(toDbMoment(m));
+export const deleteMoment = (id: string) => db.moments.delete(String(id));
+export const putAnalysis = (a: TrackAnalysis) => db.analyses.put(a);
+export const updateTrackDuration = (id: string, durationSec: number) => db.tracks.update(id, { durationSec }).catch(() => { });
+
+/** Event sink for ListeningLog. */
+export const eventSink = { add: (e: ListeningEvent) => db.events.add(e) };
+
+export async function getSetting<T extends boolean | number | string>(key: string): Promise<T | undefined> {
+  return (await db.settings.get(key))?.value as T | undefined;
+}
+export const putSetting = (key: string, value: boolean | number | string) => db.settings.put({ key, value });
+
+/**
+ * Pulls analyses the local Python service already holds (e.g. from another browser) into
+ * IndexedDB, adding placeholder track rows for unknown ids. Silent when the service is off.
+ * Same merge rules as index.html's refreshLibrary().
+ */
+export async function syncFromAnalysisService(): Promise<void> {
+  try {
+    const res = await fetch(SERVICE + '/api/db/analyses', { signal: AbortSignal.timeout(1800) }).catch(() => null);
+    if (!res || !res.ok) return;
+    const sqlRows: Array<Partial<TrackAnalysis> & { trackId?: string; title?: string; artist?: string }> = await res.json();
+    const existingIds = new Set((await db.tracks.toArray()).map(x => x.id));
+    for (const r of sqlRows) {
+      if (!r.trackId) continue;
+      if (!existingIds.has(r.trackId) && r.trackId !== 'original-demo') {
+        existingIds.add(r.trackId);
+        await db.tracks.put({
+          id: r.trackId,
+          title: (r.title && r.title !== r.trackId) ? r.title : r.trackId,
+          artist: r.artist || 'Your library',
+          durationSec: r.durationSec || 180,
+          mimeType: 'audio/mpeg', source: 'local-file', analysisRight: 'cleared', addedAt: Date.now(),
+        }).catch(() => { });
+      }
+      if (r.method === 'multimodal' || !sqlRows.some(x => x.trackId === r.trackId && x.method === 'multimodal')) {
+        await db.analyses.put({
+          trackId: r.trackId, method: r.method || 'multimodal', modelId: r.modelId || 'multimodal',
+          durationSec: r.durationSec || 32, analyzedAt: Date.now(), segments: r.segments || [],
+        }).catch(() => { });
+      }
+    }
+  } catch { /* service unavailable: keep local data */ }
+}

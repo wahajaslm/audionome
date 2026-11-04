@@ -1,6 +1,14 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import { playerState, loadOnlineStream, showToast } from '../../stores/player';
+import { useRouter } from 'vue-router';
+import { storeToRefs } from 'pinia';
+import { useLibraryStore } from '../../stores/library';
+import { useUiStore } from '../../stores/ui';
+
+const library = useLibraryStore();
+const ui = useUiStore();
+const router = useRouter();
+const { isResolvingStream, isStreamingAnalysis, streamProgress } = storeToRefs(library);
 
 const streamUrl = ref('');
 const exampleUrls = [
@@ -10,14 +18,14 @@ const exampleUrls = [
 
 async function handleLoad() {
   if (!streamUrl.value.trim()) {
-    showToast('Paste a YouTube, SoundCloud or audio link first.');
+    ui.notify('Paste a YouTube, SoundCloud or audio link first.');
     return;
   }
   try {
-    await loadOnlineStream(streamUrl.value.trim());
+    await library.openStream(streamUrl.value.trim());
     streamUrl.value = '';
-    playerState.activeView = 'player';
-  } catch (err: any) {
+    router.push('/');
+  } catch {
     // Handled in store toast
   }
 }
@@ -44,17 +52,17 @@ function selectExample(url: string) {
         class="stream-input body"
         aria-label="Audio or video link"
         placeholder="Paste a YouTube, SoundCloud or audio link…"
-        :disabled="playerState.isResolvingStream"
+        :disabled="isResolvingStream"
         @keyup.enter="handleLoad"
       />
       <!-- Button rule "Primary": ink fill + on-ink text (never the accent). Motion rule: nothing
            loops or pulses on its own, so the spinner was replaced by the button's text. -->
       <button
         class="btn-load body"
-        :disabled="playerState.isResolvingStream || !streamUrl.trim()"
+        :disabled="isResolvingStream || !streamUrl.trim()"
         @click="handleLoad"
       >
-        {{ playerState.isResolvingStream ? 'Opening…' : 'Open' }}
+        {{ isResolvingStream ? 'Opening…' : 'Open' }}
       </button>
     </div>
 
@@ -72,10 +80,10 @@ function selectExample(url: string) {
     </div>
 
     <!-- role="status" so progress is announced; plain ink-sub text, no accent and no pulsing dot. -->
-    <div v-if="playerState.isStreamingAnalysis" class="stream-progress-card" role="status">
+    <div v-if="isStreamingAnalysis" class="stream-progress-card" role="status">
       <div class="prog-title body">Listening through the stream</div>
       <p class="prog-desc label">
-        Part {{ playerState.streamProgress.current }} of {{ playerState.streamProgress.total }}
+        Part {{ streamProgress.current }} of {{ streamProgress.total }}
       </p>
     </div>
   </div>

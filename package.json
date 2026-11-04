@@ -5,20 +5,23 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "tsc --noEmit && vite build",
+    "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "node --test tests/project.test.mjs",
-    "test:model": "node --experimental-strip-types --test tests/personalize.test.mjs"
+    "test": "node --test tests/project.test.mjs && node --experimental-strip-types --test tests/core.test.mjs",
+    "test:model": "node --experimental-strip-types --test tests/personalize.test.mjs",
+    "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
-    "@vitejs/plugin-vue": "^6.0.10",
     "dexie": "^4.0.11",
+    "pinia": "^4.1.0",
     "vue": "^3.5.44",
-    "wavesurfer.js": "^7.9.7"
+    "vue-router": "^4.6.4"
   },
   "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.10",
     "typescript": "^5.7.2",
-    "vite": "^6.0.5"
+    "vite": "^6.0.5",
+    "vue-tsc": "^3.3.14"
   },
   "engines": {
     "node": ">=20.19"

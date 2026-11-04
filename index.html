@@ -972,18 +972,21 @@ button.pill{cursor:pointer;margin:0 10px}
     style="position:absolute;left:-9999px;width:800px;height:1px;overflow:hidden"></div>
 
   <script type="module">
-    import WaveSurfer from 'wavesurfer.js';
-    // WaveSurfer.create( adapter compatibility check
+    // WaveSurfer.create( adapter compatibility check - wavesurfer.js is no longer imported: the
+    // player draws its own bars and the npm dependency was removed (the Vue app uses ui/Waveform.vue).
     import { db, ensureDemo, importFiles, exportProfile } from './src/data/db.ts';
     import { analyzeLocalTrack, intelligenceHealth, saveAnalysisToSQLite, deleteTrackFromSQLite, uploadAudioToCache, fetchPythonDiagnostics } from './src/intelligence/client.ts';
     import { personalRecommendations, attentionCandidates, classifyFavReasons, selectActiveLearningQuestions, synthesizeMusicDnaInsight, evaluatePreferences } from './src/intelligence/personalize.ts';
     import { buildSimilarityMap } from './src/intelligence/map.ts';
     import { resolveStreamUrl, getProxyStreamUrl } from './src/services/streaming.ts';
+    // Shared, framework-free core (also used by the Vue app). Each fix is explained there.
+    import { createNativeAudioEngine } from './src/core/audioEngine.ts';
+    import { ListeningLog, readMediaTime } from './src/core/listening.ts';
+    import { computePeaks } from './src/core/waveformPeaks.ts';
     (function () {
       var DUR = 32;
       let music, objectURL = null, analyses = [], ratings = [], events = [], suggestions = [], candidates = [], audioPeaks = [];
       let loading = false, loadedTrackId = null, loadSeq = 0, playQueue = [], previewEnd = null, analyzingIds = new Set(), analyzeStatus = {};
-      let spanStart = null;
       const sessionId = crypto.randomUUID();
       const uid = () => crypto.randomUUID();
       const current = () => LIB.find(t => t.id === S.trackId);
@@ -1001,38 +1004,19 @@ button.pill{cursor:pointer;margin:0 10px}
       // Example: pausing at 42.731 s used to log positionSec 42.715 (the last drawn frame).
       // Falls back to S.t only while a seek is still waiting for metadata.
       function mediaTime() {
-        return (music && music.hasSource() && !music.hasPendingSeek()) ? music.getCurrentTime() : S.t;
+        return readMediaTime(music, S.t);
       }
-      // DELAY FIX 3 - every saved event used to reload all events and re-rank the whole library
-      // straight away, on the main thread. Pressing play saves a 'play' event, so that heavy work
-      // ran in the very frames where the playhead should start moving: sound started, but the
-      // screen looked frozen for a moment.
-      // Now refreshes are batched: one runs 1 s after the last event, when the browser is idle.
+      // DELAY FIX 3 (batched, idle-time intelligence refresh) and SYNC FIX 1 (listening spans
+      // from 'playing'/'waiting') live in src/core/listening.ts, shared with the Vue app.
       // Example: play, seek, seek, loop within a second -> one refresh instead of four.
-      let intelligenceTimer = null;
-      function scheduleIntelligenceRefresh() {
-        clearTimeout(intelligenceTimer);
-        intelligenceTimer = setTimeout(() => {
-          const run = () => refreshIntelligence().catch(console.warn);
-          if (window.requestIdleCallback) requestIdleCallback(run, { timeout: 2000 }); else run();
-        }, 1000);
-      }
-      function emit(kind, origin = 'user', extra = {}) {
-        if (!S.learning || !S.trackId) return;
-        db.events.add({ id: uid(), trackId: S.trackId, sessionId, kind, origin, at: Date.now(), positionSec: mediaTime(), ...extra })
-          .then(scheduleIntelligenceRefresh).catch(console.warn);
-      }
-      function flushListenSpan(endedBy = 'user_action') {
-        if (spanStart !== null && S.trackId && S.learning) {
-          const now = mediaTime();
-          const fromSec = Math.min(spanStart, now), toSec = Math.max(spanStart, now);
-          const durationSec = Math.round((toSec - fromSec) * 100) / 100;
-          if (durationSec >= 1.0) {
-            emit('listen_span', 'player', { fromSec, toSec, durationSec, endedBy });
-          }
-          spanStart = null;
-        }
-      }
+      const listening = new ListeningLog({
+        sink: db.events, sessionId,
+        context: () => ({ trackId: S.trackId, learning: S.learning }),
+        mediaTime,
+        refresh: () => refreshIntelligence(),
+      });
+      function emit(kind, origin = 'user', extra = {}) { listening.emit(kind, origin, extra); }
+      function flushListenSpan(endedBy = 'user_action') { listening.flushSpan(endedBy); }
       function saveDB(m) { db.moments.put(modelMoment(m)).then(refreshIntelligence).catch(console.warn); }
       function savedForTrack() { S.saved = MOMENTS.filter(m => m.trackId === S.trackId).map(m => ({ id: m.id, a: m.a, b: m.b })); }
       async function refreshIntelligence() {
@@ -1113,18 +1097,9 @@ button.pill{cursor:pointer;margin:0 10px}
           if (seq !== loadSeq) return;
           // SYNC FIX 9 - the 400 waveform bars are laid out on the media's own duration (DUR, from
           // the <audio> element), the same scale the playhead and click-to-seek use.
-          // Before, bars were cut from the decoded buffer length, which can differ from the media
-          // duration by MP3/AAC encoder padding, and the last partial bucket was dropped.
           // Example: media 466.02 s, decoded 466.07 s -> bar 399 now ends exactly at 466.02 s.
-          const ch = decoded.getChannelData(0);
-          const span = Math.min(ch.length, Math.round((DUR || decoded.duration) * decoded.sampleRate));
-          const peaks = Array.from({ length: 400 }, (_, i) => {
-            const from = Math.floor(i * span / 400), to = Math.max(from + 1, Math.floor((i + 1) * span / 400));
-            const stride = Math.max(1, Math.floor((to - from) / 50));
-            let m = 0; for (let k = from; k < Math.min(ch.length, to); k += stride) m = Math.max(m, Math.abs(ch[k])); return m;
-          });
-          const mx = Math.max(.001, ...peaks);
-          audioPeaks = peaks.map(v => .05 + .95 * Math.pow(v / mx, .75));
+          // The computation is shared with the Vue app: src/core/waveformPeaks.ts.
+          audioPeaks = computePeaks(decoded.getChannelData(0), decoded.sampleRate, DUR, decoded.duration);
           if (S.view === 'player') drawWave();
         } catch (e) {
           console.warn('Decode peaks status:', e);
@@ -2912,114 +2887,16 @@ button.pill{cursor:pointer;margin:0 10px}
       });
 
       /* ---------- native HTML5 audio engine (non-blocking instant playback) ---------- */
-      function createNativeAudioEngine() {
-        const el = document.createElement('audio');
-        el.preload = 'auto';
-        document.body.appendChild(el);
-        const listeners = { timeupdate: [], play: [], pause: [], finish: [], playing: [], waiting: [] };
-        let pendingTime = null;
-        let currentFallbackUrl = null;
-        let usedFallback = false;
-        el.addEventListener('loadedmetadata', () => {
-          if (el.duration && Number.isFinite(el.duration) && el.duration > 0) {
-            DUR = el.duration;
-            if (S.view === 'player') drawWave();
-          }
-          if (pendingTime !== null) {
-            try { el.currentTime = pendingTime; } catch (e) { }
-            pendingTime = null;
-          }
-        });
-        el.addEventListener('error', () => {
-          if (el.error && el.error.code === 1) return; // MEDIA_ERR_ABORTED during track switch
-          console.warn('Audio playback notice on source:', el.src, el.error);
-          if (!usedFallback && currentFallbackUrl && el.src !== currentFallbackUrl) {
-            usedFallback = true;
-            const resumeTime = pendingTime !== null ? pendingTime : (S.t || 0);
-            el.src = currentFallbackUrl;
-            el.load();
-            pendingTime = resumeTime;
-            if (S.playing) el.play().catch(() => { });
-          }
-        });
-        el.addEventListener('timeupdate', () => listeners.timeupdate.forEach(fn => fn(el.currentTime || 0)));
-        el.addEventListener('play', () => listeners.play.forEach(fn => fn()));
-        // SYNC FIX 1 - "requested" vs "audible".
-        // 'play' fires the moment play() is called, even while the file is still buffering and
-        // nothing can be heard. 'playing' fires when sound actually starts; 'waiting' fires when
-        // playback stalls to buffer more data.
-        // Example: on a track served over HTTP, you press play at 0:00 wall-clock, the browser
-        // buffers, and sound starts about a second later. Before this fix that silent second
-        // was logged as listening time and the playhead sat still while the UI said "playing".
-        el.addEventListener('playing', () => listeners.playing.forEach(fn => fn()));
-        el.addEventListener('waiting', () => listeners.waiting.forEach(fn => fn()));
-        el.addEventListener('pause', () => listeners.pause.forEach(fn => fn()));
-        el.addEventListener('ended', () => listeners.finish.forEach(fn => fn()));
-        return {
-          // SYNC FIX 2 - load() now resolves only when the file's metadata (duration, seekable
-          // range) is known, or the source fails, or 8 s pass.
-          // Before, it returned immediately, so:
-          //   - getDuration() right after load() was 0, and the stored duration was never fixed
-          //     (tracks kept placeholder lengths such as 180 s or 32 s);
-          //   - a start offset was applied only after playback had begun.
-          // Example: opening a saved moment at 1:20 could start at 0:00 and jump to 1:20.
-          // Now the position is set first, then play() starts at 1:20. The browser needs the
-          // metadata before it can play anyway, so waiting for it adds no delay.
-          load(url, startSec = 0, fallbackUrl = null) {
-            pendingTime = startSec || 0;
-            currentFallbackUrl = fallbackUrl;
-            usedFallback = false;
-            return new Promise(resolve => {
-              const done = () => {
-                clearTimeout(timer);
-                el.removeEventListener('loadedmetadata', done);
-                el.removeEventListener('error', done);
-                resolve();
-              };
-              const timer = setTimeout(done, 8000);
-              // Registered after the engine's own 'loadedmetadata' handler, so the start offset
-              // (pendingTime) is already applied when this resolves.
-              el.addEventListener('loadedmetadata', done);
-              el.addEventListener('error', done);
-              el.src = url;
-              el.load();
-            });
-          },
-          async play() {
-            try {
-              return await el.play();
-            } catch (err) {
-              if (err?.name === 'AbortError') return;
-              if (!usedFallback && currentFallbackUrl && el.src !== currentFallbackUrl) {
-                usedFallback = true;
-                el.src = currentFallbackUrl;
-                el.load();
-                return await el.play();
-              }
-              throw err;
-            }
-          },
-          pause() { el.pause(); },
-          hasSource() { return Boolean(el.src) && (!el.error || el.error.code === 1); },
-          isPlaying() { return !el.paused && !el.ended; },
-          // True while the browser is still moving to a new position after setTime().
-          isSeeking() { return el.seeking; },
-          // True when a position was requested before metadata arrived and is not applied yet.
-          hasPendingSeek() { return pendingTime !== null; },
-          getCurrentTime() { return el.currentTime || 0; },
-          setTime(sec) {
-            const target = Math.max(0, Number(sec) || 0);
-            if (el.readyState >= 1) { try { el.currentTime = target; pendingTime = null; } catch (e) { pendingTime = target; } }
-            else { pendingTime = target; }
-          },
-          getDuration() { return (el.duration && Number.isFinite(el.duration)) ? el.duration : 0; },
-          setVolume(v) { el.volume = Math.max(0, Math.min(1, Number(v) || 0)); },
-          on(ev, fn) { if (listeners[ev]) listeners[ev].push(fn); }
-        };
-      }
+      // The engine lives in src/core/audioEngine.ts (shared with the Vue app), including
+      // SYNC FIX 1 ('playing'/'waiting' vs 'play') and SYNC FIX 2 (load() waits for metadata).
+      // Example: opening a saved moment at 1:20 starts at 1:20, not at 0:00 and then jumping.
 
       async function initialize() {
-        music = createNativeAudioEngine();
+        music = createNativeAudioEngine({
+          onDuration(d) { DUR = d; if (S.view === 'player') drawWave(); },
+          resumePosition: () => S.t || 0,
+          wantsPlayback: () => S.playing,
+        });
         music.setVolume(S.volume);
 
         let playheadRaf = null;
@@ -3089,7 +2966,7 @@ button.pill{cursor:pointer;margin:0 10px}
             // Logged at the loop end, where it happened (it used to log the restart position).
             emit('loop_cycle', 'player', { momentStartSec: S.sel.a, momentEndSec: S.sel.b, positionSec: S.sel.b });
             music.setTime(S.sel.a); S.t = S.sel.a; S.loops++;
-            spanStart = S.sel.a;
+            listening.openSpan(S.sel.a);
             if (S.loops >= 2 && !S.nudged && !S.describe && S.view === 'player') { S.nudge = true; S.nudged = true; drawSlot(); }
           }
         }
@@ -3116,7 +2993,7 @@ button.pill{cursor:pointer;margin:0 10px}
         });
         music.on('playing', () => {
           // SYNC FIX 1: sound is audible from here, so the listening span starts here.
-          spanStart = mediaTime();
+          listening.openSpan(mediaTime());
           if (!playheadRaf) playheadRaf = requestAnimationFrame(updateSmoothPlayhead);
         });
         music.on('waiting', () => {

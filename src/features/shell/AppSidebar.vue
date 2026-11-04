@@ -1,21 +1,32 @@
 <script setup lang="ts">
-import { playerState } from '../../stores/player';
-import Icon from './Icon.vue';
+import { computed } from 'vue';
+import { storeToRefs } from 'pinia';
+import { useRoute, useRouter } from 'vue-router';
+import { useMomentsStore } from '../../stores/moments';
+import { usePlaybackStore } from '../../stores/playback';
+import { useLibraryStore } from '../../stores/library';
+import Icon, { type IconName } from '../../ui/Icon.vue';
+import NavItem from '../../ui/NavItem.vue';
+import ProgressRail from '../../ui/ProgressRail.vue';
 
 // NavItem rule: the five places in README order (Now playing, Library, My Moments, Discover,
-// My Music DNA). "Stream & Web" sits in Discover's slot with the compass icon.
-// `short` is the label used when the sidebar becomes the bottom tab bar (< 820px).
-const navItems = [
-  { id: 'player', label: 'Now playing', short: 'Playing', icon: 'wave' },
-  { id: 'library', label: 'Library', short: 'Library', icon: 'library' },
-  { id: 'moments', label: 'My Moments', short: 'Moments', icon: 'heart' },
-  { id: 'stream', label: 'Stream & Web', short: 'Stream', icon: 'compass' },
-  { id: 'dna', label: 'My Music DNA', short: 'DNA', icon: 'dna' },
-] as const;
+// My Music DNA). "Stream & Web" sits in Discover's slot with the compass icon until the
+// Discover screen is ported (phase 2). `short` is the tab-bar label (< 820px).
+const navItems: { to: string; label: string; short: string; icon: IconName }[] = [
+  { to: '/', label: 'Now playing', short: 'Playing', icon: 'wave' },
+  { to: '/library', label: 'Library', short: 'Library', icon: 'library' },
+  { to: '/moments', label: 'My Moments', short: 'Moments', icon: 'heart' },
+  { to: '/stream', label: 'Stream & Web', short: 'Stream', icon: 'compass' },
+  { to: '/dna', label: 'My Music DNA', short: 'DNA', icon: 'dna' },
+];
 
-function setView(view: any) {
-  playerState.activeView = view;
-}
+const route = useRoute();
+const router = useRouter();
+const playback = usePlaybackStore();
+const library = useLibraryStore();
+const { moments } = storeToRefs(useMomentsStore());
+const onPlayer = computed(() => route.path === '/');
+const badge = (to: string) => (to === '/moments' ? moments.value.length : to === '/library' ? library.tracks.length : undefined);
 </script>
 
 <template>
@@ -23,35 +34,42 @@ function setView(view: any) {
     <div class="brand label">MUSIC DNA</div>
 
     <nav class="nav-menu" aria-label="Main">
-      <!-- NavItem rule: current item is marked aria-current="page" (styled by that attribute,
-           e.g. <button aria-current="page">Now playing</button>), not by an .active class. -->
-      <button
+      <NavItem
         v-for="item in navItems"
-        :key="item.id"
-        class="nav-btn body"
-        :aria-current="playerState.activeView === item.id ? 'page' : undefined"
-        @click="setView(item.id)"
-      >
-        <Icon :name="item.icon" :size="18" />
-        <span class="nav-label">{{ item.label }}</span>
-        <span class="nav-short caption">{{ item.short }}</span>
-        <!-- NavItem rule: optional count on the right in ink-mute. The old accent "NEW" badge
-             was removed: the accent means "a moment you chose" only. -->
-        <span v-if="item.id === 'moments' && playerState.moments.length" class="badge caption">
-          {{ playerState.moments.length }}
-        </span>
-      </button>
+        :key="item.to"
+        :icon="item.icon"
+        :label="item.label"
+        :short="item.short"
+        :current="route.path === item.to"
+        :badge="badge(item.to)"
+        @click="router.push(item.to)"
+      />
     </nav>
 
     <!-- NavItem rule: the mini player shows only when away from the player and returns to
-         Now playing. It is a real <button> (accessibility rule), not a clickable <div>. -->
-    <button v-if="playerState.activeView !== 'player'" class="mini-player" @click="setView('player')">
-      <span class="mini-art"><Icon name="wave" :size="18" /></span>
-      <span class="mini-text">
-        <span class="mini-title body">{{ playerState.currentTrack?.title || 'First Light' }}</span>
-        <span class="mini-artist caption">{{ playerState.currentTrack?.artist || 'Demo' }}</span>
-      </span>
-    </button>
+         Now playing. The rail scrubs the song (SYNC FIX 8: the seek logs where the drag began). -->
+    <div v-if="!onPlayer" class="mini">
+      <div class="mini-player">
+        <button class="mini-open" aria-label="Open Now playing" @click="router.push('/')">
+          <span class="mini-art"><Icon name="wave" :size="18" /></span>
+          <span class="mini-text">
+            <span class="mini-title body">{{ playback.currentTrack?.title || 'No track' }}</span>
+            <span class="mini-artist caption">{{ playback.currentTrack?.artist || 'Import audio' }}</span>
+          </span>
+        </button>
+        <button class="mini-play" :aria-label="playback.playing ? 'Pause' : 'Play'" @click="playback.togglePlay()">
+          <Icon :name="playback.playing ? 'pause' : 'play'" :size="16" />
+        </button>
+      </div>
+      <ProgressRail
+        :current-time="playback.t"
+        :duration="playback.duration"
+        @scrub-start="playback.beginScrub()"
+        @scrub="playback.scrubTo"
+        @scrub-end="playback.endScrub"
+        @step="playback.stepBy"
+      />
+    </div>
   </aside>
 </template>
 
@@ -82,35 +100,15 @@ function setView(view: any) {
   flex-direction: column;
   gap: calc(var(--space-1) / 2);
 }
-.nav-btn {
-  height: 42px;
-  border: 0;
-  background: none;
-  border-radius: var(--radius-sm);
-  padding: 0 var(--space-3);
+.mini {
+  margin-top: auto;
   display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  color: var(--ink-sub);
-  cursor: pointer;
-  text-align: left;
-}
-.nav-btn:hover,
-.nav-btn[aria-current='page'] {
-  background: var(--bg-raise);
-  color: var(--ink);
-}
-.nav-short {
-  display: none;
-}
-.badge {
-  margin-left: auto;
-  color: var(--ink-mute);
-  font-variant-numeric: tabular-nums;
+  flex-direction: column;
+  gap: var(--space-1);
 }
 .mini-player {
-  margin-top: auto;
   width: 100%;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -145,6 +143,35 @@ function setView(view: any) {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.mini-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.mini-play {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  width: var(--space-6);
+  height: var(--space-6);
+  flex: none;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink);
+}
+.mini-play:hover {
+  background: var(--bg-raise);
+}
 .mini-artist {
   color: var(--ink-sub);
   white-space: nowrap;
@@ -178,26 +205,8 @@ function setView(view: any) {
     flex-direction: row;
     justify-content: space-around;
   }
-  .nav-btn {
-    height: 52px;
-    flex-direction: column;
-    justify-content: center;
-    gap: calc(var(--space-1) / 2);
-    padding: 0 var(--space-3);
-  }
-  .nav-btn:hover,
-  .nav-btn[aria-current='page'] {
-    background: none;
-  }
-  .nav-label,
-  .badge {
-    display: none;
-  }
-  .nav-short {
-    display: block;
-  }
   /* Mini player sits above the tabs on phones. */
-  .mini-player {
+  .mini {
     margin: 0 0 var(--space-1);
   }
 }
