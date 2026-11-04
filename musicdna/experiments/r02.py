@@ -11,7 +11,7 @@ CIs, loudness and position baselines). The comparisons that answer R02:
   - intonation only       vs  louder-window baseline    is intonation alone informative?
 
 The report also states how reliable the tonic was: detection confidence per song, and the cents
-error against hand-annotated tonics (data/coke_studio/tonic_annotations.json) when there are any.
+error against hand-annotated tonics (<corpus folder>/tonic_annotations.json) when there are any.
 Without annotations, tonic accuracy is unmeasured and the report says so.
 
     python -m musicdna.experiments.r02 research-output/preference_pairs_<hash>.json
@@ -25,7 +25,7 @@ from typing import Any
 import numpy as np
 
 from musicdna.config import Config
-from musicdna.corpus.coke_studio import CokeStudioManifest
+from musicdna.corpus.registry import CORPORA, DEFAULT_CORPUS, get_corpus
 from musicdna.corpus.feature_store import FeatureStore
 from musicdna.experiments.r01 import R01Experiment
 from musicdna.features.intonation import IntonationDescriptors
@@ -91,7 +91,7 @@ class R02Experiment(R01Experiment):
             'median_detection_error_cents': round(float(np.median(errors)), 1) if errors else None,
             'within_25_cents': round(float(np.mean(np.array(errors) <= 25)), 3) if errors else None,
             'note': None if errors else 'No hand-annotated tonics: detection accuracy is unmeasured. '
-                                        'Add {"<video_id>": <tonic Hz>} entries to data/coke_studio/tonic_annotations.json.',
+                                        f'Add {{"<video_id>": <tonic Hz>}} entries to {self.store.tonic_annotations}.',
         }
 
 
@@ -99,9 +99,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description='Run research question R02 (microtonal intonation)')
     parser.add_argument('pairs', type=Path, help='Output of musicdna.preference.implicit_pairs / the pipeline')
     parser.add_argument('--out', type=Path, default=Path('research-output/r02_report.json'))
+    parser.add_argument('--corpus', choices=list(CORPORA), default=DEFAULT_CORPUS)
     Config.add_arguments(parser)
     arguments = parser.parse_args()
-    report = R02Experiment(FeatureStore(Config.from_arguments(arguments)), CokeStudioManifest.load()).run(
+    corpus = get_corpus(arguments.corpus)
+    report = R02Experiment(corpus.feature_store(Config.from_arguments(arguments)), corpus.load()).run(
         json.loads(arguments.pairs.read_text(encoding='utf8')))
     arguments.out.parent.mkdir(parents=True, exist_ok=True)
     arguments.out.write_text(json.dumps(report, indent=2) + '\n', encoding='utf8')

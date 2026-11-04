@@ -5,6 +5,7 @@ Every step reuses what is already on disk, so re-running after more listening on
     python -m musicdna.experiments.pipeline --profile ~/Downloads/music-dna-profile.json
     python -m musicdna.experiments.pipeline --profile music-dna-profile.json --allow-nc-weights   # adds MERT
     python -m musicdna.experiments.pipeline --profile music-dna-profile.json --set windows.window_sec=10 --set windows.hop_sec=5
+    python -m musicdna.experiments.pipeline --profile music-dna-profile.json --corpus genre_mix
 """
 from __future__ import annotations
 import argparse
@@ -15,8 +16,8 @@ from pathlib import Path
 from typing import Any
 
 from musicdna.config import Config
-from musicdna.corpus.coke_studio import CokeStudioManifest
 from musicdna.corpus.manifest import CorpusManifest
+from musicdna.corpus.registry import CORPORA, DEFAULT_CORPUS, Corpus, get_corpus
 from musicdna.corpus.feature_store import DEFAULT_STAGES, STAGES, FeatureBuilder, FeatureStore
 from musicdna.experiments.r01 import R01Experiment
 from musicdna.experiments.r02 import R02Experiment
@@ -46,9 +47,10 @@ class ResearchPipeline:
     """Runs the four steps for one configuration and writes its pairs and the R01 + R02 reports."""
 
     def __init__(self, config: Config, workers: int = 4, allow_nc_weights: bool = False, lyrics: bool = False,
-                 output_directory: Path = RESEARCH_OUTPUT_DIR) -> None:
+                 output_directory: Path = RESEARCH_OUTPUT_DIR, corpus: Corpus | None = None) -> None:
         self.config = config
-        self.store = FeatureStore(config)
+        self.corpus = corpus or get_corpus(DEFAULT_CORPUS)
+        self.store: FeatureStore = self.corpus.feature_store(config)
         self.builder = FeatureBuilder(self.store, workers, allow_nc_weights)
         self.stages = DEFAULT_STAGES + (['mert'] if allow_nc_weights else []) + (['lyrics'] if lyrics else [])
         self.output_directory = output_directory
@@ -63,10 +65,10 @@ class ResearchPipeline:
 
     def check_corpus(self) -> CorpusManifest:
         print('1/4 corpus')
-        corpus = CokeStudioManifest.load()
-        problems = corpus.verify()
+        corpus = self.corpus.load()
+        problems = self.corpus.verify(corpus)
         if problems:
-            raise SystemExit('Corpus incomplete; run `python -m musicdna.corpus.coke_studio download`.\n' + '\n'.join(problems))
+            raise SystemExit(f'Corpus {self.corpus.name} incomplete; run `python -m {self.corpus.module} download`.\n' + '\n'.join(problems))
         return corpus
 
     def build_features(self, corpus: CorpusManifest) -> None:
@@ -113,10 +115,12 @@ def main() -> None:
     parser.add_argument('--allow-nc-weights', action='store_true', help='Include MERT (CC BY-NC 4.0 weights)')
     parser.add_argument('--lyrics', action='store_true', help='Also transcribe vocals (needs faster-whisper)')
     parser.add_argument('--workers', type=int, default=4)
+    parser.add_argument('--corpus', choices=list(CORPORA), default=DEFAULT_CORPUS)
     Config.add_arguments(parser)
     arguments = parser.parse_args()
 
-    pipeline = ResearchPipeline(Config.from_arguments(arguments), arguments.workers, arguments.allow_nc_weights, arguments.lyrics)
+    pipeline = ResearchPipeline(Config.from_arguments(arguments), arguments.workers, arguments.allow_nc_weights, arguments.lyrics,
+                                corpus=get_corpus(arguments.corpus))
     pipeline.run(json.loads(arguments.profile.read_text(encoding='utf8')))
 
 

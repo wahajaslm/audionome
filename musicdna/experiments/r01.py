@@ -24,7 +24,8 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
 from musicdna.config import DEFAULT, Config, RankerConfig
-from musicdna.corpus.manifest import MANIFEST_PATH, CorpusManifest
+from musicdna.corpus.manifest import CorpusManifest
+from musicdna.corpus.registry import CORPORA, DEFAULT_CORPUS, get_corpus
 from musicdna.corpus.feature_store import FeatureStore
 from musicdna.features.spatial import SpatialDescriptors
 from musicdna.features.vocal import VocalDescriptors
@@ -282,15 +283,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description='Run research question R01')
     parser.add_argument('pairs', type=Path, help='Output of musicdna.preference.implicit_pairs')
     parser.add_argument('--out', type=Path, default=Path('research-output/r01_report.json'))
+    parser.add_argument('--corpus', choices=list(CORPORA), default=DEFAULT_CORPUS)
     Config.add_arguments(parser)
     arguments = parser.parse_args()
 
     sha256 = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()  # noqa: E731
-    experiment = R01Experiment(FeatureStore(Config.from_arguments(arguments)), CorpusManifest.load())
+    corpus = get_corpus(arguments.corpus)
+    experiment = R01Experiment(corpus.feature_store(Config.from_arguments(arguments)), corpus.load())
     report = {
         'experiment': 'R01 vocal pitch features vs general audio embeddings',
         'created_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
-        'inputs': {'pairs_sha256': sha256(arguments.pairs), 'manifest_sha256': sha256(MANIFEST_PATH)},
+        'inputs': {'pairs_sha256': sha256(arguments.pairs), 'manifest_sha256': sha256(corpus.manifest_path)},
         **experiment.run(json.loads(arguments.pairs.read_text(encoding='utf8'))),
     }
     arguments.out.parent.mkdir(parents=True, exist_ok=True)

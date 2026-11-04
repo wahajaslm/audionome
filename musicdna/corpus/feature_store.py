@@ -1,10 +1,11 @@
-"""Per-window feature cache for the Coke Studio corpus.
+"""Per-window feature cache for any research corpus (see musicdna.corpus.registry).
 
 Each `FeatureStage` declares the artifacts it writes and the config sections they depend on. Cached
 files are named after a hash of those sections, so changing a parameter recomputes only the stages
 it affects and results from different settings never mix. All stages share `WindowGrid`.
 
     python -m musicdna.corpus.feature_store --stages stems dsp spatial vocal clap
+    python -m musicdna.corpus.feature_store --corpus genre_mix
     python -m musicdna.corpus.feature_store --set windows.window_sec=10 --set windows.hop_sec=5
 """
 from __future__ import annotations
@@ -21,13 +22,13 @@ import soundfile as sf
 from musicdna.audio.io import load_audio
 from musicdna.audio.windows import WindowGrid
 from musicdna.config import DEFAULT, Config
-from musicdna.corpus.coke_studio import CokeStudioManifest
-from musicdna.corpus.manifest import CorpusEntry, CorpusManifest
+from musicdna.corpus.manifest import AUDIO_DIRECTORY, CorpusEntry, CorpusManifest
 from musicdna.features.spatial import SpatialAnalyzer
 from musicdna.features.intonation import IntonationAnalyzer, TonicEstimate
 from musicdna.features.vocal import PitchContour, VocalPitchAnalyzer
 from musicdna.paths import CORPUS_DIR
 
+# Coke Studio defaults; other corpora pass their own folders (Corpus.feature_store()).
 FEATURE_DIRECTORY = CORPUS_DIR / 'features'
 TONIC_ANNOTATIONS = CORPUS_DIR / 'tonic_annotations.json'
 JSON_ARTIFACTS = {'lyrics', 'tonic', 'vocal_gate'}
@@ -36,9 +37,15 @@ JSON_ARTIFACTS = {'lyrics', 'tonic', 'vocal_gate'}
 class FeatureStore:
     """Where cached artifacts live, named by the config sections each depends on."""
 
-    def __init__(self, config: Config = DEFAULT, root: Path = FEATURE_DIRECTORY) -> None:
+    def __init__(self, config: Config = DEFAULT, root: Path = FEATURE_DIRECTORY,
+                 audio_directory: Path = AUDIO_DIRECTORY, tonic_annotations: Path = TONIC_ANNOTATIONS) -> None:
         self.config = config
         self.root = root
+        # ANY CORPUS FIX - audio was always read from the Coke Studio folder, so another corpus's
+        # songs failed with "file not found". Each store now knows its corpus's audio folder.
+        # Example: --corpus genre_mix reads data/genre_mix/audio/<id>.m4a.
+        self.audio_directory = audio_directory
+        self.tonic_annotations = tonic_annotations
         self.grid = WindowGrid(config.windows)
 
     def path(self, video_id: str, artifact: str) -> Path:
@@ -72,7 +79,7 @@ class FeatureStore:
         return audio
 
     def audio(self, entry: CorpusEntry, rate: int, mono: bool = True) -> np.ndarray:
-        return load_audio(CorpusManifest.audio_path(entry), rate, mono=mono)
+        return load_audio(CorpusManifest.audio_path(entry, self.audio_directory), rate, mono=mono)
 
     def duration(self, entry: CorpusEntry) -> float:
         """Decoded length, measured once, so every stage builds the identical window grid."""
@@ -275,7 +282,7 @@ class IntonationStage(FeatureStage):
         analyzer = IntonationAnalyzer(store.config.intonation)
         contour = PitchContour.from_semitones(store.load(entry.video_id, 'pitch_contour'), store.config.vocal)
         detected = analyzer.estimate_tonic(contour)
-        annotated_hz = self.annotations().get(entry.video_id)
+        annotated_hz = self.annotations(store.tonic_annotations).get(entry.video_id)
         tonic = detected
         if annotated_hz and store.config.intonation.use_annotated_tonic:
             tonic = TonicEstimate(float(69 + 12 * np.log2(annotated_hz / 440.0)), 1.0, 'annotated')
@@ -291,8 +298,8 @@ class IntonationStage(FeatureStage):
                    np.array([analyzer.profile(contour, tonic, a, b) for a, b in windows]))
 
     @staticmethod
-    def annotations() -> dict[str, float]:
-        return json.loads(TONIC_ANNOTATIONS.read_text()) if TONIC_ANNOTATIONS.exists() else {}
+    def annotations(path: Path = TONIC_ANNOTATIONS) -> dict[str, float]:
+        return json.loads(path.read_text()) if path.exists() else {}
 
 
 class LyricsStage(FeatureStage):
@@ -320,10 +327,10 @@ ARTIFACT_SECTIONS: dict[str, tuple[str, ...]] = {
 DEFAULT_STAGES = ['stems', 'dsp', 'spatial', 'vocal', 'intonation', 'clap']
 
 
-def _run_in_worker(job: tuple[str, CorpusEntry, Config, Path]) -> str:
-    stage_name, entry, config, root = job
+def _run_in_worker(job: tuple[str, CorpusEntry, Config, Path, Path, Path]) -> str:
+    stage_name, entry, config, root, audio_directory, tonic_annotations = job
     try:
-        STAGES[stage_name].run(FeatureStore(config, root), entry)
+        STAGES[stage_name].run(FeatureStore(config, root, audio_directory, tonic_annotations), entry)
         return f'{stage_name:<7} {entry.label}'
     except Exception as error:  # noqa: BLE001 - one bad song must not stop the corpus
         return f'{stage_name:<7} FAILED {entry.video_id} {entry.song}: {error}'
@@ -353,7 +360,8 @@ class FeatureBuilder:
     def _run_parallel(self, stage: FeatureStage, todo: list[CorpusEntry]) -> list[str]:
         failures = []
         with ProcessPoolExecutor(max_workers=self.workers) as pool:
-            for line in pool.map(_run_in_worker, [(stage.name, e, self.store.config, self.store.root) for e in todo]):
+            for line in pool.map(_run_in_worker, [(stage.name, e, self.store.config, self.store.root, self.store.audio_directory,
+                                                 self.store.tonic_annotations) for e in todo]):
                 print(line, flush=True)
                 if 'FAILED' in line:
                     failures.append(line)
@@ -377,7 +385,9 @@ class FeatureBuilder:
 
 
 def main() -> None:
+    from musicdna.corpus.registry import CORPORA, DEFAULT_CORPUS, get_corpus
     parser = argparse.ArgumentParser(description='Compute per-window corpus features')
+    parser.add_argument('--corpus', choices=list(CORPORA), default=DEFAULT_CORPUS)
     parser.add_argument('--stages', nargs='+', choices=list(STAGES), default=DEFAULT_STAGES)
     parser.add_argument('--workers', type=int, default=4)
     parser.add_argument('--limit', type=int, default=None, help='Only the first N songs (for smoke tests)')
@@ -385,8 +395,9 @@ def main() -> None:
     Config.add_arguments(parser)
     arguments = parser.parse_args()
 
-    entries = CokeStudioManifest.load().entries[:arguments.limit]
-    builder = FeatureBuilder(FeatureStore(Config.from_arguments(arguments)), arguments.workers, arguments.allow_nc_weights)
+    corpus = get_corpus(arguments.corpus)
+    entries = corpus.load().entries[:arguments.limit]
+    builder = FeatureBuilder(corpus.feature_store(Config.from_arguments(arguments)), arguments.workers, arguments.allow_nc_weights)
     failures = builder.build(arguments.stages, entries)
     print(json.dumps(builder.coverage(entries)))
     print('\n'.join(failures) or 'No failures.')

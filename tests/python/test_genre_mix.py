@@ -27,3 +27,18 @@ def test_single_song_filter_drops_mixes_and_keeps_original_mix():
 def test_split_title():
     assert split_title('Band - Song (Official Audio)', 'Chan') == ('Song', 'Band')
     assert split_title('Song name', 'Chan') == ('Song name', 'Chan')
+
+
+def test_registry_gives_each_corpus_its_own_folders(tmp_path):
+    from musicdna.corpus.registry import CORPORA, get_corpus
+    assert set(CORPORA) >= {'coke_studio', 'genre_mix'}
+    genre = get_corpus('genre_mix')
+    store = genre.feature_store()
+    assert store.audio_directory == genre.directory / 'audio'
+    assert store.root == genre.directory / 'features'
+    assert store.tonic_annotations == genre.directory / 'tonic_annotations.json'
+    # The feature store reads audio from its corpus's folder, not Coke Studio's.
+    from musicdna.corpus.manifest import CorpusManifest
+    entry = song('abc', 1, 0)
+    entry.audio_file = 'abc.m4a'
+    assert CorpusManifest.audio_path(entry, store.audio_directory) == genre.directory / 'audio' / 'abc.m4a'
