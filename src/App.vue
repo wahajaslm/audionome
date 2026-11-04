@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router';
 import { useUiStore } from './stores/ui';
 import { useAudioEngine } from './composables/useAudioEngine';
 import { useAppBootstrap } from './composables/useAppBootstrap';
+import { useMediaSession } from './composables/useMediaSession';
 import AppSidebar from './features/shell/AppSidebar.vue';
 import Toast from './ui/Toast.vue';
 import PlaybackBar from './ui/PlaybackBar.vue';
@@ -14,6 +15,7 @@ import { useFileDrop } from './composables/useFileDrop';
 
 // One audio engine for the whole app, created before any screen renders.
 useAudioEngine();
+useMediaSession();
 useAppBootstrap();
 
 const ui = useUiStore();
