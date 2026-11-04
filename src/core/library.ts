@@ -18,11 +18,13 @@ export type PlayableTrack = Track & { streamPlaybackUrl?: string; originalUrl?: 
  */
 function playableStreamUrl(t: PlayableTrack): string | undefined {
   const url = t.streamPlaybackUrl;
-  if (!url || !url.includes('/api/stream/proxy')) return url;
+  // Songs synced from the service (no saved link) fall here too when their id is a YouTube one.
+  if (url && !url.includes('/api/stream/proxy')) return url;
+  if (!url && !t.id.startsWith('youtube-')) return undefined;
   const original = t.originalUrl || (t.id.startsWith('youtube-') ? 'https://www.youtube.com/watch?v=' + t.id.slice(8) : '');
   return original
     ? SERVICE + '/api/stream/audio/' + encodeURIComponent(t.id) + '?src=' + encodeURIComponent(original)
-    : url;
+    : url || undefined;
 }
 
 /** The URL used when the track has no stored audio, or the stored audio fails to play. */

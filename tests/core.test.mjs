@@ -344,5 +344,7 @@ test('library: songs saved with an expiring YouTube proxy URL play from the stre
   assert.match(old, /\/api\/stream\/audio\/youtube-abc\?src=https%3A%2F%2Fwww\.youtube\.com%2Fwatch%3Fv%3Dabc$/);
   const fresh = 'http://127.0.0.1:8765/api/stream/audio/youtube-abc?src=y';
   assert.equal(fallbackUrl({ id: 'youtube-abc', streamPlaybackUrl: fresh }), fresh);
+  assert.match(fallbackUrl({ id: 'youtube-abc' }), /\/api\/stream\/audio\/youtube-abc\?src=/, 'synced YouTube song without a link');
+  assert.match(fallbackUrl({ id: 'imported-1' }), /\/api\/audio\/imported-1$/);
 });
 
