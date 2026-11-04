@@ -185,10 +185,16 @@ def serve_stem_audio(
     if stem_key not in ('vocals', 'drums', 'bass', 'other'):
         raise HTTPException(400, f"Invalid stem name '{stem_name}'. Must be one of: all, vocals, drums, bass, other")
 
-    stem_path = service.find_cached_stem(track_id, stem_key)
+    # STEM STALL FIX - serve a stem only when it already exists; never separate inside this
+    # request. Before, a missing stem ran Demucs here, the player waited minutes, and every
+    # retry (the <audio> element, the waveform) started another separation until memory ran
+    # out. Stems are made by the full analysis (or GET /api/stems/{id}).
+    # Example: Vocals on a song whose full analysis has not run -> 404 at once, the app says
+    # "not separated yet" and keeps playing the mix.
+    stem_path = service.stem_separator.get_cached_stem_path(track_id, stem_key)
     if stem_path and stem_path.is_file():
         return FileResponse(str(stem_path), media_type='audio/wav')
-    raise HTTPException(404, f"Stem '{stem_key}' could not be extracted for track '{track_id}'")
+    raise HTTPException(404, f"Stem '{stem_key}' is not separated yet for track '{track_id}'")
 
 
 @app.post('/api/stream/resolve')
