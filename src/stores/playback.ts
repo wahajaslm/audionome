@@ -149,20 +149,30 @@ export const usePlaybackStore = defineStore('playback', () => {
   }
 
   /**
-   * Opens a passage of any track selected and plays it once (lists, previews, play-window).
+   * Opens a passage of any track selected and plays from its start (lists, previews, play-window).
    * Pressing it again while that passage plays pauses it.
    */
-  async function openRange(a: number, b: number, id: string, toggle = true): Promise<void> {
+  async function openRange(a: number, b: number, id: string, toggle = true, stopAtEnd = false): Promise<void> {
     const e = engineRef;
     const t = useLibraryStore().track(id) || currentTrack.value;
     if (!t || !e) return;
     const sel = region.sel;
     const sameRange = trackId.value === t.id && sel && Math.abs(sel.a - a) < 0.5 && Math.abs(sel.b - b) < 0.5;
     if (toggle && sameRange && e.isPlaying()) { e.pause(); return; }
+    // KEEPS PLAYING FIX 2 - opening what is already playing must not touch playback (Spotify:
+    // tapping the playing song just shows it). Before, it reloaded the passage from its start.
+    // Example: a moment plays at 1:50 of 1:42–2:49, you open it -> it keeps playing at 1:50.
+    const playingHere = trackId.value === t.id && loadedTrackId === t.id && e.isPlaying()
+      && region.t >= a - 0.5 && region.t <= b + 0.5;
+    if (!toggle && !stopAtEnd && playingHere) { region.sel = { a, b }; return; }
     await selectTrack(t, a, false);
     const flow = useMomentFlowStore();
     region.sel = { a, b }; region.t = a; region.loop = false; flow.nudge = false; flow.justSaved = false;
-    region.previewEnd = b; e.setTime(a);
+    // KEEPS PLAYING FIX 3 - a moment used to pause at its end and rewind ("plays it once"),
+    // so playback seemed to stop by itself. Now it plays on into the song. Only a queue
+    // (Play all) stops at each end, to move to the next passage.
+    // Example: play moment 1:42–2:49 -> at 2:49 the song carries on to 2:50, 2:51, ...
+    region.previewEnd = stopAtEnd ? b : null; e.setTime(a);
     try { await e.play(); } catch (err) { console.warn(err); }
   }
 
@@ -174,7 +184,7 @@ export const usePlaybackStore = defineStore('playback', () => {
 
   async function playNext(): Promise<void> {
     const next = queue.value.shift();
-    if (next) await openRange(next.a, next.b, next.trackId, false);
+    if (next) await openRange(next.a, next.b, next.trackId, false, true);
     else { region.previewEnd = null; engineRef?.pause(); }
   }
 
