@@ -12,6 +12,11 @@ import { usePlaybackStore } from './playback';
 import { listenToAnalysisStream, resolveStreamUrl, streamAudioUrl } from '../services/streaming';
 
 /** Tracks in the library and the local analysis jobs running on them. */
+/** Model id of the quick analysis a link gets while it plays; the full analysis replaces it. */
+const QUICK_STREAM_MODEL = 'streaming-progressive-dsp';
+/** True for the quick pass (made here, or saved by the service with a ':quick' model id). */
+const isQuick = (a: { modelId: string }) => a.modelId === QUICK_STREAM_MODEL || a.modelId.endsWith(':quick');
+
 export const useLibraryStore = defineStore('library', () => {
   const tracks = shallowRef<PlayableTrack[]>([]);
   /** trackId -> current analysis step, while a job runs. */
@@ -169,7 +174,10 @@ export const useLibraryStore = defineStore('library', () => {
       await load();
       await usePlaybackStore().changeTrack(track(t.id) || t, false);
       ui.notify('Loaded "' + meta.title + '" · Playing from stream');
-      startProgressiveAnalysis(t.id, meta.originalUrl);
+      // A song opened before keeps its analysis; only a quick one is upgraded to the full one.
+      const have = useIntelligenceStore().analysisFor(t.id);
+      if (!have) startProgressiveAnalysis(t.id, meta.originalUrl);
+      else if (isQuick(have)) analyze(t.id, true).catch(console.warn);
     } catch (err) {
       ui.notify('Stream Error: ' + (err as Error).message);
       throw err;
@@ -178,7 +186,7 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  /** Streams analysis windows from the service as they are computed. */
+  /** Streams analysis windows from the service as they are computed (the quick pass). */
   function startProgressiveAnalysis(trackId: string, originalUrl?: string): void {
     const intelligence = useIntelligenceStore();
     isStreamingAnalysis.value = true;
@@ -187,7 +195,7 @@ export const useLibraryStore = defineStore('library', () => {
       streamProgress.value = { current: event.index + 1, total: event.total };
       const existing = intelligence.analyses.find(a => a.trackId === trackId);
       const target = existing ?? {
-        trackId, method: 'dsp' as const, modelId: 'streaming-progressive-dsp',
+        trackId, method: event.method ?? ('dsp' as const), modelId: event.modelId ?? QUICK_STREAM_MODEL,
         durationSec: usePlaybackStore().duration, analyzedAt: Date.now(), segments: [],
       };
       if (!target.segments.some(s => s.startSec === event.segment.startSec)) target.segments.push(event.segment);
@@ -198,7 +206,14 @@ export const useLibraryStore = defineStore('library', () => {
       // Example: open a YouTube link, reload → the song still shows "Analyzed · N windows".
       const done = intelligence.analyses.find(a => a.trackId === trackId);
       if (done) putAnalysis(JSON.parse(JSON.stringify(done))).catch(console.warn);
-      useUiStore().notify('Analysis stream complete');
+      if (!done || !isQuick(done)) { useUiStore().notify('Analysis loaded'); return; }
+      useUiStore().notify('Quick analysis ready · full analysis continues in the background');
+      // FULL ANALYSIS FIX - the quick pass measures sound only (energy, key, chords, tempo).
+      // The full analysis (stems + CLAP/multimodal when the service has them) used to need a
+      // press on Analyze; now it starts by itself, reads the service's cached copy (no new
+      // YouTube download) and replaces the quick result when done.
+      // Example: open a link → "Analyzed · 47 windows · dsp" → a minute later "· multimodal".
+      analyze(trackId, true).catch(console.warn);
     }, err => {
       isStreamingAnalysis.value = false;
       console.warn('Progressive stream notice:', err);

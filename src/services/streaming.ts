@@ -20,6 +20,9 @@ export interface StreamResolvedMetadata {
 
 export interface StreamAnalysisEvent {
   trackId: string;
+  /** Which analysis is being sent: a replay of a saved one, or the quick pass (modelId ends ':quick'). */
+  method?: TrackAnalysis['method'];
+  modelId?: string;
   index: number;
   total: number;
   segment: AudioSegment;

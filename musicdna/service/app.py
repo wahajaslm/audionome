@@ -258,12 +258,16 @@ async def stream_analysis_events(
         # Check if already analyzed
         analyses = repository.get_analyses(track_id=track_id)
         if analyses:
-            an = analyses[0]
+            # Replay the most complete analysis there is (multimodal > clap > dsp).
+            rank = {'multimodal': 0, 'clap': 1}
+            an = sorted(analyses, key=lambda a: rank.get(a.get('method', ''), 2))[0]
             segments = an.get('segments', [])
             total = len(segments)
             for idx, seg in enumerate(segments):
                 payload = {
                     'trackId': track_id,
+                    'method': an.get('method'),
+                    'modelId': an.get('modelId'),
                     'index': idx,
                     'total': total,
                     'segment': seg,
@@ -297,12 +301,16 @@ async def stream_analysis_events(
             service.feature_extractor.extract_track_analysis, audio_path, track_id, False, 0.0, None
         )
         analysis['trackId'] = track_id
+        # Tagged ':quick' so the app knows to follow it with the full analysis (stems + CLAP).
+        analysis['modelId'] = f"{analysis.get('modelId') or 'dsp'}:quick"
         title = (resolved_meta(track_id) or {}).get('title') or track_id
         await asyncio.to_thread(repository.save_analysis, track_id, analysis, title=title)
         segments = analysis['segments']
         for idx, seg in enumerate(segments):
             msg = {
                 'trackId': track_id,
+                'method': 'dsp',
+                'modelId': analysis['modelId'],
                 'index': idx,
                 'total': len(segments),
                 'segment': seg,
