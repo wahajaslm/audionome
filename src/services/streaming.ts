@@ -3,7 +3,8 @@
  */
 import type { Track, TrackAnalysis, AudioSegment } from '../data/types';
 
-const ENDPOINT = 'http://127.0.0.1:8765';
+import { SERVICE_URL } from '../core/service';
+const ENDPOINT = SERVICE_URL;
 
 export interface StreamResolvedMetadata {
   id: string;

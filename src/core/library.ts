@@ -4,7 +4,9 @@
  */
 import type { Track } from '../data/types';
 
-export const SERVICE = 'http://127.0.0.1:8765';
+import { SERVICE_URL } from './service.ts';
+
+export const SERVICE = SERVICE_URL;
 
 /** Tracks opened from a stream carry their playable URL (set by the stream importer). */
 export type PlayableTrack = Track & { streamPlaybackUrl?: string };

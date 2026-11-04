@@ -2,7 +2,8 @@ import type {Track, TrackAnalysis} from '../data/types';
 
 // Strictly local: the browser sends an authorized file to the user's own
 // localhost service on demand, never to a hosted AI provider.
-const ENDPOINT='http://127.0.0.1:8765';
+import { SERVICE_URL } from '../core/service';
+const ENDPOINT=SERVICE_URL;
 export interface IntelligenceHealth {
   status: string;
   models: string[];
