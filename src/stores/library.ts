@@ -181,8 +181,11 @@ export const useLibraryStore = defineStore('library', () => {
     let failsInARow = 0;
     try {
       while (analysisQueue.value.length) {
-        const [id, ...rest] = analysisQueue.value;
-        analysisQueue.value = rest;
+        // NOW PLAYING FIRST - the song you are listening to is analysed next, wherever it sits
+        // in the queue. Example: 23 queued, you play song 20 → it is the next one analysed.
+        const playing = usePlaybackStore().trackId;
+        const id = playing && analysisQueue.value.includes(playing) ? playing : analysisQueue.value[0];
+        analysisQueue.value = analysisQueue.value.filter(x => x !== id);
         if (await analyze(id, true)) { failsInARow = 0; continue; }
         if (++failsInARow < QUEUE_MAX_FAILS) continue;
         if (analysisQueue.value.length) useUiStore().notify('Analysis queue stopped: the local service is not answering. Analyse the rest from Library later.');
