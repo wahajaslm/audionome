@@ -194,7 +194,10 @@ class PreferenceAblationStudy:
             'positives': positives,
             'negatives': negatives,
             'evaluated_passages': len(scores),
-            'note': 'Behavioral attention features predict user-saved moments well above random chance.',
+            'note': (
+                f'Behavioral attention ranks user-saved moments above other passages {auc:.0%} of the time '
+                '(50% = chance). No confidence interval: this is a single-listener descriptive figure.'
+            ),
         }
 
     def evaluate_held_out_preference(

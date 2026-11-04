@@ -13,3 +13,9 @@ torch>=2.2
 transformers>=4.40
 # Optional alternative encoder, install separately after checking checkpoint license:
 # msclap==1.3.3
+# Research pipeline (research/pipeline.py)
+scipy>=1.11
+demucs>=4.0
+yt-dlp>=2025.1
+# Optional lyrics stage: Whisper transcription of the vocal stem
+faster-whisper>=1.0

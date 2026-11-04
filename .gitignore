@@ -16,3 +16,4 @@ services/intelligence/audio_cache/
 *.sqlite
 *.db
 services/intelligence/cache/
+data/coke_studio/features/

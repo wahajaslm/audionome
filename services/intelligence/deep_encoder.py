@@ -19,6 +19,8 @@ from .acoustic_features import SAMPLE_RATE, AcousticFeatureExtractor, load_audio
 HF_CLAP_MODEL_ID: str = os.getenv('MUSIC_DNA_CLAP_MODEL', 'laion/clap-htsat-unfused').strip()
 HF_CLAP_SAMPLE_RATE: int = 48000
 HF_CLAP_BATCH_SIZE: int = 8
+MERT_MODEL_ID: str = os.getenv('MUSIC_DNA_MERT_MODEL', 'm-a-p/MERT-v1-95M').strip()
+MERT_SAMPLE_RATE: int = 24000
 
 MODEL_LICENSE_REGISTRY: dict[str, dict[str, Any]] = {
     'clap': {
@@ -84,6 +86,7 @@ class DeepAudioEncoder:
     def __init__(self, license_manager: ModelLicenseManager | None = None) -> None:
         self.license_manager = license_manager or ModelLicenseManager()
         self._hf_clap: tuple[Any, Any] | None = None
+        self._mert: tuple[Any, Any] | None = None
 
     def get_colab_url(self) -> str:
         return os.getenv('MUSIC_DNA_COLAB_URL', '').strip().rstrip('/')
@@ -135,6 +138,37 @@ class DeepAudioEncoder:
                 output = model.get_audio_features(**inputs)
             features = output if isinstance(output, torch.Tensor) else output.pooler_output
             embeddings.extend(features.detach().cpu().numpy().astype(np.float64))
+        return embeddings
+
+    def load_mert(self, allow_noncommercial: bool | None = None) -> tuple[Any, Any]:
+        """Loads MERT once. Its weights are CC BY-NC 4.0 and its model code runs via trust_remote_code."""
+        if self._mert is None:
+            self.license_manager.verify_license('mert', allow_noncommercial=allow_noncommercial)
+            from transformers import AutoModel, Wav2Vec2FeatureExtractor
+            model = AutoModel.from_pretrained(MERT_MODEL_ID, trust_remote_code=True)
+            model.eval()
+            processor = Wav2Vec2FeatureExtractor.from_pretrained(MERT_MODEL_ID, trust_remote_code=True)
+            self._mert = (model, processor)
+        return self._mert
+
+    def encode_clips_with_mert(
+        self, audio_clips: list[np.ndarray], sample_rate: int, allow_noncommercial: bool | None = None
+    ) -> list[np.ndarray]:
+        """768-D MERT embedding per clip: time-averaged hidden states, averaged over all layers."""
+        import torch
+        model, processor = self.load_mert(allow_noncommercial)
+        resampled = [
+            librosa.resample(np.asarray(clip, dtype=np.float32), orig_sr=sample_rate, target_sr=MERT_SAMPLE_RATE)
+            for clip in audio_clips
+        ]
+        embeddings: list[np.ndarray] = []
+        for batch_start in range(0, len(resampled), HF_CLAP_BATCH_SIZE):
+            batch = resampled[batch_start:batch_start + HF_CLAP_BATCH_SIZE]
+            inputs = processor(batch, sampling_rate=MERT_SAMPLE_RATE, return_tensors='pt', padding=True)
+            with torch.no_grad():
+                hidden_states = model(**inputs, output_hidden_states=True).hidden_states
+            layers = torch.stack(hidden_states)  # (layers, batch, time, 768)
+            embeddings.extend(layers.mean(dim=2).mean(dim=0).cpu().numpy().astype(np.float64))
         return embeddings
 
     def encode_via_colab(self, audio_files: list[str], service_url: str) -> list[list[float]]:

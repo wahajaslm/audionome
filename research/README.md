@@ -66,3 +66,39 @@ Source-code licenses and pretrained checkpoint weight licenses are verified inde
 - **LAION-CLAP / MERT / Local Pretrained Spectro-Temporal Encoder:** MIT / Apache-2.0 (enabled by default).
 - **MuQ (`OpenMuQ`):** Code is MIT, but published weights are **CC BY-NC 4.0** (blocked by default; requires `allow_noncommercial=True` or `MUSIC_DNA_ALLOW_NC_WEIGHTS=1` for non-commercial research evaluation).
 - **Essentia Pretrained Models:** **CC BY-NC-SA 4.0** (blocked by default unless non-commercial research mode is explicitly enabled).
+
+---
+
+## R01 Research Pipeline (Coke Studio corpus)
+
+Answers R01: do fine-grained vocal pitch features predict which moments a listener prefers better
+than general audio embeddings? Run it end to end:
+
+```bash
+.venv/bin/python -m research.coke_studio_dataset select --per-season 4   # 60 songs, Seasons 1-15
+.venv/bin/python -m research.coke_studio_dataset download                # ~380 MB, local only
+.venv/bin/python -m research.pipeline --profile music-dna-profile.json   # add --allow-nc-weights for MERT
+```
+
+| Step | Module | Output |
+| :--- | :--- | :--- |
+| Corpus | `research.coke_studio_dataset` | `data/coke_studio/manifest.json` (committed), audio (not committed) |
+| Vocal stem | `research.feature_store` (`stems`) | Demucs `htdemucs` vocals, 16 kHz FLAC |
+| DSP | `feature_store` (`dsp`) | 25-D librosa vector + loudness per 10 s window |
+| Spatial | `research.spatial_features` | width, L/R correlation, balance, per-band width, width movement |
+| Vocal pitch | `research.vocal_pitch` | voicing, pitch range, glide, velocity, sustain, vibrato rate/extent, ornament rate |
+| CLAP | `feature_store` (`clap`) | 512-D LAION-CLAP |
+| MERT | `feature_store` (`mert`) | 768-D MERT-v1-95M; CC BY-NC weights, needs `--allow-nc-weights` |
+| Lyrics | `feature_store` (`lyrics`) | Whisper transcript of the vocal stem; optional, `--lyrics` |
+| Pairs | `research.implicit_pairs` | Within-song preferred vs passed-over windows from normal listening |
+| R01 | `research.r01_experiment` | `research-output/r01_report.json` |
+
+**Evaluation.** Every system is a linear pairwise ranker tested on songs, then artists, it never saw.
+The primary metric is song-averaged pairwise accuracy with a song-level bootstrap 95% CI. Louder-window
+and later-window baselines catch models that only learned loudness or position. Experiment D (a
+trainable temporal vocal encoder) runs only once there are 500+ pairs; the pitch contours it needs
+are already stored per song.
+
+**Data needed.** Import corpus songs into the player, listen normally (save, loop, rewind the parts you
+love; skip what you don't), export the profile, and run the pipeline. With fewer than 20 pairs across
+3 songs the report says `insufficient_data` instead of producing a number.
