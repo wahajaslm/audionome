@@ -50,10 +50,14 @@ export async function resolveStreamUrl(url: string): Promise<StreamResolvedMetad
 }
 
 /**
- * Generates the local proxy URL for a resolved stream to bypass CORS and support HTTP Range requests.
+ * The one URL a streamed song plays from (ONE DOWNLOAD FIX, see musicdna/service/app.py):
+ * the service's cached copy when it has one, else the live stream while it caches.
+ * `originalUrl` lets the service find the song again after a restart or an expired link.
+ * Example: streamAudioUrl('youtube-abc', 'https://youtu.be/abc')
+ *   → http://127.0.0.1:8765/api/stream/audio/youtube-abc?src=https%3A%2F%2Fyoutu.be%2Fabc
  */
-export function getProxyStreamUrl(streamUrl: string): string {
-  return `${ENDPOINT}/api/stream/proxy?url=${encodeURIComponent(streamUrl)}`;
+export function streamAudioUrl(trackId: string, originalUrl: string): string {
+  return `${ENDPOINT}/api/stream/audio/${encodeURIComponent(trackId)}?src=${encodeURIComponent(originalUrl)}`;
 }
 
 /**
@@ -63,9 +67,11 @@ export function listenToAnalysisStream(
   trackId: string,
   onWindow: (event: StreamAnalysisEvent) => void,
   onComplete?: () => void,
-  onError?: (err: any) => void
+  onError?: (err: any) => void,
+  originalUrl?: string
 ): () => void {
-  const eventSource = new EventSource(`${ENDPOINT}/api/analyze/stream/${encodeURIComponent(trackId)}`);
+  const src = originalUrl ? `?src=${encodeURIComponent(originalUrl)}` : '';
+  const eventSource = new EventSource(`${ENDPOINT}/api/analyze/stream/${encodeURIComponent(trackId)}${src}`);
 
   eventSource.onmessage = (e) => {
     try {

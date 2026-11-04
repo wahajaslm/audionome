@@ -25,6 +25,7 @@ from musicdna.paths import PUBLIC_DIR
 from musicdna.service.studio import router as studio_router, DEMO_WAV
 from musicdna.service.streaming import (
     resolve_stream, create_proxy_stream_response, start_cache_download, wait_for_cache_download,
+    remember_resolved, resolved_meta,
 )
 from musicdna.preference.emotion import DynamicEmotionModel
 
@@ -189,8 +190,48 @@ async def resolve_online_audio_stream(payload: ResolveStreamRequest) -> dict[str
     """Resolves YouTube, SoundCloud, or direct web audio URLs into playable streams.
     Also saves the audio to the cache in the background, so the song can be analysed."""
     meta = await asyncio.to_thread(resolve_stream, payload.url)
+    remember_resolved(meta)
     start_cache_download(meta['id'], meta['streamUrl'], AUDIO_CACHE_DIR)
     return meta
+
+
+@app.get('/api/stream/audio/{track_id}')
+async def stream_track_audio(
+    track_id: str,
+    request: Request,
+    src: str = '',
+    service: AudioIntelligenceService = Depends(get_service),
+):
+    """The one URL a streamed song plays from.
+
+    ONE DOWNLOAD FIX - a streamed song used to be downloaded three times (playback, waveform,
+    analysis cache), and its saved URL expired after a few hours. Now: the cached copy is served
+    when it exists; a whole-file request (the waveform) waits for the cache download instead of
+    starting a second one; otherwise the stream is proxied while the cache fills. `src` is the
+    original link, used to resolve again after a restart or once YouTube's link expired.
+    Example: reopen yesterday's YouTube song → served from <cache>/youtube-<id>.m4a, no YouTube call.
+    """
+    range_header = request.headers.get('range')
+    audio_path = service.find_cached_audio(track_id)
+    if not audio_path and not range_header:
+        audio_path = await wait_for_cache_download(track_id)
+    if audio_path and audio_path.is_file():
+        kinds = {'.m4a': 'audio/mp4', '.webm': 'audio/webm', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.wav': 'audio/wav'}
+        return FileResponse(str(audio_path), media_type=kinds.get(audio_path.suffix.lower()))
+
+    meta = resolved_meta(track_id)
+    for attempt in range(2):
+        if meta is None or attempt == 1:
+            if not src:
+                raise HTTPException(404, f"Stream for '{track_id}' is not known; open the link again")
+            meta = await asyncio.to_thread(resolve_stream, src)
+            remember_resolved(meta)
+        start_cache_download(track_id, meta['streamUrl'], AUDIO_CACHE_DIR)
+        try:
+            return await create_proxy_stream_response(meta['streamUrl'], range_header=range_header)
+        except HTTPException:
+            if attempt == 1 or not src:
+                raise  # the second try already used a freshly resolved link
 
 
 @app.get('/api/stream/proxy')
@@ -205,6 +246,7 @@ async def proxy_audio_stream(url: str, request: Request):
 @app.get('/api/analyze/stream/{track_id}')
 async def stream_analysis_events(
     track_id: str,
+    src: str = '',
     service: AudioIntelligenceService = Depends(get_service),
     repository: AnalysisRepository = Depends(get_repository)
 ):
@@ -233,6 +275,12 @@ async def stream_analysis_events(
 
         # Look for cached audio
         audio_path = service.find_cached_audio(track_id) or await wait_for_cache_download(track_id)
+        if (not audio_path) and src:
+            # The service restarted since the link was opened: resolve it again and cache it.
+            meta = await asyncio.to_thread(resolve_stream, src)
+            remember_resolved(meta)
+            start_cache_download(track_id, meta['streamUrl'], AUDIO_CACHE_DIR)
+            audio_path = await wait_for_cache_download(track_id)
         if not audio_path or not audio_path.is_file():
             if track_id == 'original-demo':
                 audio_path = DEMO_WAV
@@ -241,9 +289,16 @@ async def stream_analysis_events(
                 return
 
         # Same extractor and window grid as /api/analyze; segments are streamed once computed.
+        # LENGTH FIX - this used a hard-coded 300 s, so songs longer than 5 minutes lost their
+        # ending. It now follows the same limit as imported files (audio.max_duration_sec).
+        # SAVE FIX - the result is saved, so a reload (or a second listener) replays it instead
+        # of showing "Not analysed" again.
         analysis = await asyncio.to_thread(
-            service.feature_extractor.extract_track_analysis, audio_path, None, False, 0.0, 300.0
+            service.feature_extractor.extract_track_analysis, audio_path, track_id, False, 0.0, None
         )
+        analysis['trackId'] = track_id
+        title = (resolved_meta(track_id) or {}).get('title') or track_id
+        await asyncio.to_thread(repository.save_analysis, track_id, analysis, title=title)
         segments = analysis['segments']
         for idx, seg in enumerate(segments):
             msg = {

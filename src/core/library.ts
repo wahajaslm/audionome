@@ -8,12 +8,26 @@ import { SERVICE_URL } from './service.ts';
 
 export const SERVICE = SERVICE_URL;
 
-/** Tracks opened from a stream carry their playable URL (set by the stream importer). */
-export type PlayableTrack = Track & { streamPlaybackUrl?: string };
+/** Tracks opened from a stream carry their playable URL and the link they came from. */
+export type PlayableTrack = Track & { streamPlaybackUrl?: string; originalUrl?: string };
+
+/**
+ * Songs opened from a link before the ONE DOWNLOAD FIX saved a YouTube URL that expires after a
+ * few hours. Rewrite those to the service's stream endpoint, rebuilding the link from the id.
+ * Example: id 'youtube-abc' with '/api/stream/proxy?url=…' → '/api/stream/audio/youtube-abc?src=…watch?v=abc'.
+ */
+function playableStreamUrl(t: PlayableTrack): string | undefined {
+  const url = t.streamPlaybackUrl;
+  if (!url || !url.includes('/api/stream/proxy')) return url;
+  const original = t.originalUrl || (t.id.startsWith('youtube-') ? 'https://www.youtube.com/watch?v=' + t.id.slice(8) : '');
+  return original
+    ? SERVICE + '/api/stream/audio/' + encodeURIComponent(t.id) + '?src=' + encodeURIComponent(original)
+    : url;
+}
 
 /** The URL used when the track has no stored audio, or the stored audio fails to play. */
 export function fallbackUrl(t: PlayableTrack): string {
-  return t.id === 'original-demo' ? '/demo.wav' : (t.streamPlaybackUrl || (SERVICE + '/api/audio/' + encodeURIComponent(t.id)));
+  return t.id === 'original-demo' ? '/demo.wav' : (playableStreamUrl(t) || (SERVICE + '/api/audio/' + encodeURIComponent(t.id)));
 }
 
 /** Full-mix URL used when switching back from a stem (index.html's behaviour). */

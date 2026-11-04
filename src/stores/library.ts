@@ -9,7 +9,7 @@ import type { PlayableTrack } from '../core/library';
 import { useUiStore } from './ui';
 import { useIntelligenceStore } from './intelligence';
 import { usePlaybackStore } from './playback';
-import { getProxyStreamUrl, listenToAnalysisStream, resolveStreamUrl } from '../services/streaming';
+import { listenToAnalysisStream, resolveStreamUrl, streamAudioUrl } from '../services/streaming';
 
 /** Tracks in the library and the local analysis jobs running on them. */
 export const useLibraryStore = defineStore('library', () => {
@@ -162,14 +162,14 @@ export const useLibraryStore = defineStore('library', () => {
       const meta = await resolveStreamUrl(url);
       const t: PlayableTrack = {
         id: meta.id, title: meta.title, artist: meta.artist, durationSec: meta.durationSec,
-        mimeType: 'audio/mpeg', source: 'external-reference', analysisRight: 'cleared', addedAt: Date.now(),
-        streamPlaybackUrl: meta.isDirect ? meta.streamUrl : getProxyStreamUrl(meta.streamUrl),
+        mimeType: 'audio/mp4', source: 'external-reference', analysisRight: 'cleared', addedAt: Date.now(),
+        streamPlaybackUrl: streamAudioUrl(meta.id, meta.originalUrl), originalUrl: meta.originalUrl,
       };
       await putTrack(t);
       await load();
       await usePlaybackStore().changeTrack(track(t.id) || t, false);
       ui.notify('Loaded "' + meta.title + '" · Playing from stream');
-      startProgressiveAnalysis(t.id);
+      startProgressiveAnalysis(t.id, meta.originalUrl);
     } catch (err) {
       ui.notify('Stream Error: ' + (err as Error).message);
       throw err;
@@ -179,7 +179,7 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   /** Streams analysis windows from the service as they are computed. */
-  function startProgressiveAnalysis(trackId: string): void {
+  function startProgressiveAnalysis(trackId: string, originalUrl?: string): void {
     const intelligence = useIntelligenceStore();
     isStreamingAnalysis.value = true;
     streamProgress.value = { current: 0, total: 1 };
@@ -194,11 +194,15 @@ export const useLibraryStore = defineStore('library', () => {
       intelligence.analyses = existing ? [...intelligence.analyses] : [...intelligence.analyses, target];
     }, () => {
       isStreamingAnalysis.value = false;
+      // SAVE FIX - the finished analysis is stored on this device, so a reload keeps it.
+      // Example: open a YouTube link, reload → the song still shows "Analyzed · N windows".
+      const done = intelligence.analyses.find(a => a.trackId === trackId);
+      if (done) putAnalysis(JSON.parse(JSON.stringify(done))).catch(console.warn);
       useUiStore().notify('Analysis stream complete');
     }, err => {
       isStreamingAnalysis.value = false;
       console.warn('Progressive stream notice:', err);
-    });
+    }, originalUrl);
   }
 
   return {

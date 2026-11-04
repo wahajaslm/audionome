@@ -338,3 +338,11 @@ test('diagnostics: the live window follows the playhead inside the selection; me
   assert.equal(songRelative(segs, segs[9])[0].level, 1);
 });
 
+test('library: songs saved with an expiring YouTube proxy URL play from the stream endpoint instead', async () => {
+  const { fallbackUrl } = await import('../src/core/library.ts');
+  const old = fallbackUrl({ id: 'youtube-abc', streamPlaybackUrl: 'http://127.0.0.1:8765/api/stream/proxy?url=x' });
+  assert.match(old, /\/api\/stream\/audio\/youtube-abc\?src=https%3A%2F%2Fwww\.youtube\.com%2Fwatch%3Fv%3Dabc$/);
+  const fresh = 'http://127.0.0.1:8765/api/stream/audio/youtube-abc?src=y';
+  assert.equal(fallbackUrl({ id: 'youtube-abc', streamPlaybackUrl: fresh }), fresh);
+});
+

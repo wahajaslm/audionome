@@ -119,6 +119,8 @@ def resolve_stream(url: str) -> dict[str, Any]:
 # the audio to the cache in the background, and analysis waits for that download.
 # Example: open a YouTube link -> <cache>/youtube-kJQP7kiw5Fk.m4a appears a few seconds later.
 _pending_downloads: dict[str, asyncio.Task[Path | None]] = {}
+# Resolved metadata by track id, so the audio endpoint and analysis can find a stream again.
+_resolved: dict[str, dict[str, Any]] = {}
 
 _SUFFIX_BY_TYPE = {'audio/mp4': '.m4a', 'audio/webm': '.webm', 'audio/mpeg': '.mp3', 'audio/ogg': '.ogg', 'audio/wav': '.wav'}
 
@@ -134,12 +136,24 @@ async def _download_to_cache(track_id: str, stream_url: str, cache_dir: Path) ->
         suffix = _SUFFIX_BY_TYPE.get(kind) or Path(stream_url.split('?')[0]).suffix or '.m4a'
         cache_dir.mkdir(parents=True, exist_ok=True)
         target = cache_dir / f'{track_id}{suffix}'
-        await asyncio.to_thread(target.write_bytes, res.content)
+        # Written under a temporary name and renamed, so a half-written file is never served.
+        partial = cache_dir / f'.{track_id}{suffix}.part'
+        await asyncio.to_thread(partial.write_bytes, res.content)
+        partial.replace(target)
         return target
     except Exception:
         return None
     finally:
         _pending_downloads.pop(track_id, None)
+
+
+def remember_resolved(meta: dict[str, Any]) -> None:
+    """Keeps a resolved stream's metadata (title, stream URL) for this service run."""
+    _resolved[meta['id']] = meta
+
+
+def resolved_meta(track_id: str) -> dict[str, Any] | None:
+    return _resolved.get(track_id)
 
 
 def start_cache_download(track_id: str, stream_url: str, cache_dir: Path) -> None:
