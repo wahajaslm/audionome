@@ -82,6 +82,8 @@ const waitingText = computed(() => ({
 }));
 
 // S / M: solo plays one stem, mute plays the song without it ('no_<stem>'). Pressing again goes back to the mix.
+/** Lanes drag: the dragged range becomes the passage; loop and Explore stay on (resize path). */
+function setLoop(a: number, b: number): void { playback.resizeSelection(a, b); playback.endResize(); }
 function solo(s: StemName): void { playback.switchStem(activeStem.value === s ? 'all' : s); }
 function mute(s: StemName): void { playback.switchStem(activeStem.value === 'no_' + s ? 'all' : 'no_' + s); }
 
@@ -163,10 +165,11 @@ const measurements = computed(() => {
       :active-stem="activeStem"
       :waiting-text="waitingText"
       @seek="s => playback.clickSeek(s)"
+      @loop="setLoop"
       @solo="solo"
       @mute="mute"
     />
-    <div class="hint caption">S plays one stem alone, M plays the song without it. Click a lane to jump there.</div>
+    <div class="hint caption">S plays one stem alone, M plays the song without it. Click a lane to jump there, drag across it to loop that part.</div>
 
     <div class="rails">
       <div class="rhead caption"><span>Right now, compared with the whole song</span><span>dot = last second · band = this passage</span></div>

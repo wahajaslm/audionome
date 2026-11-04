@@ -1,15 +1,17 @@
 <script setup lang="ts">
 /**
  * The whole song on one width: parts (A, B, C… = parts that sound alike), the spectrum,
- * loudness, and when each stem plays. Click anywhere to play from there.
+ * loudness, and when each stem plays. Click anywhere to play from there; drag to loop a range.
  * Lanes whose tier has not arrived say what they are waiting for.
  */
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { STEM_NAMES, type Timeline } from '../../core/timeline';
 import { spectrumTiles, type Spectrum } from '../../core/spectrum';
+import { useTimeDrag } from '../../composables/useTimeDrag';
 
 const props = defineProps<{ timeline: Timeline | null; spectrum: Spectrum | null; duration: number; t: number | null; spectrumNote: string }>();
-const emit = defineEmits<{ seek: [sec: number] }>();
+const emit = defineEmits<{ seek: [sec: number]; range: [a: number, b: number] }>();
+const dragRange = ref<[number, number] | null>(null);
 
 const ROWS = [
   { k: 'parts', h: 18, name: 'Parts' },
@@ -91,19 +93,31 @@ function draw(): void {
     }
   }
   if (props.t != null) { g.fillStyle = tok('--accent'); g.fillRect(X(props.t) - 0.75, 0, 1.5, HEIGHT - 18); }
+  if (dragRange.value) {
+    const [a, b] = dragRange.value;
+    g.fillStyle = 'rgba(142,197,184,0.18)'; g.fillRect(X(a), 0, X(b) - X(a), HEIGHT - 18);
+    g.fillStyle = tok('--accent'); g.fillRect(X(a) - 1, 0, 2, HEIGHT - 18); g.fillRect(X(b) - 1, 0, 2, HEIGHT - 18);
+  }
 }
 
-watch(() => [props.timeline, props.spectrum, props.duration, props.t == null ? -1 : Math.round(props.t * 4)], () => requestAnimationFrame(draw));
+watch(() => [props.timeline, props.spectrum, props.duration, props.t == null ? -1 : Math.round(props.t * 4), dragRange.value], () => requestAnimationFrame(draw));
 onMounted(() => {
   ro = new ResizeObserver(([e]) => { width.value = e.contentRect.width; draw(); });
   if (cv.value) ro.observe(cv.value);
 });
 onBeforeUnmount(() => ro?.disconnect());
 
-function onClick(e: MouseEvent): void {
-  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-  emit('seek', (e.clientX - r.left) / r.width * props.duration);
-}
+// Click: play from there. Drag: loop that range (LOOP ANYWHERE FIX).
+const drag = useTimeDrag(
+  x => { const r = cv.value!.getBoundingClientRect(); return Math.max(0, Math.min(props.duration, (x - r.left) / r.width * props.duration)); },
+  {
+    click: sec => emit('seek', sec),
+    range: (a, b, phase) => {
+      dragRange.value = phase === 'end' ? null : [a, b];
+      if (phase === 'end') emit('range', a, b);
+    },
+  },
+);
 </script>
 
 <template>
@@ -113,7 +127,7 @@ function onClick(e: MouseEvent): void {
         <i v-if="r.s" class="sw" :style="{ background: 'var(--stem-' + r.s + ')' }"></i>{{ r.name }}
       </span>
     </div>
-    <canvas ref="cv" class="cv" :style="{ height: HEIGHT + 'px' }" aria-label="The whole song: parts, spectrum, loudness and stems. Click to play from there." @click="onClick"></canvas>
+    <canvas ref="cv" class="cv" :style="{ height: HEIGHT + 'px' }" aria-label="The whole song: parts, spectrum, loudness and stems. Click to play from there, drag to loop a range." @pointerdown="drag.pointerdown" @pointermove="drag.pointermove" @pointerup="drag.pointerup" @pointercancel="drag.pointercancel"></canvas>
   </div>
 </template>
 
@@ -122,6 +136,6 @@ function onClick(e: MouseEvent): void {
 .lbl { position: relative; }
 .l { position: absolute; left: 0; display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-mute); }
 .sw { width: 7px; height: 7px; border-radius: 50%; }
-.cv { display: block; width: 100%; cursor: pointer; }
+.cv { display: block; width: 100%; cursor: crosshair; touch-action: pan-y; }
 @media (max-width: 600px) { .map { grid-template-columns: 64px minmax(0, 1fr); } }
 </style>

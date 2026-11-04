@@ -2,15 +2,17 @@
 /**
  * Under the waveform, on the same width: the song's parts (A, B, C… = parts that sound alike),
  * dots for the selected passage's moments, a faint mark where its chords come back, and one
- * live line — sounding chord, the next one, bar · beat, part. It needs only the quick tier, so
+ * live line — sounding chord, the next one, bar · beat, part. Click a part to select it, drag to mark
+ * a passage (both set the loop markers, like the waveform). It needs only the quick tier, so
  * it shows while stems are still being separated, and it works without opening Explore.
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { barAt, beatInBar, blockIndexAt, type PassageMoment, type Timeline } from '../../core/timeline';
 import { formatTime } from '../../ui/format';
+import { useTimeDrag } from '../../composables/useTimeDrag';
 
 const props = defineProps<{ timeline: Timeline | null; duration: number; t: number; moments: PassageMoment[] }>();
-const emit = defineEmits<{ seek: [sec: number] }>();
+const emit = defineEmits<{ range: [a: number, b: number, phase: 'start' | 'move' | 'end'] }>();
 
 const cv = ref<HTMLCanvasElement | null>(null);
 const width = ref(0);
@@ -65,15 +67,23 @@ const now = computed(() => {
   };
 });
 
-function onClick(e: MouseEvent): void {
-  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-  emit('seek', (e.clientX - r.left) / r.width * props.duration);
-}
+// LOOP ANYWHERE FIX - click a part to select the whole part; drag to mark any range.
+// Example: click the C block at 0:58 → selection 0:58–1:18.
+const drag = useTimeDrag(
+  x => { const r = cv.value!.getBoundingClientRect(); return Math.max(0, Math.min(props.duration, (x - r.left) / r.width * props.duration)); },
+  {
+    click: sec => {
+      const p = props.timeline?.sections?.find(s => sec >= s.a && sec < s.b);
+      if (p) { emit('range', p.a, p.a, 'start'); emit('range', p.a, p.b, 'end'); }
+    },
+    range: (a, b, phase) => emit('range', a, b, phase),
+  },
+);
 </script>
 
 <template>
   <div class="strip">
-    <canvas ref="cv" class="cv" :style="{ height: H + 'px' }" aria-label="Song parts and marked moments" @click="onClick"></canvas>
+    <canvas ref="cv" class="cv" :style="{ height: H + 'px' }" aria-label="Song parts and marked moments. Click a part to select it, drag to mark a passage." @pointerdown="drag.pointerdown" @pointermove="drag.pointermove" @pointerup="drag.pointerup" @pointercancel="drag.pointercancel"></canvas>
     <div v-if="now" class="now" aria-live="off">
       <span class="ch">{{ now.chord }}</span>
       <span v-if="now.next" class="nx">next {{ now.next.c }} in {{ now.next.in }} s</span>
@@ -86,7 +96,7 @@ function onClick(e: MouseEvent): void {
 
 <style scoped>
 .strip { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
-.cv { display: block; width: 100%; cursor: pointer; }
+.cv { display: block; width: 100%; cursor: pointer; touch-action: pan-y; }
 .now { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; font-size: 13px; color: var(--ink-sub); font-variant-numeric: tabular-nums; }
 .ch { color: var(--ink); font-size: 15px; font-weight: 500; min-width: 2.5em; }
 .nx { color: var(--ink-mute); }

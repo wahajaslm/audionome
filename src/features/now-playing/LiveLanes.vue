@@ -9,6 +9,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { noteName, quantile, STEM_NAMES, type StemName, type Timeline } from '../../core/timeline';
 import { hzToMel, spectrumTiles, SPEC_TILE, type Spectrum } from '../../core/spectrum';
+import { useTimeDrag } from '../../composables/useTimeDrag';
 
 const props = defineProps<{
   timeline: Timeline | null;
@@ -20,7 +21,7 @@ const props = defineProps<{
   activeStem: string;
   waitingText: { quick: string; full: string; spectrum: string };
 }>();
-const emit = defineEmits<{ seek: [sec: number]; solo: [stem: StemName]; mute: [stem: StemName] }>();
+const emit = defineEmits<{ seek: [sec: number]; loop: [a: number, b: number]; solo: [stem: StemName]; mute: [stem: StemName] }>();
 
 type Row = { k: 'bar' | 'spec' | 'chord' | 'melody' | 'stem' | 'loud' | 'axis'; h: number; gap?: number; name: string; s?: StemName; y?: number };
 const ROWS: Row[] = [
@@ -52,7 +53,12 @@ const audible = (s: string) => (!soloed.value || soloed.value === s) && mutedSte
  * show the wrong part of the song, or a blank third of negative time.
  * Example: passage 1:35–2:41, playhead at 0:00 → view 1:35–1:47, not -0:04–0:08.
  */
+/** While dragging a new loop the axis is frozen, so it does not move under the pointer. */
+const frozen = ref<[number, number] | null>(null);
+/** The range being dragged, drawn over the lanes until release. */
+const dragRange = ref<[number, number] | null>(null);
 const view = computed<[number, number]>(() => {
+  if (frozen.value) return frozen.value;
   if (props.zoom === 'all') return [props.range.a, props.range.b];
   const inside = props.t >= props.range.a && props.t <= props.range.b;
   const c = inside ? props.t : props.range.a + 4;
@@ -178,19 +184,32 @@ function draw(): void {
     }
   }
   if (t >= v0 && t <= v1) { g.fillStyle = C.accent; g.fillRect(X(t) - 0.75, 0, 1.5, HEIGHT - 14); }
+  if (dragRange.value) {
+    const [a, b] = dragRange.value;
+    g.fillStyle = 'rgba(142,197,184,0.16)'; g.fillRect(X(a), 0, X(b) - X(a), HEIGHT - 14);
+    g.fillStyle = C.accent; g.fillRect(X(a) - 1, 0, 2, HEIGHT - 14); g.fillRect(X(b) - 1, 0, 2, HEIGHT - 14);
+  }
 }
 
-watch(() => [props.t, props.zoom, props.timeline, props.spectrum, props.activeStem, props.range.a, props.range.b], () => requestAnimationFrame(draw));
+watch(() => [props.t, props.zoom, props.timeline, props.spectrum, props.activeStem, props.range.a, props.range.b, dragRange.value], () => requestAnimationFrame(draw));
 onMounted(() => {
   ro = new ResizeObserver(([e]) => { width.value = e.contentRect.width; draw(); });
   if (cv.value) ro.observe(cv.value);
 });
 onBeforeUnmount(() => ro?.disconnect());
 
-function onClick(e: MouseEvent): void {
-  const r = (e.currentTarget as HTMLElement).getBoundingClientRect(), [v0, v1] = view.value;
-  emit('seek', Math.max(0, v0 + (e.clientX - r.left) / r.width * (v1 - v0)));
-}
+// Click a lane: seek there. Drag across the lanes: that range becomes the loop (LOOP ANYWHERE FIX).
+const drag = useTimeDrag(
+  x => { const r = cv.value!.getBoundingClientRect(), [v0, v1] = view.value; return Math.max(0, v0 + (x - r.left) / r.width * (v1 - v0)); },
+  {
+    click: sec => emit('seek', sec),
+    range: (a, b, phase) => {
+      if (phase === 'start') frozen.value = view.value;
+      dragRange.value = phase === 'end' ? null : [a, b];
+      if (phase === 'end') { frozen.value = null; emit('loop', a, b); }
+    },
+  },
+);
 const stemsReady = computed(() => !!props.timeline?.stems);
 </script>
 
@@ -206,7 +225,7 @@ const stemsReady = computed(() => !!props.timeline?.stems);
         </template>
       </div>
     </div>
-    <canvas ref="cv" class="cv" :style="{ height: HEIGHT + 'px' }" aria-label="Bars, spectrum, chords, vocal melody, stem loudness and loudness around the playhead" @click="onClick"></canvas>
+    <canvas ref="cv" class="cv" :style="{ height: HEIGHT + 'px' }" aria-label="Bars, spectrum, chords, vocal melody, stem loudness and loudness around the playhead" @pointerdown="drag.pointerdown" @pointermove="drag.pointermove" @pointerup="drag.pointerup" @pointercancel="drag.pointercancel"></canvas>
   </div>
 </template>
 
@@ -224,7 +243,7 @@ const stemsReady = computed(() => !!props.timeline?.stems);
 .sm[aria-pressed='true'] { background: var(--chip-on); border-color: var(--chip-on-line); color: var(--ink); }
 .sm:disabled { opacity: .35; cursor: default; }
 .sm:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.cv { display: block; width: 100%; cursor: pointer; }
+.cv { display: block; width: 100%; cursor: crosshair; touch-action: pan-y; }
 @media (max-width: 600px) {
   .lanes { grid-template-columns: 72px minmax(0, 1fr); }
   .sm { display: none; }

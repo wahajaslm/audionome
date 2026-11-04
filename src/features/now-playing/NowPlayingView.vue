@@ -64,6 +64,13 @@ const activeHint = computed(() => listening.learning
 /** Moments of the selected passage, as dots under the waveform. */
 const stripMoments = computed(() => (timelineStore.timeline && sel.value ? passageMoments(timelineStore.timeline, sel.value) : []));
 
+/** Strip under the waveform: same selection gestures as dragging on the waveform. */
+function onStripRange(a: number, b: number, phase: 'start' | 'move' | 'end'): void {
+  if (phase === 'start') playback.beginSelection();
+  playback.updateSelection(a, b);
+  if (phase === 'end') playback.commitSelection();
+}
+
 function onLoopButton(): void { playback.toggleLoop(); }
 </script>
 
@@ -97,7 +104,7 @@ function onLoopButton(): void { playback.toggleLoop(); }
         @step="wf.step"
         @select-around="wf.selectAround"
       />
-      <SongStrip :timeline="timelineStore.timeline" :duration="duration" :t="t" :moments="stripMoments" @seek="s => playback.clickSeek(s)" />
+      <SongStrip :timeline="timelineStore.timeline" :duration="duration" :t="t" :moments="stripMoments" @range="onStripRange" />
       <SelectionToolbar
         v-if="sel"
         :range="sel"

@@ -151,7 +151,7 @@ async function rerun(): Promise<void> {
         <span class="caption sub">{{ facts.join(' · ') || (serviceOff ? 'Start the analysis service to see the song’s structure.' : 'Analysing…') }}</span>
       </div>
       <SongMap :timeline="tl" :spectrum="spectrum" :duration="duration" :t="isLoaded ? playback.t : null"
-        :spectrum-note="isLoaded ? 'Reading audio…' : 'Open this song in the player to see its spectrum'" @seek="seek" />
+        :spectrum-note="isLoaded ? 'Reading audio…' : 'Open this song in the player to see its spectrum'" @seek="seek" @range="playPart" />
     </section>
 
     <section v-if="chart.parts.length" class="block">
