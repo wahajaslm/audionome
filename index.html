@@ -982,7 +982,7 @@ button.pill{cursor:pointer;margin:0 10px}
     (function () {
       var DUR = 32;
       let music, objectURL = null, analyses = [], ratings = [], events = [], suggestions = [], candidates = [], audioPeaks = [];
-      let loading = false, loadedTrackId = null, loadSeq = 0, seekGuardUntil = 0, playQueue = [], previewEnd = null, analyzingIds = new Set(), analyzeStatus = {};
+      let loading = false, loadedTrackId = null, loadSeq = 0, playQueue = [], previewEnd = null, analyzingIds = new Set(), analyzeStatus = {};
       let spanStart = null;
       const sessionId = crypto.randomUUID();
       const uid = () => crypto.randomUUID();
@@ -994,14 +994,38 @@ button.pill{cursor:pointer;margin:0 10px}
           feelings: m.feelings || [], qualities: m.qualities || [], note: m.note || '', createdAt: m.createdAt || Date.now(), updatedAt: Date.now()
         };
       }
+      // SYNC FIX 7 - events are stamped with the audio element's own clock.
+      // S.t is a copy: the 60 fps loop writes it once per frame, and click handlers write the
+      // *requested* position before the browser has moved there. Reading the element directly
+      // gives the position you actually heard.
+      // Example: pausing at 42.731 s used to log positionSec 42.715 (the last drawn frame).
+      // Falls back to S.t only while a seek is still waiting for metadata.
+      function mediaTime() {
+        return (music && music.hasSource() && !music.hasPendingSeek()) ? music.getCurrentTime() : S.t;
+      }
+      // DELAY FIX 3 - every saved event used to reload all events and re-rank the whole library
+      // straight away, on the main thread. Pressing play saves a 'play' event, so that heavy work
+      // ran in the very frames where the playhead should start moving: sound started, but the
+      // screen looked frozen for a moment.
+      // Now refreshes are batched: one runs 1 s after the last event, when the browser is idle.
+      // Example: play, seek, seek, loop within a second -> one refresh instead of four.
+      let intelligenceTimer = null;
+      function scheduleIntelligenceRefresh() {
+        clearTimeout(intelligenceTimer);
+        intelligenceTimer = setTimeout(() => {
+          const run = () => refreshIntelligence().catch(console.warn);
+          if (window.requestIdleCallback) requestIdleCallback(run, { timeout: 2000 }); else run();
+        }, 1000);
+      }
       function emit(kind, origin = 'user', extra = {}) {
         if (!S.learning || !S.trackId) return;
-        db.events.add({ id: uid(), trackId: S.trackId, sessionId, kind, origin, at: Date.now(), positionSec: S.t, ...extra })
-          .then(refreshIntelligence).catch(console.warn);
+        db.events.add({ id: uid(), trackId: S.trackId, sessionId, kind, origin, at: Date.now(), positionSec: mediaTime(), ...extra })
+          .then(scheduleIntelligenceRefresh).catch(console.warn);
       }
       function flushListenSpan(endedBy = 'user_action') {
         if (spanStart !== null && S.trackId && S.learning) {
-          const fromSec = Math.min(spanStart, S.t), toSec = Math.max(spanStart, S.t);
+          const now = mediaTime();
+          const fromSec = Math.min(spanStart, now), toSec = Math.max(spanStart, now);
           const durationSec = Math.round((toSec - fromSec) * 100) / 100;
           if (durationSec >= 1.0) {
             emit('listen_span', 'player', { fromSec, toSec, durationSec, endedBy });
@@ -1061,6 +1085,16 @@ button.pill{cursor:pointer;margin:0 10px}
         savedForTrack(); await refreshIntelligence();
       }
       let peakCtx = null;
+      // DELAY FIX 4 - the waveform needs the whole file decoded (and, for streamed or server
+      // tracks, downloaded a second time). That used to start the moment a track loaded, competing
+      // with the first seconds of playback. Now it waits 1.5 s and then for an idle moment.
+      // Example: pressing play on a 20 MB track no longer races a 20 MB decode for the CPU.
+      function schedulePeakDecode(source, seq) {
+        const start = () => { if (seq === loadSeq) decodePeaksInBackground(source, seq); };
+        setTimeout(() => {
+          if (window.requestIdleCallback) requestIdleCallback(start, { timeout: 3000 }); else start();
+        }, 1500);
+      }
       async function decodePeaksInBackground(source, seq) {
         try {
           let buf;
@@ -1077,9 +1111,17 @@ button.pill{cursor:pointer;margin:0 10px}
           if (!peakCtx) peakCtx = new (window.AudioContext || window.webkitAudioContext)();
           const decoded = await peakCtx.decodeAudioData(buf.slice(0));
           if (seq !== loadSeq) return;
-          const ch = decoded.getChannelData(0), step = Math.max(1, Math.floor(ch.length / 400));
+          // SYNC FIX 9 - the 400 waveform bars are laid out on the media's own duration (DUR, from
+          // the <audio> element), the same scale the playhead and click-to-seek use.
+          // Before, bars were cut from the decoded buffer length, which can differ from the media
+          // duration by MP3/AAC encoder padding, and the last partial bucket was dropped.
+          // Example: media 466.02 s, decoded 466.07 s -> bar 399 now ends exactly at 466.02 s.
+          const ch = decoded.getChannelData(0);
+          const span = Math.min(ch.length, Math.round((DUR || decoded.duration) * decoded.sampleRate));
           const peaks = Array.from({ length: 400 }, (_, i) => {
-            let m = 0; for (let k = i * step; k < Math.min(ch.length, (i + 1) * step); k += Math.max(1, Math.floor(step / 50))) m = Math.max(m, Math.abs(ch[k])); return m;
+            const from = Math.floor(i * span / 400), to = Math.max(from + 1, Math.floor((i + 1) * span / 400));
+            const stride = Math.max(1, Math.floor((to - from) / 50));
+            let m = 0; for (let k = from; k < Math.min(ch.length, to); k += stride) m = Math.max(m, Math.abs(ch[k])); return m;
           });
           const mx = Math.max(.001, ...peaks);
           audioPeaks = peaks.map(v => .05 + .95 * Math.pow(v / mx, .75));
@@ -1094,7 +1136,7 @@ button.pill{cursor:pointer;margin:0 10px}
         if (!loading && loadedTrackId === t.id && S.trackId === t.id && music && music.hasSource()) {
           previewEnd = null; S.sel = null; S.describe = null; S.ask = null; S.loop = false; S.justSaved = false;
           if (navigate) S.view = 'player';
-          S.t = Math.min(seconds, DUR); seekGuardUntil = Date.now() + 300; music.setTime(S.t);
+          S.t = Math.min(seconds, DUR); music.setTime(S.t);
           if (play) { try { await music.play(); S.playing = true; } catch (e) { console.warn(e); } }
           render(); return;
         }
@@ -1133,13 +1175,15 @@ button.pill{cursor:pointer;margin:0 10px}
           if (play) {
             try { await music.play(); S.playing = true; } catch (e) { console.warn('Play error:', e); }
           }
+          // Real media duration: load() has waited for metadata (SYNC FIX 2), so this is no longer 0
+          // and placeholder lengths in the library are corrected here.
           const d = music.getDuration();
           if (d && Number.isFinite(d) && d > 0) {
             DUR = d;
             if (Math.abs((t.dur || 0) - DUR) > 1) { t.dur = DUR; t.durationSec = DUR; db.tracks.update(t.id, { durationSec: DUR }).catch(() => { }); }
           }
           render();
-          decodePeaksInBackground(blob || srcUrl, seq);
+          schedulePeakDecode(blob || srcUrl, seq);
         } catch (err) {
           if (seq !== loadSeq) return;
           loading = false; console.warn('Audio load status:', err);
@@ -1298,14 +1342,18 @@ button.pill{cursor:pointer;margin:0 10px}
         spotifyControlsBound = true;
 
         let dragging = false;
+        // SYNC FIX 8 - remember where a drag started, so the seek event has a real fromSec.
+        // Before, only toSec was logged; the analysis then read the missing fromSec as 0:00 and
+        // treated every drag as "skipped ahead from 0:00", adding false "left early" evidence.
+        // Example: dragging from 0:30 to 2:10 now logs { fromSec: 30, toSec: 130 }.
+        let dragFrom = 0;
         function seekFromEvent(e) {
           const rect = rail.getBoundingClientRect();
           if (rect.width <= 0) return;
           const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
           const targetSec = ratio * (DUR || 32);
           S.t = targetSec;
-          seekGuardUntil = Date.now() + 250;
-          if (music) music.setTime(targetSec);
+                    if (music) music.setTime(targetSec);
           const pct = ratio * 100;
           const fill = $('sp-progress-fill');
           const handle = $('sp-progress-handle');
@@ -1319,6 +1367,7 @@ button.pill{cursor:pointer;margin:0 10px}
 
         rail.addEventListener('pointerdown', e => {
           dragging = true;
+          dragFrom = mediaTime();
           rail.classList.add('is-dragging');
           rail.setPointerCapture(e.pointerId);
           seekFromEvent(e);
@@ -1331,7 +1380,7 @@ button.pill{cursor:pointer;margin:0 10px}
             dragging = false;
             rail.classList.remove('is-dragging');
             seekFromEvent(e);
-            emit('seek', 'user', { toSec: S.t });
+            emit('seek', 'user', { fromSec: dragFrom, toSec: S.t });
             try { rail.releasePointerCapture(e.pointerId); } catch (_) { }
           }
         });
@@ -1345,12 +1394,12 @@ button.pill{cursor:pointer;margin:0 10px}
         rail.addEventListener('keydown', e => {
           if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
             const to = Math.min(DUR || 32, S.t + 5);
-            S.t = to; seekGuardUntil = Date.now() + 250; music?.setTime(to);
+            S.t = to; music?.setTime(to);
             if (S.view === 'player') drawWave();
             updateSpotifyBar();
           } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
             const to = Math.max(0, S.t - 5);
-            S.t = to; seekGuardUntil = Date.now() + 250; music?.setTime(to);
+            S.t = to; music?.setTime(to);
             if (S.view === 'player') drawWave();
             updateSpotifyBar();
           }
@@ -1627,19 +1676,17 @@ button.pill{cursor:pointer;margin:0 10px}
               if (hitSaved) { S.t = hitSaved.a; S.sel = { a: hitSaved.a, b: hitSaved.b }; previewEnd = hitSaved.b; }
               else { S.t = t; S.sel = null; previewEnd = null; S.describe = false; S.explore = false; S.loop = false; S.nudge = false; drawSlot(); }
             }
-            seekGuardUntil = Date.now() + 300;
-            music.setTime(S.t); emit('seek', 'user', { fromSec: from, toSec: S.t });
+                        music.setTime(S.t); emit('seek', 'user', { fromSec: from, toSec: S.t });
           } else {
             if (S.sel.b - S.sel.a < Math.min(3, DUR * 0.1)) { S.sel.b = Math.min(DUR, S.sel.a + Math.min(3, DUR * 0.1)); }
-            S.t = S.sel.a; previewEnd = S.sel.b; seekGuardUntil = Date.now() + 350;
-            music.setTime(S.sel.a); emit('seek', 'user', { fromSec: from, toSec: S.sel.a });
+            S.t = S.sel.a; previewEnd = S.sel.b;             music.setTime(S.sel.a); emit('seek', 'user', { fromSec: from, toSec: S.sel.a });
             music.play().catch(() => { });
           }
           x0 = null; refreshPlayerState();
         });
         wf.addEventListener('keydown', function (e) {
-          if (e.key === 'ArrowRight') { const from = S.t; S.t = Math.min(DUR, S.t + 5); seekGuardUntil = Date.now() + 300; music.setTime(S.t); emit('seek', 'user', { fromSec: from, toSec: S.t }); drawWave(); e.preventDefault(); }
-          if (e.key === 'ArrowLeft') { const from = S.t; S.t = Math.max(0, S.t - 5); seekGuardUntil = Date.now() + 300; music.setTime(S.t); emit('seek', 'user', { fromSec: from, toSec: S.t }); drawWave(); e.preventDefault(); }
+          if (e.key === 'ArrowRight') { const from = S.t; S.t = Math.min(DUR, S.t + 5); music.setTime(S.t); emit('seek', 'user', { fromSec: from, toSec: S.t }); drawWave(); e.preventDefault(); }
+          if (e.key === 'ArrowLeft') { const from = S.t; S.t = Math.max(0, S.t - 5); music.setTime(S.t); emit('seek', 'user', { fromSec: from, toSec: S.t }); drawWave(); e.preventDefault(); }
           if (e.key === 'Enter' && !S.sel) { S.sel = { a: Math.max(0, S.t - 10), b: Math.min(DUR, S.t + 10) }; previewEnd = S.sel.b; refreshPlayerState(); }
         });
       }
@@ -2482,7 +2529,7 @@ button.pill{cursor:pointer;margin:0 10px}
         }
         await selectTrack(t, a, false, navigate);
         S.sel = { a, b }; S.t = a; S.loop = false; S.nudge = false; S.justSaved = false;
-        previewEnd = b; seekGuardUntil = Date.now() + 350; music.setTime(a);
+        previewEnd = b; music.setTime(a);
         if (S.view === 'player') refreshPlayerState();
         try { await music.play(); } catch (err) { console.warn(err); }
         render();
@@ -2593,7 +2640,7 @@ button.pill{cursor:pointer;margin:0 10px}
               else {
                 if (S.sel) {
                   previewEnd = S.sel.b;
-                  if (S.t < S.sel.a || S.t >= S.sel.b - 0.15) { S.t = S.sel.a; seekGuardUntil = Date.now() + 300; music.setTime(S.sel.a); }
+                  if (S.t < S.sel.a || S.t >= S.sel.b - 0.15) { S.t = S.sel.a; music.setTime(S.sel.a); }
                 } else { previewEnd = null; }
                 try { await music.play(); emit('play'); } catch (err) { console.warn('Playback notice:', err); if (err?.name !== 'NotAllowedError' && err?.name !== 'AbortError') toast('Unable to play this recording.'); }
               }
@@ -2601,15 +2648,14 @@ button.pill{cursor:pointer;margin:0 10px}
             }
             case 'playsel': {
               if (!music || !S.sel) break;
-              S.t = S.sel.a; previewEnd = S.sel.b; seekGuardUntil = Date.now() + 350;
-              music.setTime(S.sel.a); refreshPlayerState();
+              S.t = S.sel.a; previewEnd = S.sel.b;               music.setTime(S.sel.a); refreshPlayerState();
               try { await music.play(); emit('play'); } catch (err) { console.warn(err); }
               break;
             }
             case 'seek': {
               const from = S.t, to = Math.max(0, Math.min(DUR, S.t + (+v)));
               if (!S.sel || to < S.sel.a || to > S.sel.b) previewEnd = null;
-              seekGuardUntil = Date.now() + 300; music.setTime(to); S.t = to; emit('seek', 'user', { fromSec: from, toSec: to }); refreshPlayerState(); break;
+              music.setTime(to); S.t = to; emit('seek', 'user', { fromSec: from, toSec: to }); refreshPlayerState(); break;
             }
             case 'answer': {
               const A = S.ask; S.ask = null; if (!A) break;
@@ -2734,7 +2780,7 @@ button.pill{cursor:pointer;margin:0 10px}
             case 'loop': {
               if (!S.sel) { S.sel = { a: Math.max(0, S.t - 5), b: Math.min(DUR, Math.max(0, S.t - 5) + 12) }; }
               S.loop = !S.loop; S.loops = 0;
-              if (S.loop) { S.t = S.sel.a; previewEnd = S.sel.b; seekGuardUntil = Date.now() + 300; music.setTime(S.t); if (!music.isPlaying()) music.play().catch(() => { }); }
+              if (S.loop) { S.t = S.sel.a; previewEnd = S.sel.b; music.setTime(S.t); if (!music.isPlaying()) music.play().catch(() => { }); }
               emit(S.loop ? 'loop_enabled' : 'loop_disabled', 'user', { momentStartSec: S.sel.a, momentEndSec: S.sel.b }); refreshPlayerState(); break;
             }
             case 'shuffle': {
@@ -2870,7 +2916,7 @@ button.pill{cursor:pointer;margin:0 10px}
         const el = document.createElement('audio');
         el.preload = 'auto';
         document.body.appendChild(el);
-        const listeners = { timeupdate: [], play: [], pause: [], finish: [] };
+        const listeners = { timeupdate: [], play: [], pause: [], finish: [], playing: [], waiting: [] };
         let pendingTime = null;
         let currentFallbackUrl = null;
         let usedFallback = false;
@@ -2898,18 +2944,46 @@ button.pill{cursor:pointer;margin:0 10px}
         });
         el.addEventListener('timeupdate', () => listeners.timeupdate.forEach(fn => fn(el.currentTime || 0)));
         el.addEventListener('play', () => listeners.play.forEach(fn => fn()));
+        // SYNC FIX 1 - "requested" vs "audible".
+        // 'play' fires the moment play() is called, even while the file is still buffering and
+        // nothing can be heard. 'playing' fires when sound actually starts; 'waiting' fires when
+        // playback stalls to buffer more data.
+        // Example: on a track served over HTTP, you press play at 0:00 wall-clock, the browser
+        // buffers, and sound starts about a second later. Before this fix that silent second
+        // was logged as listening time and the playhead sat still while the UI said "playing".
+        el.addEventListener('playing', () => listeners.playing.forEach(fn => fn()));
+        el.addEventListener('waiting', () => listeners.waiting.forEach(fn => fn()));
         el.addEventListener('pause', () => listeners.pause.forEach(fn => fn()));
         el.addEventListener('ended', () => listeners.finish.forEach(fn => fn()));
         return {
-          async load(url, startSec = 0, fallbackUrl = null) {
+          // SYNC FIX 2 - load() now resolves only when the file's metadata (duration, seekable
+          // range) is known, or the source fails, or 8 s pass.
+          // Before, it returned immediately, so:
+          //   - getDuration() right after load() was 0, and the stored duration was never fixed
+          //     (tracks kept placeholder lengths such as 180 s or 32 s);
+          //   - a start offset was applied only after playback had begun.
+          // Example: opening a saved moment at 1:20 could start at 0:00 and jump to 1:20.
+          // Now the position is set first, then play() starts at 1:20. The browser needs the
+          // metadata before it can play anyway, so waiting for it adds no delay.
+          load(url, startSec = 0, fallbackUrl = null) {
             pendingTime = startSec || 0;
             currentFallbackUrl = fallbackUrl;
             usedFallback = false;
-            el.src = url;
-            el.load();
-            if (el.readyState >= 1 && startSec > 0) {
-              try { el.currentTime = startSec; pendingTime = null; } catch (e) { }
-            }
+            return new Promise(resolve => {
+              const done = () => {
+                clearTimeout(timer);
+                el.removeEventListener('loadedmetadata', done);
+                el.removeEventListener('error', done);
+                resolve();
+              };
+              const timer = setTimeout(done, 8000);
+              // Registered after the engine's own 'loadedmetadata' handler, so the start offset
+              // (pendingTime) is already applied when this resolves.
+              el.addEventListener('loadedmetadata', done);
+              el.addEventListener('error', done);
+              el.src = url;
+              el.load();
+            });
           },
           async play() {
             try {
@@ -2928,6 +3002,10 @@ button.pill{cursor:pointer;margin:0 10px}
           pause() { el.pause(); },
           hasSource() { return Boolean(el.src) && (!el.error || el.error.code === 1); },
           isPlaying() { return !el.paused && !el.ended; },
+          // True while the browser is still moving to a new position after setTime().
+          isSeeking() { return el.seeking; },
+          // True when a position was requested before metadata arrived and is not applied yet.
+          hasPendingSeek() { return pendingTime !== null; },
           getCurrentTime() { return el.currentTime || 0; },
           setTime(sec) {
             const target = Math.max(0, Number(sec) || 0);
@@ -2952,6 +3030,7 @@ button.pill{cursor:pointer;margin:0 10px}
           }
           const curT = music.getCurrentTime();
           S.t = curT;
+          checkRegionEnd(curT);  // SYNC FIX 5: frame-accurate loop/preview end
           const totalSec = DUR || 32;
 
           // 1. Continuous 60fps playhead on waveform
@@ -2985,24 +3064,38 @@ button.pill{cursor:pointer;margin:0 10px}
           playheadRaf = requestAnimationFrame(updateSmoothPlayhead);
         }
 
-        music.on('timeupdate', t => {
-          if (loading || Date.now() < seekGuardUntil) return;
+        // SYNC FIX 5 - loop and preview ends are checked every animation frame (~16 ms) from the
+        // playhead loop below, not only on 'timeupdate', which browsers fire about every 250 ms.
+        // Example: a loop ending at 1:30.00 used to play on to as late as 1:30.25 before jumping
+        // back; now it jumps within one frame. 'timeupdate' still calls this as a backup for
+        // background tabs, where animation frames pause.
+        //
+        // SYNC FIX 6 - the old guard ignored every check for 250-350 ms after any seek, so a short
+        // loop could run past its end during that window. Now checks are skipped only while the
+        // browser reports it is still seeking; once it has arrived, the position is trustworthy.
+        function checkRegionEnd(t) {
+          if (loading || music.isSeeking()) return;
           if (previewEnd !== null && t >= previewEnd && !S.loop) {
             previewEnd = null;
             if (playQueue.length) { playNextMoment().catch(console.error); return; }
             music.pause();
-            if (S.sel) { S.t = S.sel.a; seekGuardUntil = Date.now() + 250; music.setTime(S.sel.a); }
+            if (S.sel) { S.t = S.sel.a; music.setTime(S.sel.a); }
             if (S.view === 'player') drawWave(); else render();
             updateSpotifyBar();
             return;
           }
-          if (S.loop && S.sel && t >= S.sel.b - 0.035 && t < S.sel.b + 1) {
+          if (S.loop && S.sel && t >= S.sel.b - 0.02 && t < S.sel.b + 1) {
             flushListenSpan('loop_cycle');
-            seekGuardUntil = Date.now() + 250;
+            // Logged at the loop end, where it happened (it used to log the restart position).
+            emit('loop_cycle', 'player', { momentStartSec: S.sel.a, momentEndSec: S.sel.b, positionSec: S.sel.b });
             music.setTime(S.sel.a); S.t = S.sel.a; S.loops++;
-            emit('loop_cycle', 'player', { momentStartSec: S.sel.a, momentEndSec: S.sel.b });
+            spanStart = S.sel.a;
             if (S.loops >= 2 && !S.nudged && !S.describe && S.view === 'player') { S.nudge = true; S.nudged = true; drawSlot(); }
           }
+        }
+        music.on('timeupdate', t => {
+          checkRegionEnd(t);
+          if (loading) return;
           const rail = $('sp-progress-rail'); if (rail) rail.setAttribute('aria-valuenow', Math.round(t));
           if (S.view !== 'player') {
             if (S.view === 'admin') drawAdminCanvases(true);
@@ -3012,7 +3105,7 @@ button.pill{cursor:pointer;margin:0 10px}
           }
         });
         music.on('play', () => {
-          spanStart = S.t; S.playing = true;
+          S.playing = true;  // button state only; listening time starts on 'playing' (SYNC FIX 1)
           if (!playheadRaf) playheadRaf = requestAnimationFrame(updateSmoothPlayhead);
           updateSpotifyBar();
           if (S.view === 'player') refreshPlayerState();
@@ -3020,6 +3113,16 @@ button.pill{cursor:pointer;margin:0 10px}
           else if (S.view === 'moments') { renderMoments(); renderShell(); }
           else if (S.view === 'discover') { renderDiscover(); renderShell(); }
           else renderShell();
+        });
+        music.on('playing', () => {
+          // SYNC FIX 1: sound is audible from here, so the listening span starts here.
+          spanStart = mediaTime();
+          if (!playheadRaf) playheadRaf = requestAnimationFrame(updateSmoothPlayhead);
+        });
+        music.on('waiting', () => {
+          // SYNC FIX 1: playback stalled to buffer. Close the span so silent buffering time is not
+          // logged as heard; 'playing' opens a new one when sound resumes.
+          flushListenSpan('buffering');
         });
         music.on('pause', () => {
           if (playheadRaf) { cancelAnimationFrame(playheadRaf); playheadRaf = null; }
@@ -3050,7 +3153,12 @@ button.pill{cursor:pointer;margin:0 10px}
         const volume = await db.settings.get('volume'); if (typeof volume?.value === 'number') S.volume = volume.value;
         music.setVolume(S.volume);
         await refreshLibrary();
-        for (const t of LIB) { if (t.id !== 'original-demo') uploadAudioToCache(t).catch(() => { }); }
+        // DELAY FIX 4 - copy library audio to the local analysis service one file at a time, 3 s
+        // after start-up, instead of every file at once while the first track is loading.
+        // Example: 30 imported songs used to start 30 parallel uploads just as you pressed play.
+        setTimeout(async () => {
+          for (const t of LIB) { if (t.id !== 'original-demo') await uploadAudioToCache(t).catch(() => { }); }
+        }, 3000);
         const firstTrack = LIB.find(t => t.id !== 'original-demo') || LIB[0];
         if (firstTrack) await selectTrack(firstTrack, 0, false, false); else render();
         if (S.autoAnalyze) autoAnalyzeLibrary().catch(console.warn);
