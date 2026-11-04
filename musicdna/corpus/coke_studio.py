@@ -39,7 +39,10 @@ EXCLUDED_TITLE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 SEASON_PATTERN = re.compile(r'Season\s*(\d{1,2})\b|\bS(\d{1,2})\b|Coke Studio\s+(2020|\d{1,2})\b', re.IGNORECASE)
-BRANDING_PATTERN = re.compile(r'coke studio|^season\s*\d+$|^s\d+$|^@|^\d{2}\.\d{2}\.\d{2}$', re.IGNORECASE)
+# "Season Opener" is a slot label, not a performer. Example: 'Coke Studio 2020 | Na Tutteya Ve | Season Opener'
+# used to give artists 'Season Opener'; now artists is '' (fill it by hand in the manifest).
+BRANDING_PATTERN = re.compile(r'coke studio|^season\s*\d+$|^season opener$|^s\d+$|^@|^\d{2}\.\d{2}\.\d{2}$',
+                              re.IGNORECASE)
 MIN_DURATION_SEC = 150
 MAX_DURATION_SEC = 900
 
@@ -133,11 +136,16 @@ class CokeStudioCatalog:
 
     @staticmethod
     def parse_song_and_artists(title: str) -> tuple[str, str]:
-        """Strips branding segments from a pipe-delimited title; the first two remaining are song, artists."""
+        """Strips branding segments from a pipe-delimited title; the first remaining is the song, the rest the artists.
+
+        Later segments are extra credits, joined with ' & '. Example: 'Coke Studio Season 11| Piya Ghar Aaya|
+        Fareed Ayaz| Abu Muhammad Qawwal and Brothers' -> artists 'Fareed Ayaz & Abu Muhammad Qawwal and Brothers'
+        (it used to keep only 'Fareed Ayaz').
+        """
         parts = [re.sub(SEASON_PATTERN, '', part).strip(' -|') if 'coke studio' in part.lower() else part.strip()
                  for part in title.split('|')]
         content = [part for part in parts if part and not BRANDING_PATTERN.search(part)]
-        return (content[0] if content else title), (content[1] if len(content) > 1 else '')
+        return (content[0] if content else title), ' & '.join(content[1:])
 
     @staticmethod
     def is_song_performance(title: str, duration_sec: int | None) -> bool:

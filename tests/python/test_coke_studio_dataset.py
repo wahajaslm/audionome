@@ -13,6 +13,10 @@ def test_parses_every_title_format() -> None:
             (14, 'Pasoori', 'Ali Sethi x Shae Gill'),
         'Jhol | Coke Studio Pakistan | Season 15 | Maanu x Annural Khalid':
             (15, 'Jhol', 'Maanu x Annural Khalid'),
+        'Coke Studio Season 11| Piya Ghar Aaya| Fareed Ayaz| Abu Muhammad Qawwal and Brothers':
+            (11, 'Piya Ghar Aaya', 'Fareed Ayaz & Abu Muhammad Qawwal and Brothers'),
+        'Coke Studio 2020 | Na Tutteya Ve | Season Opener':
+            (13, 'Na Tutteya Ve', ''),
     }
     for title, (season, song, artists) in cases.items():
         assert CokeStudioCatalog.parse_season(title) == season
