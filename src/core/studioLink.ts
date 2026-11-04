@@ -22,9 +22,11 @@ export function pauseStudio(): void {
   if (studio && !studio.closed) studio.postMessage({ source: 'music-dna', type: 'pause' }, STUDIO_ORIGIN);
 }
 
-/** Calls `onPlay` when the studio tab starts playing. */
-export function onStudioPlay(onPlay: () => void): void {
-  window.addEventListener('message', e => {
+/** Calls `onPlay` when the studio tab starts playing. Returns a function that stops listening. */
+export function onStudioPlay(onPlay: () => void): () => void {
+  const handler = (e: MessageEvent) => {
     if (e.origin === STUDIO_ORIGIN && e.data?.source === 'music-dna-studio' && e.data.type === 'playing') onPlay();
-  });
+  };
+  window.addEventListener('message', handler);
+  return () => window.removeEventListener('message', handler);
 }
