@@ -9,6 +9,8 @@ import Toast from './ui/Toast.vue';
 import PlaybackBar from './ui/PlaybackBar.vue';
 import { usePlaybackStore } from './stores/playback';
 import { useMomentFlowStore } from './stores/momentFlow';
+import { useLibraryStore } from './stores/library';
+import { useFileDrop } from './composables/useFileDrop';
 
 // One audio engine for the whole app, created before any screen renders.
 useAudioEngine();
@@ -19,6 +21,18 @@ const { toast } = storeToRefs(ui);
 const router = useRouter();
 const playback = usePlaybackStore();
 const flow = useMomentFlowStore();
+const library = useLibraryStore();
+
+// Drop audio files on any screen: same import as Library's "Import audio" button.
+const { dragging } = useFileDrop(async files => {
+  try {
+    const added = await library.importFiles(files);
+    if (added.length) router.push('/');
+  } catch (err) {
+    console.error(err);
+    ui.notify('Import failed.');
+  }
+});
 
 function onToastAction(): void {
   const to = toast.value?.actionTo;
@@ -54,6 +68,12 @@ function onToastAction(): void {
       @scrub-end="playback.endScrub"
       @step="playback.stepBy"
     />
+    <div v-if="dragging" class="drop" aria-hidden="true">
+      <div class="drop-box">
+        <div class="heading">Drop to add</div>
+        <div class="label">MP3, WAV, FLAC, OGG, M4A, AAC or Opus</div>
+      </div>
+    </div>
     <div v-if="toast" class="toast-slot">
       <Toast :message="toast.message" :action-label="toast.actionLabel" @action="onToastAction" />
     </div>
@@ -95,6 +115,26 @@ body {
   /* Bottom room for the fixed 76px playback bar. */
   padding: var(--space-5) var(--space-5) calc(76px + var(--space-5));
 }
+/* Drop overlay: covers the window while audio files are dragged over it. */
+.drop {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(14, 14, 16, 0.8); /* bg at 80% */
+  pointer-events: none;
+}
+.drop-box {
+  padding: var(--space-6) var(--space-7);
+  border: 1px dashed var(--accent-line);
+  border-radius: var(--radius-lg);
+  background: var(--accent-fill);
+  text-align: center;
+  color: var(--ink);
+}
+.drop-box .label { color: var(--ink-sub); margin-top: var(--space-1); }
 /* Toast rule: bottom centre, above the playback bar (desktop) or tab bar (phone). */
 .toast-slot {
   position: fixed;
