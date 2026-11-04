@@ -24,6 +24,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
 from musicdna.corpus.coke_studio import MANIFEST_PATH, CorpusManifest
+from musicdna.config import DEFAULT, RankerConfig, add_config_arguments, config_from_arguments
 from musicdna.corpus.feature_store import FeatureStore
 from musicdna.features.spatial import SpatialDescriptors
 from musicdna.features.vocal import VocalDescriptors
@@ -46,12 +47,6 @@ COMPARISONS = (
     ('A_clap', 'dsp'), ('C_mert_vocal_spatial', 'C_mert_vocal'), ('vocal_only', 'baseline_louder'),
 )
 INTERPRETABLE_NAMES = {'vocal': VocalDescriptors.NAMES, 'spatial': SpatialDescriptors.NAMES}
-EMBEDDING_COMPONENTS = 16
-REGULARIZATION_C = 0.1
-MIN_SONGS = 3
-MIN_PAIRS = 20
-EXPERIMENT_D_MIN_PAIRS = 500
-BOOTSTRAP_SAMPLES = 2000
 
 
 @dataclass
@@ -85,8 +80,9 @@ def load_rows(pairs: list[dict[str, Any]], store: FeatureStore, corpus: CorpusMa
 class BlockTransform:
     """Standardizes each block on training windows; embeddings are also reduced with PCA."""
 
-    def __init__(self, blocks: tuple[str, ...]) -> None:
+    def __init__(self, blocks: tuple[str, ...], ranker: RankerConfig = DEFAULT.ranker) -> None:
         self.blocks = blocks
+        self.ranker = ranker
         self.steps: dict[str, tuple[StandardScaler, PCA | None]] = {}
 
     def fit(self, features: dict[str, dict[str, np.ndarray]], songs: set[str]) -> BlockTransform:
@@ -95,7 +91,7 @@ class BlockTransform:
             scaler = StandardScaler().fit(stacked)
             pca = None
             if stacked.shape[1] > 32:
-                pca = PCA(n_components=min(EMBEDDING_COMPONENTS, *stacked.shape), random_state=0)
+                pca = PCA(n_components=min(self.ranker.embedding_pca_components, *stacked.shape), random_state=self.ranker.seed)
                 pca.fit(scaler.transform(stacked))
             self.steps[block] = (scaler, pca)
         return self
@@ -113,11 +109,11 @@ def _differences(rows: list[PairRow], matrices: dict[str, np.ndarray]) -> np.nda
     return np.array([matrices[r.song][r.preferred] - matrices[r.song][r.passed_over] for r in rows])
 
 
-def fit_ranker(rows: list[PairRow], matrices: dict[str, np.ndarray]) -> LogisticRegression:
+def fit_ranker(rows: list[PairRow], matrices: dict[str, np.ndarray], ranker: RankerConfig = DEFAULT.ranker) -> LogisticRegression:
     deltas = _differences(rows, matrices)
     weights = np.array([r.weight for r in rows])
     # Both orientations, so the ranker has no intercept to exploit and learns a pure direction.
-    model = LogisticRegression(C=REGULARIZATION_C, fit_intercept=False, max_iter=2000)
+    model = LogisticRegression(C=ranker.regularization_c, fit_intercept=False, max_iter=2000)
     model.fit(np.vstack([deltas, -deltas]), np.r_[np.ones(len(rows)), np.zeros(len(rows))],
               sample_weight=np.r_[weights, weights])
     return model
@@ -129,7 +125,7 @@ def pair_outcomes(scores: np.ndarray) -> np.ndarray:
 
 
 def evaluate_learned(blocks: tuple[str, ...], rows: list[PairRow], features: dict[str, dict[str, np.ndarray]],
-                     group_of: str) -> tuple[np.ndarray, list[np.ndarray]]:
+                     group_of: str, ranker: RankerConfig = DEFAULT.ranker) -> tuple[np.ndarray, list[np.ndarray]]:
     """Leave-one-group-out outcome per pair, plus the fitted coefficients of every fold."""
     groups = sorted({getattr(r, group_of) for r in rows})
     outcomes = np.full(len(rows), np.nan)
@@ -139,9 +135,9 @@ def evaluate_learned(blocks: tuple[str, ...], rows: list[PairRow], features: dic
         test_index = [i for i, r in enumerate(rows) if getattr(r, group_of) == held_out]
         if not train or len({r.song for r in train}) < 2:
             continue
-        transform = BlockTransform(blocks).fit(features, {r.song for r in train})
+        transform = BlockTransform(blocks, ranker).fit(features, {r.song for r in train})
         matrices = {song: transform.transform(features[song]) for song in {r.song for r in rows}}
-        model = fit_ranker(train, matrices)
+        model = fit_ranker(train, matrices, ranker)
         coefficients.append(model.coef_[0])
         test_rows = [rows[i] for i in test_index]
         outcomes[test_index] = pair_outcomes(_differences(test_rows, matrices) @ model.coef_[0])
@@ -164,33 +160,33 @@ def song_macro(outcomes: np.ndarray, rows: list[PairRow]) -> dict[str, float]:
     return {song: float(np.mean(values)) for song, values in per_song.items()}
 
 
-def bootstrap_ci(per_song: dict[str, float], seed: int = 0) -> tuple[float, float]:
+def bootstrap_ci(per_song: dict[str, float], ranker: RankerConfig = DEFAULT.ranker) -> tuple[float, float]:
     values = np.array(list(per_song.values()))
     if values.size < 2:
         return (float('nan'), float('nan'))
-    draws = np.random.default_rng(seed).choice(values, size=(BOOTSTRAP_SAMPLES, values.size)).mean(axis=1)
+    draws = np.random.default_rng(ranker.seed).choice(values, size=(ranker.bootstrap_samples, values.size)).mean(axis=1)
     return (round(float(np.percentile(draws, 2.5)), 4), round(float(np.percentile(draws, 97.5)), 4))
 
 
-def paired_difference(a: dict[str, float], b: dict[str, float], seed: int = 0) -> dict[str, Any]:
+def paired_difference(a: dict[str, float], b: dict[str, float], ranker: RankerConfig = DEFAULT.ranker) -> dict[str, Any]:
     songs = sorted(set(a) & set(b))
     if len(songs) < 2:
         return {'status': 'not_enough_shared_songs'}
     deltas = np.array([a[s] - b[s] for s in songs])
-    draws = np.random.default_rng(seed).choice(deltas, size=(BOOTSTRAP_SAMPLES, deltas.size)).mean(axis=1)
+    draws = np.random.default_rng(ranker.seed).choice(deltas, size=(ranker.bootstrap_samples, deltas.size)).mean(axis=1)
     low, high = np.percentile(draws, [2.5, 97.5])
     verdict = 'better' if low > 0 else 'worse' if high < 0 else 'no clear difference'
     return {'mean_difference': round(float(deltas.mean()), 4), 'ci95': [round(float(low), 4), round(float(high), 4)],
             'songs': len(songs), 'verdict': verdict}
 
 
-def summarize(outcomes: np.ndarray, rows: list[PairRow]) -> tuple[dict[str, Any], dict[str, float]]:
+def summarize(outcomes: np.ndarray, rows: list[PairRow], ranker: RankerConfig = DEFAULT.ranker) -> tuple[dict[str, Any], dict[str, float]]:
     per_song = song_macro(outcomes, rows)
     valid = ~np.isnan(outcomes)
     strong = valid & np.array([r.strength == 'strong' for r in rows])
     summary = {
         'song_macro_accuracy': round(float(np.mean(list(per_song.values()))), 4) if per_song else None,
-        'ci95': bootstrap_ci(per_song),
+        'ci95': bootstrap_ci(per_song, ranker),
         'pair_accuracy': round(float(outcomes[valid].mean()), 4) if valid.any() else None,
         'strong_pair_accuracy': round(float(outcomes[strong].mean()), 4) if strong.any() else None,
         'evaluated_pairs': int(valid.sum()),
@@ -210,24 +206,29 @@ def feature_directions(blocks: tuple[str, ...], coefficients: list[np.ndarray]) 
 
 
 def run(pairs: list[dict[str, Any]], store: FeatureStore, corpus: CorpusManifest) -> dict[str, Any]:
+    ranker = store.config.ranker
     rows = load_rows(pairs, store, corpus)
     songs = sorted({r.song for r in rows})
-    report: dict[str, Any] = {'pairs_total': len(pairs), 'pairs_on_corpus_songs': len(rows), 'songs': len(songs),
+    report: dict[str, Any] = {'config': store.config.to_dict(), 'pairs_total': len(pairs), 'pairs_on_corpus_songs': len(rows), 'songs': len(songs),
                               'artists': len({r.artist for r in rows})}
-    if len(songs) < MIN_SONGS or len(rows) < MIN_PAIRS:
+    if len(songs) < ranker.min_songs or len(rows) < ranker.min_pairs:
         report['status'] = 'insufficient_data'
-        report['needed'] = f'at least {MIN_PAIRS} pairs across {MIN_SONGS} corpus songs'
+        report['needed'] = f'at least {ranker.min_pairs} pairs across {ranker.min_songs} corpus songs'
         return report
 
     blocks_needed = {b for blocks in SYSTEMS.values() for b in blocks} | {'loudness'}
     features = {song: {b: store.load(song, b) for b in blocks_needed if store.has(song, b)} for song in songs}
+    for blocks in features.values():  # every block shares the grid; trim any tail-window mismatch
+        rows_available = min((len(v) for v in blocks.values()), default=0)
+        for name in blocks:
+            blocks[name] = blocks[name][:rows_available]
     usable = [r for r in rows if max(r.preferred, r.passed_over) < len(features[r.song].get('loudness', []))]
     report['pairs_with_features'] = len(usable)
 
     systems: dict[str, Any] = {}
     per_song_scores: dict[str, dict[str, float]] = {}
     for name in BASELINES:
-        systems[name], per_song_scores[name] = summarize(evaluate_baseline(name, usable, features), usable)
+        systems[name], per_song_scores[name] = summarize(evaluate_baseline(name, usable, features), usable, ranker)
     for name, blocks in SYSTEMS.items():
         missing = sorted({b for b in blocks for s in songs if b not in features[s]})
         if missing:
@@ -235,11 +236,11 @@ def run(pairs: list[dict[str, Any]], store: FeatureStore, corpus: CorpusManifest
             continue
         result: dict[str, Any] = {}
         for split, group_of in (('held_out_song', 'song'), ('held_out_artist', 'artist')):
-            if len({getattr(r, group_of) for r in usable}) < MIN_SONGS:
-                result[split] = {'status': f'fewer than {MIN_SONGS} groups'}
+            if len({getattr(r, group_of) for r in usable}) < ranker.min_songs:
+                result[split] = {'status': f'fewer than {ranker.min_songs} groups'}
                 continue
-            outcomes, coefficients = evaluate_learned(blocks, usable, features, group_of)
-            result[split], scores = summarize(outcomes, usable)
+            outcomes, coefficients = evaluate_learned(blocks, usable, features, group_of, ranker)
+            result[split], scores = summarize(outcomes, usable, ranker)
             if split == 'held_out_song':
                 per_song_scores[name] = scores
                 result['feature_directions'] = feature_directions(blocks, coefficients)
@@ -247,13 +248,13 @@ def run(pairs: list[dict[str, Any]], store: FeatureStore, corpus: CorpusManifest
     report['systems'] = systems
 
     report['comparisons'] = {
-        f'{a} vs {b}': paired_difference(per_song_scores[a], per_song_scores[b])
+        f'{a} vs {b}': paired_difference(per_song_scores[a], per_song_scores[b], ranker)
         for a, b in COMPARISONS if a in per_song_scores and b in per_song_scores
     }
     report['experiment_D'] = (
-        {'status': 'not_run', 'reason': f'needs at least {EXPERIMENT_D_MIN_PAIRS} pairs to train a temporal vocal '
+        {'status': 'not_run', 'reason': f'needs at least {ranker.experiment_d_min_pairs} pairs to train a temporal vocal '
                                         f'encoder without overfitting; have {len(usable)}'}
-        if len(usable) < EXPERIMENT_D_MIN_PAIRS else {'status': 'ready', 'input': 'pitch_contour.npy per song'})
+        if len(usable) < ranker.experiment_d_min_pairs else {'status': 'ready', 'input': 'pitch_contour.npy per song'})
     report['status'] = 'evaluated'
     return report
 
@@ -266,15 +267,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description='Run research question R01')
     parser.add_argument('pairs', type=Path, help='Output of musicdna.preference.implicit_pairs')
     parser.add_argument('--out', type=Path, default=Path('research-output/r01_report.json'))
+    add_config_arguments(parser)
     arguments = parser.parse_args()
 
     report = {
         'experiment': 'R01 vocal pitch features vs general audio embeddings',
         'created_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
         'inputs': {'pairs_sha256': _sha256(arguments.pairs), 'manifest_sha256': _sha256(MANIFEST_PATH)},
-        'config': {'ranker': 'pairwise logistic regression', 'C': REGULARIZATION_C,
-                   'embedding_pca_components': EMBEDDING_COMPONENTS, 'bootstrap_samples': BOOTSTRAP_SAMPLES},
-        **run(json.loads(arguments.pairs.read_text(encoding='utf8')), FeatureStore(), CorpusManifest.load()),
+        **run(json.loads(arguments.pairs.read_text(encoding='utf8')), FeatureStore(config_from_arguments(arguments)),
+              CorpusManifest.load()),
     }
     arguments.out.parent.mkdir(parents=True, exist_ok=True)
     arguments.out.write_text(json.dumps(report, indent=2) + '\n', encoding='utf8')

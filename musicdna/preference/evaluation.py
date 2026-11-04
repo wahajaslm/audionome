@@ -1,350 +1,81 @@
-"""Passive Listening & Hybrid Multimodal Preference Intelligence Pipeline.
+"""Listening-behaviour summaries and evidence-backed insights for the player.
 
-Systematic experiments:
-1. Behavior-only: Can passive listening patterns predict which moments become favorites?
-2. Audio + feedback: Can confirmed favorites and embeddings predict preferences in unfamiliar songs?
-3. Hybrid ablation (Models A, B, C, D): Measures DSP-only, Deep-embedding-only, Fused (DSP+Deep),
-   and Fused + User Behavior + FAV Reason Alignment performance.
-4. Evidence-backed insight synthesis: Generates verifiable, multi-evidence explanations linking
-   confirmed FAV reasons, repeated listening returns, and DSP + deep representation similarity.
+1. `ListeningBehaviorAggregator`: per-window behaviour counts, read from `preference.signals`.
+2. `behavior_only_auc`: does implicit attention alone rank saved moments above other windows?
+3. `EvidenceInsightSynthesizer`: explanations linking saved moments, repeat listening and acoustics.
+
+Model comparisons (DSP vs CLAP vs MERT vs vocal features) live in `experiments.r01`, which tests
+on held-out songs and artists.
 """
 from __future__ import annotations
-import math
 from typing import Any
 import numpy as np
+from musicdna.config import DEFAULT, Config
 from musicdna.preference.favorite_passages import FavoritePassageTaxonomy, AcousticContrastAnalyzer
+from musicdna.preference.signals import collect_evidence, durations_from_events
 
 
 class ListeningBehaviorAggregator:
-    """Aggregates passive listening events into binned passage behavioral features."""
+    """Behaviour counts per grid window that saw any activity, keyed '<trackId>:<startSec>'."""
 
-    @staticmethod
+    def __init__(self, config: Config = DEFAULT) -> None:
+        self.config = config
+
     def extract_passage_behaviors(
+        self,
         events: list[dict[str, Any]],
-        window_seconds: float = 15.0
+        durations: dict[str, float] | None = None,
     ) -> dict[str, dict[str, Any]]:
-        """Aggregates all passive listening actions into 5-second binned passage features."""
-        passage_bins: dict[str, dict[str, Any]] = {}
-
-        def get_bin(track_id: str, start_sec: float) -> dict[str, Any]:
-            bin_key = f"{track_id}:{int(start_sec)}"
-            if bin_key not in passage_bins:
-                passage_bins[bin_key] = {
+        durations = durations or durations_from_events(events, self.config.windows.window_sec)
+        result: dict[str, dict[str, Any]] = {}
+        for track_id, windows in collect_evidence(durations, events, config=self.config).items():
+            for w in windows:
+                if not w.active:
+                    continue
+                result[f'{track_id}:{int(w.start_sec)}'] = {
                     'trackId': track_id,
-                    'startSec': start_sec,
-                    'endSec': start_sec + window_seconds,
-                    'manualRewinds': 0,
-                    'manualLoopStarts': 0,
-                    'loopCycles': 0,
-                    'seekArrivals': 0,
-                    'skipDepartures': 0,
-                    'relativeVolumeChanges': 0,
-                    'listenedPasses': 0,
-                    'sessions': set(),
-                    'enabledSessions': set(),
+                    'startSec': w.start_sec,
+                    'endSec': w.end_sec,
+                    'manualRewinds': w.rewound_into,
+                    'manualLoopStarts': w.loop_starts,
+                    'loopCycles': w.loop_cycles,
+                    'seekArrivals': w.seek_arrivals,
+                    'skipDepartures': w.left_early,
+                    'relativeVolumeChanges': w.volume_changes,
+                    'listenedPasses': w.listen_passes,
+                    'distinctSessions': len(w.sessions),
+                    'attentionScore': round(w.attention_score(self.config.signals), 4),
                 }
-            return passage_bins[bin_key]
-
-        for event in sorted(events, key=lambda x: x.get('at', 0)):
-            track_id = event.get('trackId', '')
-            if not track_id:
-                continue
-            session_id = event.get('sessionId', 'default')
-            kind = event.get('kind', '')
-            origin = event.get('origin', 'user')
-
-            if kind == 'seek' and origin == 'user':
-                from_sec = event.get('fromSec', 0)
-                to_sec = event.get('toSec', 0)
-                if from_sec - to_sec >= 4:
-                    bin_data = get_bin(track_id, (to_sec // 5) * 5)
-                    bin_data['manualRewinds'] += 1
-                    bin_data['sessions'].add(session_id)
-                elif to_sec - from_sec >= 5:
-                    bin_data = get_bin(track_id, (to_sec // 5) * 5)
-                    bin_data['seekArrivals'] += 1
-                    bin_data['sessions'].add(session_id)
-
-            elif kind == 'skip' and origin == 'user':
-                position = event.get('positionSec', 0)
-                bin_data = get_bin(track_id, (position // 5) * 5)
-                bin_data['skipDepartures'] += 1
-
-            elif kind == 'volume' and origin == 'user':
-                position = event.get('positionSec', 0)
-                bin_data = get_bin(track_id, (position // 5) * 5)
-                bin_data['relativeVolumeChanges'] += 1
-
-            elif kind == 'loop_enabled' and origin == 'user':
-                start = event.get('momentStartSec', 0)
-                bin_data = get_bin(track_id, (start // 5) * 5)
-                bin_data['manualLoopStarts'] += 1
-                bin_data['enabledSessions'].add(session_id)
-                bin_data['sessions'].add(session_id)
-
-            elif kind == 'loop_cycle' and origin == 'player':
-                start = event.get('momentStartSec', 0)
-                bin_data = get_bin(track_id, (start // 5) * 5)
-                if session_id in bin_data['enabledSessions']:
-                    bin_data['loopCycles'] += 1
-
-            elif kind == 'listen_span':
-                from_sec = event.get('fromSec', 0)
-                to_sec = event.get('toSec', 0)
-                start_bin = int(from_sec // 5) * 5
-                end_bin = int(to_sec // 5) * 5
-                for current_sec in range(start_bin, end_bin + 5, 5):
-                    bin_data = get_bin(track_id, current_sec)
-                    bin_data['listenedPasses'] += 1
-                    bin_data['sessions'].add(session_id)
-
-        for bin_record in passage_bins.values():
-            bin_record['distinctSessions'] = len(bin_record.pop('sessions'))
-            bin_record.pop('enabledSessions', None)
-
-        return passage_bins
+        return result
 
     @staticmethod
     def calculate_behavior_score(passage_bin: dict[str, Any]) -> float:
-        """Computes composite attention intensity score from passive listening events."""
-        return float(
-            passage_bin.get('manualRewinds', 0) * 2.5 +
-            passage_bin.get('manualLoopStarts', 0) * 2.0 +
-            passage_bin.get('distinctSessions', 0) * 1.5 +
-            passage_bin.get('seekArrivals', 0) * 1.0 +
-            passage_bin.get('relativeVolumeChanges', 0) * 0.5 +
-            passage_bin.get('loopCycles', 0) * 0.1 -
-            passage_bin.get('skipDepartures', 0) * 1.0
-        )
+        return float(passage_bin.get('attentionScore', 0.0))
 
 
-class PreferenceAblationStudy:
-    """Scientific ablation runner comparing Models A, B, C, and D."""
-
-    def __init__(self, behavior_aggregator: ListeningBehaviorAggregator | None = None) -> None:
-        self.behavior_aggregator = behavior_aggregator or ListeningBehaviorAggregator()
-
-    @staticmethod
-    def _extract_descriptor_vector(segment: dict[str, Any]) -> np.ndarray:
-        descriptors = segment.get('descriptors', {})
-        return np.array([
-            float(descriptors.get('energy', 0.1)),
-            float(descriptors.get('brightness_hz', 1000.0)) / 4000.0,
-            float(descriptors.get('onset_activity', 0.2)),
-            float(descriptors.get('energy_slope', 0.0)),
-            float(descriptors.get('vocal_presence', 0.4)),
-            float(descriptors.get('spectral_flux', 0.05)),
-        ], dtype=np.float64)
-
-    def evaluate_behavior_only(
-        self,
-        events: list[dict[str, Any]],
-        moments: list[dict[str, Any]]
-    ) -> dict[str, Any]:
-        """Measures whether passive listening alone predicts user-marked favorite passages."""
-        if not events or not moments:
-            return {'status': 'insufficient_data', 'auc': None, 'samples': 0}
-
-        behavior_map = self.behavior_aggregator.extract_passage_behaviors(events)
-        if not behavior_map:
-            return {'status': 'insufficient_data', 'auc': None, 'samples': 0}
-
-        positives = 0
-        negatives = 0
-        scores: list[float] = []
-        labels: list[int] = []
-
-        for passage_bin in behavior_map.values():
-            track_id = passage_bin['trackId']
-            start_sec = passage_bin['startSec']
-            end_sec = passage_bin['endSec']
-            is_favorite = any(
-                m['trackId'] == track_id and max(m['startSec'], start_sec) < min(m['endSec'], end_sec)
-                for m in moments
-            )
-            score = self.behavior_aggregator.calculate_behavior_score(passage_bin)
-            scores.append(score)
-            labels.append(1 if is_favorite else 0)
-            if is_favorite:
-                positives += 1
-            else:
-                negatives += 1
-
-        if positives == 0 or negatives == 0:
-            return {'status': 'need_both_classes', 'positives': positives, 'negatives': negatives}
-
-        pairs = 0
-        concordant = 0.0
-        for i, label_positive in enumerate(labels):
-            if label_positive != 1:
-                continue
-            for j, label_negative in enumerate(labels):
-                if label_negative != 0:
-                    continue
-                pairs += 1
-                if scores[i] > scores[j]:
-                    concordant += 1.0
-                elif scores[i] == scores[j]:
-                    concordant += 0.5
-
-        auc = concordant / pairs if pairs > 0 else 0.5
-        return {
-            'status': 'evaluated',
-            'auc': round(auc, 4),
-            'positives': positives,
-            'negatives': negatives,
-            'evaluated_passages': len(scores),
-            'note': (
-                f'Behavioral attention ranks user-saved moments above other passages {auc:.0%} of the time '
-                '(50% = chance). No confidence interval: this is a single-listener descriptive figure.'
-            ),
-        }
-
-    def evaluate_held_out_preference(
-        self,
-        analyses: list[dict[str, Any]],
-        moments: list[dict[str, Any]],
-        ratings: list[dict[str, Any]],
-        events: list[dict[str, Any]] | None = None
-    ) -> dict[str, Any]:
-        """Leave-one-track-out pairwise ranking evaluation."""
-        if len(analyses) < 2:
-            return {'status': 'insufficient_tracks', 'accuracy': None, 'pairwise_accuracy': None}
-
-        behavior_map = self.behavior_aggregator.extract_passage_behaviors(events) if events else {}
-        tested_tracks = 0
-        correct_pairs = 0.0
-        total_pairs = 0
-
-        track_ids = sorted({a['trackId'] for a in analyses})
-        for held_out_track_id in track_ids:
-            test_ratings = [r for r in ratings if r.get('trackId') == held_out_track_id]
-            train_moments = [m for m in moments if m.get('trackId') != held_out_track_id]
-            train_negatives = [r for r in ratings if r.get('trackId') != held_out_track_id and r.get('value') == 'dislike']
-            likes = [r for r in test_ratings if r.get('value') == 'like']
-            dislikes = [r for r in test_ratings if r.get('value') == 'dislike']
-
-            if not likes or not dislikes or not train_moments:
-                continue
-
-            held_analysis = next(a for a in analyses if a['trackId'] == held_out_track_id)
-            tested_tracks += 1
-
-            positive_vectors: list[np.ndarray] = []
-            positive_weights: list[float] = []
-            positive_descriptors: list[np.ndarray] = []
-
-            for moment in train_moments:
-                source_analysis = next((a for a in analyses if a['trackId'] == moment['trackId']), None)
-                if not source_analysis:
-                    continue
-                bin_key = f"{moment['trackId']}:{int(moment['startSec'] // 5) * 5}"
-                behavior_weight = (
-                    1.0 + 0.25 * max(0.0, self.behavior_aggregator.calculate_behavior_score(behavior_map.get(bin_key, {})))
-                    if events else 1.0
-                )
-                for segment in source_analysis.get('segments', []):
-                    if max(moment['startSec'], segment['startSec']) < min(moment['endSec'], segment['endSec']):
-                        vector = np.asarray(segment['embedding'], dtype=np.float64)
-                        norm_v = float(np.linalg.norm(vector)) or 1.0
-                        positive_vectors.append(vector / norm_v)
-                        positive_weights.append(behavior_weight)
-                        positive_descriptors.append(self._extract_descriptor_vector(segment))
-
-            negative_vectors: list[np.ndarray] = []
-            for rating_dislike in train_negatives:
-                source_analysis = next((a for a in analyses if a['trackId'] == rating_dislike['trackId']), None)
-                if source_analysis:
-                    for segment in source_analysis.get('segments', []):
-                        if max(rating_dislike['startSec'], segment['startSec']) < min(rating_dislike['endSec'], segment['endSec']):
-                            vector = np.asarray(segment['embedding'], dtype=np.float64)
-                            norm_v = float(np.linalg.norm(vector)) or 1.0
-                            negative_vectors.append(vector / norm_v)
-
-            if not positive_vectors:
-                continue
-
-            weights_array = np.asarray(positive_weights, dtype=np.float64)
-            weights_array = weights_array / np.sum(weights_array)
-            prototype = np.sum([w * v for w, v in zip(weights_array, positive_vectors)], axis=0)
-            prototype_norm = float(np.linalg.norm(prototype)) or 1.0
-            prototype = prototype / prototype_norm
-            mean_positive_descriptor = np.average(positive_descriptors, axis=0, weights=weights_array)
-
-            def score_candidate_passage(start_seconds: float) -> float:
-                candidate_segments = [s for s in held_analysis.get('segments', []) if abs(s['startSec'] - start_seconds) <= 6]
-                if not candidate_segments:
-                    return 0.0
-                closest_segment = min(candidate_segments, key=lambda s: abs(s['startSec'] - start_seconds))
-                vector = np.asarray(closest_segment['embedding'], dtype=np.float64)
-                unit_vector = vector / (float(np.linalg.norm(vector)) or 1.0)
-
-                similarity_prototype = float(np.dot(prototype, unit_vector))
-                similarity_max_positive = max(float(np.dot(pos_v, unit_vector)) for pos_v in positive_vectors)
-                similarity_negative = max(float(np.dot(neg_v, unit_vector)) for neg_v in negative_vectors) if negative_vectors else 0.0
-                base_score = 0.55 * similarity_max_positive + 0.45 * similarity_prototype - 0.30 * similarity_negative
-
-                if events is not None:
-                    bin_key = f"{held_out_track_id}:{int(start_seconds // 5) * 5}"
-                    behavior_prior = 0.05 * math.tanh(self.behavior_aggregator.calculate_behavior_score(behavior_map.get(bin_key, {})) / 4.0)
-                    desc_vector = self._extract_descriptor_vector(closest_segment)
-                    descriptor_distance = float(np.linalg.norm(desc_vector - mean_positive_descriptor))
-                    fav_alignment = 0.08 * math.exp(-descriptor_distance)
-                    return base_score + behavior_prior + fav_alignment
-                return base_score
-
-            for like in likes:
-                for dislike in dislikes:
-                    total_pairs += 1
-                    score_like = score_candidate_passage(like['startSec'])
-                    score_dislike = score_candidate_passage(dislike['startSec'])
-                    if score_like > score_dislike:
-                        correct_pairs += 1.0
-                    elif score_like == score_dislike:
-                        correct_pairs += 0.5
-
-        accuracy = correct_pairs / total_pairs if total_pairs > 0 else 0.5
-        return {
-            'status': 'evaluated',
-            'tested_tracks': tested_tracks,
-            'total_pairs': total_pairs,
-            'pairwise_accuracy': round(accuracy, 4),
-        }
-
-    def run_ablation(
-        self,
-        events: list[dict[str, Any]],
-        analyses: list[dict[str, Any]],
-        moments: list[dict[str, Any]],
-        ratings: list[dict[str, Any]]
-    ) -> dict[str, Any]:
-        """Runs the four-tier ablation study comparing Models A, B, C, and D."""
-        dsp_analyses = [a for a in analyses if a.get('method') == 'dsp']
-        clap_analyses = [a for a in analyses if a.get('method') == 'clap']
-        fused_analyses = [a for a in analyses if a.get('method') == 'multimodal']
-
-        results_model_a = self.evaluate_held_out_preference(dsp_analyses, moments, ratings) if dsp_analyses else {'status': 'no_dsp_analyses', 'pairwise_accuracy': None}
-        results_model_b = self.evaluate_held_out_preference(clap_analyses, moments, ratings) if clap_analyses else {'status': 'no_clap_analyses', 'pairwise_accuracy': None}
-        results_model_c = self.evaluate_held_out_preference(fused_analyses, moments, ratings) if fused_analyses else {'status': 'no_fused_analyses', 'pairwise_accuracy': None}
-
-        base_for_hybrid = fused_analyses or clap_analyses or dsp_analyses
-        results_model_d = self.evaluate_held_out_preference(base_for_hybrid, moments, ratings, events=events) if base_for_hybrid else {'status': 'no_analyses', 'pairwise_accuracy': None}
-        behavior_auc = self.evaluate_behavior_only(events, moments).get('auc')
-
-        return {
-            'model_A_dsp_only': results_model_a.get('pairwise_accuracy'),
-            'model_B_deep_only': results_model_b.get('pairwise_accuracy'),
-            'model_C_multimodal_fused': results_model_c.get('pairwise_accuracy'),
-            'model_D_full_hybrid': {
-                'audio_accuracy': results_model_d.get('pairwise_accuracy') or results_model_c.get('pairwise_accuracy') or results_model_a.get('pairwise_accuracy'),
-                'behavior_auc': behavior_auc,
-                'status': 'evaluated',
-            },
-            'scientific_hypothesis': (
-                'If Model C > A and B, multimodal fusion is complementary. '
-                'If Model D > C, passive behavior adds distinct predictive signal to audio representations.'
-            ),
-        }
+def behavior_only_auc(events: list[dict[str, Any]], moments: list[dict[str, Any]],
+                      config: Config = DEFAULT) -> dict[str, Any]:
+    """Probability that a window inside a saved moment has higher implicit attention than one outside."""
+    behavior_map = ListeningBehaviorAggregator(config).extract_passage_behaviors(events) if events else {}
+    if not behavior_map or not moments:
+        return {'status': 'insufficient_data', 'auc': None, 'samples': 0}
+    scores, labels = [], []
+    for passage in behavior_map.values():
+        inside = any(m['trackId'] == passage['trackId'] and max(m['startSec'], passage['startSec']) < min(m['endSec'], passage['endSec'])
+                     for m in moments)
+        scores.append(passage['attentionScore'])
+        labels.append(inside)
+    positives = [s for s, inside in zip(scores, labels) if inside]
+    negatives = [s for s, inside in zip(scores, labels) if not inside]
+    if not positives or not negatives:
+        return {'status': 'need_both_classes', 'positives': len(positives), 'negatives': len(negatives)}
+    concordant = sum(1.0 if p > n else 0.5 if p == n else 0.0 for p in positives for n in negatives)
+    auc = concordant / (len(positives) * len(negatives))
+    return {
+        'status': 'evaluated', 'auc': round(auc, 4), 'positives': len(positives), 'negatives': len(negatives),
+        'note': (f'Implicit attention ranks saved-moment windows above other windows {auc:.0%} of the time '
+                 '(50% = chance). Single-listener descriptive figure, no confidence interval.'),
+    }
 
 
 class EvidenceInsightSynthesizer:
@@ -501,10 +232,6 @@ class EvidenceInsightSynthesizer:
 
 __all__ = [
     'ListeningBehaviorAggregator',
-    'PreferenceAblationStudy',
+    'behavior_only_auc',
     'EvidenceInsightSynthesizer',
 ]
-
-
-if __name__ == '__main__':
-    print("Music DNA Passive Listening & Hybrid Intelligence Evaluator")

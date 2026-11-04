@@ -12,7 +12,9 @@ from typing import Any
 import librosa
 import numpy as np
 
-from musicdna.features.dsp import AcousticFeatureExtractor, SAMPLE_RATE
+from musicdna.audio.io import load_audio
+from musicdna.config import load_config
+from musicdna.features.dsp import AcousticFeatureExtractor
 from musicdna.audio.stems import StemSeparator
 from musicdna.features.structure import MusicalStructureAnalyzer
 from musicdna.features.embeddings import DeepAudioEncoder, MultimodalFusionEngine, ModelLicenseManager, MODEL_LICENSE_REGISTRY
@@ -39,7 +41,7 @@ class AudioIntelligenceService:
         active_learning_engine: ActiveLearningEngine | None = None,
     ) -> None:
         self.repository = repository or AnalysisRepository()
-        self.feature_extractor = feature_extractor or AcousticFeatureExtractor()
+        self.feature_extractor = feature_extractor or AcousticFeatureExtractor(load_config())
         self.stem_separator = stem_separator or StemSeparator()
         self.structure_analyzer = structure_analyzer or MusicalStructureAnalyzer()
         self.deep_encoder = deep_encoder or DeepAudioEncoder()
@@ -183,7 +185,8 @@ class AudioIntelligenceService:
         if not audio_file:
             return None
 
-        audio_waveform, sample_rate = librosa.load(str(audio_file), sr=SAMPLE_RATE, mono=True)
+        sample_rate = self.feature_extractor.sample_rate
+        audio_waveform = load_audio(audio_file, sample_rate, duration_sec=self.feature_extractor.config.audio.max_duration_sec)
         stems = self.stem_separator.separate(audio_waveform, sample_rate)
         saved = self.stem_separator.save_stems_to_cache(track_id, stems, sample_rate)
         return saved.get(stem_name)

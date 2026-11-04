@@ -13,6 +13,7 @@ import librosa
 import numpy as np
 from musicdna.audio.beats import tempo_from_beats
 from musicdna.audio.stems import StemSeparator
+from musicdna.features.vocal import VocalDescriptors
 
 
 # Krumhansl-Schmuckler Key Profiles (12 pitch classes: C, C#, D, D#, E, F, F#, G, G#, A, A#, B)
@@ -170,11 +171,14 @@ class MusicalStructureAnalyzer:
         sample_rate: int,
         stems: dict[str, np.ndarray] | None = None,
         beat_times: np.ndarray | None = None,
+        vocal_pitch: VocalDescriptors | None = None,
     ) -> dict[str, Any]:
         """Analyzes all five core musical dimensions.
 
         beat_times: beats in seconds relative to this signal, from the track-level beat grid.
         When given, tempo and beat positions come from it instead of librosa on the drum stem.
+        vocal_pitch: pitch descriptors from `features.vocal` for this span. Pitch is reported only
+        when given (it needs a real vocal stem), never estimated from the mix.
         """
         if stems is None:
             stems = StemSeparator().separate_mir(audio_signal, sample_rate)
@@ -264,15 +268,11 @@ class MusicalStructureAnalyzer:
         # 4. Vocals & Expression
         vocal_presence = round(float(np.clip(vocal_rms / mix_rms, 0.0, 1.0)), 3)
         vocal_flatness = float(np.mean(librosa.feature.spectral_flatness(y=stems['vocals'], hop_length=512))) if vocal_rms > 1e-4 else 0.0
-        vocal_stft = np.abs(librosa.stft(stems['vocals'], n_fft=2048, hop_length=512))
-        peak_bins = np.argmax(vocal_stft[10:150, :], axis=0) + 10 if vocal_stft.shape[1] > 0 else np.array([])
-        pitch_variation = round(float(np.std(peak_bins)), 2) if len(peak_bins) > 4 else 0.0
-
         vocals_expression = {
             'presence': vocal_presence,
             'breathiness': round(float(vocal_flatness), 3),
-            'pitchVariation': pitch_variation,
             'expressiveDynamic': round(float(np.clip(vocal_rms * 12.0, 0.0, 1.0)), 3),
+            'pitch': vocal_pitch.to_dict() if vocal_pitch is not None else None,
         }
 
         # 5. Arrangement & Transitions
@@ -310,9 +310,10 @@ class MusicalStructureAnalyzer:
         }
 
 
-def analyze_musical_dimensions(audio_signal: np.ndarray, sample_rate: int, stems: dict[str, np.ndarray] | None = None) -> dict[str, Any]:
+def analyze_musical_dimensions(audio_signal: np.ndarray, sample_rate: int, stems: dict[str, np.ndarray] | None = None,
+                               vocal_pitch: VocalDescriptors | None = None) -> dict[str, Any]:
     """Top-level functional interface for MusicalStructureAnalyzer.analyze_dimensions."""
-    return MusicalStructureAnalyzer().analyze_dimensions(audio_signal, sample_rate, stems=stems)
+    return MusicalStructureAnalyzer().analyze_dimensions(audio_signal, sample_rate, stems=stems, vocal_pitch=vocal_pitch)
 
 
 __all__ = ['PITCH_CLASSES', 'MAJOR_PROFILE', 'MINOR_PROFILE', 'CHORD_TEMPLATES',

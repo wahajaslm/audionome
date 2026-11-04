@@ -11,6 +11,7 @@ from typing import Any
 import librosa
 import numpy as np
 
+from musicdna.audio.io import load_audio
 from musicdna.paths import AUDIO_CACHE_DIR
 from musicdna.features.structure import MusicalStructureAnalyzer, CHORD_TEMPLATES
 
@@ -132,7 +133,8 @@ class SpectralVisualizer:
 
         dur = float(fused.get('durationSec') or 32.0)
         if audio_path and audio_path.is_file():
-            y, sr = librosa.load(str(audio_path), sr=11025, mono=True, duration=600)
+            sr = 11025  # plot resolution only
+            y = load_audio(audio_path, sr, duration_sec=600.0)
             dur = round(float(len(y) / sr), 3) if len(y) else dur
             n_fft = 1024
             hop = 512
@@ -286,190 +288,75 @@ class SpectralVisualizer:
         segs: list[dict[str, Any]],
         spectral_plots: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        """Ensures every segment and the overall track has full 5-dimension M3 Acoustic DNA."""
-        all_chromas: list[np.ndarray] = []
-        inst_keys = ['vocals', 'drums', 'bass', 'guitar', 'piano', 'synthesizer', 'strings', 'brass']
-        inst_totals = {k: 0.0 for k in inst_keys}
-        stem_totals = {'vocals': 0.0, 'drums': 0.0, 'bass': 0.0, 'other': 0.0}
-        tempos: list[float] = []
-        syncopations: list[float] = []
-        pulses: list[float] = []
-        stabilities: list[float] = []
-        breathiness_vals: list[float] = []
-        pitch_vars: list[float] = []
-        expr_vals: list[float] = []
-        densities: list[float] = []
-        chord_seq: list[str] = []
+        """Track-level summary of the five musical dimensions measured per window.
 
-        for idx, s in enumerate(segs):
-            d = s.setdefault('descriptors', {})
-            chroma_arr = np.asarray(d.get('chroma') or [0.0] * 12, dtype=np.float64)
-            if chroma_arr.size != 12:
-                chroma_arr = np.resize(chroma_arr, 12)
-            all_chromas.append(chroma_arr)
+        Only windows analysed by `features.structure` contribute. A value nothing measured is None;
+        it is never filled with an estimate or a default.
+        """
+        measured = [s['descriptors']['dimensions'] for s in segs if (s.get('descriptors') or {}).get('dimensions')]
 
-            dims = d.get('dimensions')
-            if not dims:
-                rms = float(d.get('energy') or 0.06)
-                cent = float(d.get('brightness_hz') or 1400.0)
-                onset = float(d.get('onset_activity') or 0.45)
-                flat = float(d.get('noisiness') or 0.02)
-                zcr = float(d.get('zero_crossing_rate') or 0.04)
-                slope = float(d.get('energy_slope') or 0.0)
-                voc = float(d.get('vocal_presence') or 0.4)
-                flux = float(d.get('spectral_flux') or 0.12)
+        def values(family: str, key: str) -> list[float]:
+            found = [d.get(family, {}).get(key) for d in measured]
+            return [float(v) for v in found if isinstance(v, (int, float)) and not isinstance(v, bool)]
 
-                key, key_conf = MusicalStructureAnalyzer.estimate_key(chroma_arr)
-                chords = self.match_top_chords(chroma_arr, top_k=3)
-                c_var = float(np.var(chroma_arr))
-                harm_stab = round(float(np.clip(1.0 - c_var * 3.2, 0.25, 0.98)), 3)
+        def mean(family: str, key: str, digits: int = 3) -> float | None:
+            found = values(family, key)
+            return round(float(np.mean(found)), digits) if found else None
 
-                est_bpm = round(float(np.clip(84.0 + onset * 34.0 + zcr * 110.0, 68.0, 168.0)), 1)
-                syncop = round(float(np.clip(0.22 + flux * 1.15, 0.12, 0.88)), 3)
-                pulse = round(float(np.clip(0.35 + onset * 0.45 - flat * 1.2, 0.2, 0.96)), 3)
-                drum_fill = bool(onset > 0.85 and abs(slope) > 0.25)
+        chromas = [np.asarray(s['descriptors']['chroma'], dtype=np.float64) for s in segs
+                   if len((s.get('descriptors') or {}).get('chroma') or []) == 12]
+        mean_chroma = np.mean(chromas, axis=0) if chromas else None
+        key, key_confidence = MusicalStructureAnalyzer.estimate_key(mean_chroma) if mean_chroma is not None else (None, None)
 
-                v_rms = round(rms * float(np.clip(voc * 1.15, 0.08, 0.92)), 5)
-                d_rms = round(rms * float(np.clip(onset * 0.48, 0.06, 0.85)), 5)
-                b_rms = round(rms * float(np.clip((1.0 - min(1.0, cent / 3200.0)) * 0.72, 0.08, 0.88)), 5)
-                o_rms = round(rms * float(np.clip(0.55 + (1.0 - voc) * 0.35, 0.12, 0.90)), 5)
+        chord_sequence: list[str] = []
+        for d in measured:
+            for chord in d.get('melodyHarmony', {}).get('chords') or []:
+                if not chord_sequence or chord_sequence[-1] != chord:
+                    chord_sequence.append(chord)
 
-                probs = {
-                    'vocals': round(float(np.clip(voc * 1.35, 0.05, 0.98)), 3),
-                    'drums': round(float(np.clip(onset * 0.68, 0.05, 0.96)), 3),
-                    'bass': round(float(np.clip((1.0 - min(1.0, cent / 3400.0)) * 0.88, 0.08, 0.96)), 3),
-                    'guitar': round(float(np.clip((1.0 - flat) * 0.62 + (0.25 if 700 <= cent <= 2600 else 0.0), 0.08, 0.94)), 3),
-                    'piano': round(float(np.clip(harm_stab * 0.58 + onset * 0.18, 0.06, 0.90)), 3),
-                    'strings': round(float(np.clip((1.0 / (1.0 + flux * 4.0)) * 0.78, 0.06, 0.92)), 3),
-                    'synthesizer': round(float(np.clip((cent / 3600.0) * 0.75 + flat * 1.5, 0.04, 0.90)), 3),
-                    'brass': round(float(np.clip((cent / 2800.0) * (1.0 - flat) * 0.38, 0.03, 0.76)), 3),
-                }
-                sorted_inst = sorted(probs.items(), key=lambda kv: kv[1], reverse=True)
-                top_inst = [k for k, val in sorted_inst if val >= 0.35][:4] or [sorted_inst[0][0]]
-                texture = 'acoustic' if cent < 2200 and probs['synthesizer'] < 0.42 else ('electronic' if cent > 3400 else 'hybrid')
+        instrument_keys = sorted({k for d in measured for k in (d.get('instrumentationTimbre', {}).get('probabilities') or {})})
+        instruments = {k: round(float(np.mean([d['instrumentationTimbre']['probabilities'].get(k, 0.0) for d in measured])), 3)
+                       for k in instrument_keys}
+        stem_keys = sorted({k for d in measured for k in (d.get('arrangementTransitions', {}).get('stemEnergies') or {})})
+        stems = {k: round(float(np.mean([d['arrangementTransitions']['stemEnergies'].get(k, 0.0) for d in measured])), 5)
+                 for k in stem_keys}
+        tempos = values('rhythmGroove', 'tempoBpm')
+        brightness = [float(s['descriptors']['brightness_hz']) for s in segs if (s.get('descriptors') or {}).get('brightness_hz')]
 
-                stem_e = {'vocals': v_rms, 'drums': d_rms, 'bass': b_rms, 'other': o_rms}
-                thresh = rms * 0.24
-                act_stems = [k for k, v in stem_e.items() if v >= thresh] or ['vocals', 'other']
-                density = round(len(act_stems) / 4.0, 2)
-                if slope > 0.35:
-                    trans = 'crescendo_buildup'
-                elif density >= 0.75:
-                    trans = 'full_arrangement'
-                elif 'vocals' in act_stems and len(act_stems) <= 2:
-                    trans = 'vocal_spotlight'
-                elif density <= 0.5:
-                    trans = 'intimate_breakdown'
-                else:
-                    trans = 'steady_groove'
-
-                dims = {
-                    'melodyHarmony': {
-                        'key': key,
-                        'keyConfidence': key_conf,
-                        'chords': chords,
-                        'harmonicStability': harm_stab,
-                        'chroma': [round(float(x), 4) for x in chroma_arr],
-                    },
-                    'rhythmGroove': {
-                        'tempoBpm': est_bpm,
-                        'beatCount': max(8, int(round(est_bpm / 60.0 * max(4.0, float(s.get('endSec', 12)) - float(s.get('startSec', 0)))))),
-                        'syncopation': syncop,
-                        'pulseClarity': pulse,
-                        'drumFillDetected': drum_fill,
-                    },
-                    'instrumentationTimbre': {
-                        'probabilities': probs,
-                        'topInstruments': top_inst,
-                        'texture': texture,
-                        'brightnessHz': round(cent, 1),
-                    },
-                    'vocalsExpression': {
-                        'presence': round(voc, 3),
-                        'breathiness': round(float(np.clip(flat * 3.5 + zcr * 0.8, 0.02, 0.85)), 3),
-                        'pitchVariation': round(float(np.clip(flux * 22.0 + abs(slope) * 2.5, 0.8, 9.5)), 2),
-                        'expressiveDynamic': round(float(np.clip(voc * 0.75 + min(1.0, rms * 5.0) * 0.25, 0.1, 0.98)), 3),
-                    },
-                    'arrangementTransitions': {
-                        'activeStems': act_stems,
-                        'layeringDensity': density,
-                        'transitionType': trans,
-                        'stemEnergies': stem_e,
-                    },
-                }
-                d['dimensions'] = dims
-                d['key'] = key
-                d['chords'] = chords
-                d['tempoBpm'] = est_bpm
-                d['activeStems'] = act_stems
-                d['topInstruments'] = top_inst
-
-            mh = dims.get('melodyHarmony', {})
-            rg = dims.get('rhythmGroove', {})
-            it = dims.get('instrumentationTimbre', {})
-            ve = dims.get('vocalsExpression', {})
-            at = dims.get('arrangementTransitions', {})
-
-            for c in (mh.get('chords') or []):
-                if not chord_seq or chord_seq[-1] != c:
-                    chord_seq.append(c)
-            stabilities.append(float(mh.get('harmonicStability') or 0.75))
-            tempos.append(float(rg.get('tempoBpm') or 115.0))
-            syncopations.append(float(rg.get('syncopation') or 0.4))
-            pulses.append(float(rg.get('pulseClarity') or 0.7))
-            probs_d = it.get('probabilities') or {}
-            for k in inst_keys:
-                inst_totals[k] += float(probs_d.get(k) or 0.0)
-            se = at.get('stemEnergies') or {}
-            for k in stem_totals:
-                stem_totals[k] += float(se.get(k) or 0.0)
-            breathiness_vals.append(float(ve.get('breathiness') or 0.1))
-            pitch_vars.append(float(ve.get('pitchVariation') or 3.0))
-            expr_vals.append(float(ve.get('expressiveDynamic') or 0.5))
-            densities.append(float(at.get('layeringDensity') or 0.75))
-
-        n_segs = max(1, len(segs))
-        mean_chroma = np.mean(all_chromas, axis=0) if all_chromas else np.zeros(12)
-        t_key, t_conf = MusicalStructureAnalyzer.estimate_key(mean_chroma)
-        avg_probs = {k: round(inst_totals[k] / n_segs, 3) for k in inst_keys}
-        sorted_avg_inst = sorted(avg_probs.items(), key=lambda kv: kv[1], reverse=True)
-        avg_stems = {k: round(stem_totals[k] / n_segs, 5) for k in stem_totals}
-        avg_cent = float(np.mean([float(s.get('descriptors', {}).get('brightness_hz') or 1400.0) for s in segs])) if segs else 1400.0
-        t_texture = 'acoustic' if avg_cent < 2200 and avg_probs['synthesizer'] < 0.42 else ('electronic' if avg_cent > 3400 else 'hybrid')
+        pitch_windows = [d['vocalsExpression']['pitch'] for d in measured if (d.get('vocalsExpression') or {}).get('pitch')]
+        pitch = ({k: round(float(np.mean([w[k] for w in pitch_windows])), 4) for k in pitch_windows[0]}
+                 if pitch_windows else None)
 
         return {
+            'measuredWindows': len(measured),
             'melodyHarmony': {
-                'key': t_key,
-                'keyConfidence': t_conf,
-                'chords': chord_seq[:8] or self.match_top_chords(mean_chroma, top_k=4),
-                'harmonicStability': round(float(np.mean(stabilities)) if stabilities else 0.78, 3),
-                'chroma': [round(float(x), 4) for x in mean_chroma],
+                'key': key,
+                'keyConfidence': key_confidence,
+                'chords': chord_sequence[:8],
+                'harmonicStability': mean('melodyHarmony', 'harmonicStability'),
+                'chroma': [round(float(x), 4) for x in mean_chroma] if mean_chroma is not None else None,
             },
             'rhythmGroove': {
-                'tempoBpm': round(float(np.median(tempos)) if tempos else 118.0, 1),
-                'syncopation': round(float(np.mean(syncopations)) if syncopations else 0.42, 3),
-                'pulseClarity': round(float(np.mean(pulses)) if pulses else 0.74, 3),
-                'drumFillCount': sum(
-                    1 for s in segs
-                    if s.get('descriptors', {}).get('dimensions', {}).get('rhythmGroove', {}).get('drumFillDetected')
-                ),
+                'tempoBpm': round(float(np.median(tempos)), 1) if tempos else None,
+                'syncopation': mean('rhythmGroove', 'syncopation'),
+                'pulseClarity': mean('rhythmGroove', 'pulseClarity'),
+                'drumFillCount': sum(1 for d in measured if d.get('rhythmGroove', {}).get('drumFillDetected')),
             },
             'instrumentationTimbre': {
-                'probabilities': avg_probs,
-                'topInstruments': [k for k, v in sorted_avg_inst if v >= 0.32][:4] or [sorted_avg_inst[0][0]],
-                'texture': t_texture,
-                'brightnessHz': round(avg_cent, 1),
+                'probabilities': instruments,
+                'topInstruments': [k for k, v in sorted(instruments.items(), key=lambda kv: -kv[1]) if v >= 0.32][:4],
+                'brightnessHz': round(float(np.mean(brightness)), 1) if brightness else None,
             },
             'vocalsExpression': {
-                'presence': avg_probs['vocals'],
-                'breathiness': round(float(np.mean(breathiness_vals)) if breathiness_vals else 0.14, 3),
-                'pitchVariation': round(float(np.mean(pitch_vars)) if pitch_vars else 3.8, 2),
-                'expressiveDynamic': round(float(np.mean(expr_vals)) if expr_vals else 0.56, 3),
+                'presence': mean('vocalsExpression', 'presence'),
+                'breathiness': mean('vocalsExpression', 'breathiness'),
+                'expressiveDynamic': mean('vocalsExpression', 'expressiveDynamic'),
+                'pitch': pitch,
             },
             'arrangementTransitions': {
-                'activeStems': [k for k, v in avg_stems.items() if v >= max(avg_stems.values()) * 0.25] if avg_stems else ['vocals', 'other'],
-                'layeringDensity': round(float(np.mean(densities)) if densities else 0.75, 2),
-                'stemEnergies': avg_stems,
+                'activeStems': [k for k, v in stems.items() if v >= max(stems.values()) * 0.25] if stems else [],
+                'layeringDensity': mean('arrangementTransitions', 'layeringDensity', 2),
+                'stemEnergies': stems,
             },
         }
 

@@ -95,11 +95,23 @@ export interface InstrumentationTimbre {
   brightnessHz: number;
 }
 
+/** Pitch-contour descriptors from musicdna/features/vocal.py; only present when a real vocal stem was analysed. */
+export interface VocalPitch {
+  voiced_fraction: number;
+  median_pitch_st: number;
+  pitch_range_st: number;
+  glide_st_per_sec: number;
+  pitch_velocity_st_per_sec: number;
+  longest_sustain_sec: number;
+  vibrato_rate_hz: number;
+  vibrato_extent_st: number;
+  ornament_rate_per_sec: number;
+}
 export interface VocalsExpression {
   presence: number;
   breathiness: number;
-  pitchVariation: number;
   expressiveDynamic: number;
+  pitch: VocalPitch | null;
 }
 
 export interface ArrangementTransitions {

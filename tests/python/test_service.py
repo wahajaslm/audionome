@@ -15,7 +15,7 @@ from musicdna.features.structure import MusicalStructureAnalyzer
 from musicdna.preference.favorite_passages import FavoritePassageTaxonomy, AcousticContrastAnalyzer, FavoritePassageEvaluator
 from musicdna.preference.active_learning import ActiveLearningEngine
 from musicdna.preference.emotion import DynamicEmotionModel
-from musicdna.preference.evaluation import ListeningBehaviorAggregator, PreferenceAblationStudy, EvidenceInsightSynthesizer
+from musicdna.preference.evaluation import ListeningBehaviorAggregator, EvidenceInsightSynthesizer, behavior_only_auc
 
 from musicdna.paths import DEMO_WAV as DEMO_AUDIO_PATH
 
@@ -115,8 +115,7 @@ def test_sqlite_persistence_and_multimodal_fusion():
 
 
 def test_passive_listening_research_evaluation():
-    aggregator = ListeningBehaviorAggregator()
-    ablation_study = PreferenceAblationStudy(behavior_aggregator=aggregator)
+    aggregator = ListeningBehaviorAggregator()  # default grid: 12 s windows every 6 s
 
     events = [
         {'kind': 'seek', 'origin': 'user', 'trackId': 't1', 'fromSec': 50, 'toSec': 20, 'sessionId': 's1', 'at': 1},
@@ -128,12 +127,13 @@ def test_passive_listening_research_evaluation():
     moments = [{'trackId': 't1', 'startSec': 20, 'endSec': 35}]
 
     behaviors = aggregator.extract_passage_behaviors(events)
-    assert 't1:20' in behaviors
-    assert behaviors['t1:20']['manualRewinds'] == 2
-    assert behaviors['t1:20']['distinctSessions'] == 2
-    assert behaviors['t1:20']['relativeVolumeChanges'] == 1
+    window = behaviors['t1:18']  # [18, 30) is covered by both rewinds and contains the volume change
+    assert window['manualRewinds'] == 2
+    assert window['distinctSessions'] == 2
+    assert window['relativeVolumeChanges'] == 1
+    assert window['attentionScore'] > 0
 
-    eval_result = ablation_study.evaluate_behavior_only(events, moments)
+    eval_result = behavior_only_auc(events, moments)
     assert eval_result['status'] in ('evaluated', 'need_both_classes')
 
 

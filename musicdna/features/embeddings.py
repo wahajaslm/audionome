@@ -14,7 +14,8 @@ import httpx
 import librosa
 import numpy as np
 import soundfile as sf
-from musicdna.features.dsp import SAMPLE_RATE, AcousticFeatureExtractor, load_audio_safely
+from musicdna.audio.io import load_audio
+from musicdna.features.dsp import AcousticFeatureExtractor
 
 HF_CLAP_MODEL_ID: str = os.getenv('MUSIC_DNA_CLAP_MODEL', 'laion/clap-htsat-unfused').strip()
 HF_CLAP_SAMPLE_RATE: int = 48000
@@ -272,8 +273,10 @@ class DeepAudioEncoder:
         allow_noncommercial: bool | None = None
     ) -> dict[str, Any]:
         """Extracts time-aligned deep neural embeddings for each window of an authorized recording."""
-        audio_signal, sample_rate = load_audio_safely(str(audio_path), sr=SAMPLE_RATE, duration=600)
-        base_analysis = AcousticFeatureExtractor().extract_from_waveform(audio_signal, sample_rate)
+        extractor = AcousticFeatureExtractor()
+        sample_rate = extractor.sample_rate
+        audio_signal = load_audio(audio_path, sample_rate, duration_sec=extractor.config.audio.max_duration_sec)
+        base_analysis = extractor.extract_from_waveform(audio_signal, sample_rate)
         return self.analyze_waveform_deep(
             audio_waveform=audio_signal,
             sample_rate=sample_rate,

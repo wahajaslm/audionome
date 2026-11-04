@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from musicdna.service.service import AudioIntelligenceService, _DEFAULT_SERVICE
 from musicdna.service.repository import AnalysisRepository, _DEFAULT_REPOSITORY, AUDIO_CACHE_DIR
+from musicdna.audio.io import load_audio
 from musicdna.paths import PUBLIC_DIR
 from musicdna.service.studio import router as studio_router, DEMO_WAV
 from musicdna.service.streaming import resolve_stream, create_proxy_stream_response
@@ -233,44 +234,18 @@ async def stream_analysis_events(
                 yield f"data: {json.dumps({'error': f'Track {track_id} audio not found'})}\n\n"
                 return
 
-        waveform, sr = librosa.load(str(audio_path), sr=22050, mono=True, duration=300)
-        window_samples = int(12.0 * sr)
-        hop_samples = int(6.0 * sr)
-        num_windows = max(1, (len(waveform) - window_samples) // hop_samples + 1)
-
-        for i in range(num_windows):
-            start_samp = i * hop_samples
-            end_samp = min(len(waveform), start_samp + window_samples)
-            chunk = waveform[start_samp:end_samp]
-            if len(chunk) < sr:
-                continue
-
-            # Extract window descriptors
-            t_start = round(start_samp / sr, 2)
-            t_end = round(end_samp / sr, 2)
-            rms = float(np.mean(librosa.feature.rms(y=chunk)))
-            spec_cent = float(np.mean(librosa.feature.spectral_centroid(y=chunk, sr=sr)))
-            flux = float(np.mean(librosa.onset.onset_strength(y=chunk, sr=sr)))
-
-            seg_data = {
-                'startSec': t_start,
-                'endSec': t_end,
-                'descriptors': {
-                    'energy': round(rms, 4),
-                    'brightness_hz': round(spec_cent, 1),
-                    'spectral_flux': round(flux, 3),
-                    'energy_slope': 0.0,
-                    'vocal_presence': 0.5,
-                },
-                'embedding': [0.1] * 64,
-            }
-
+        # Same extractor and window grid as /api/analyze; segments are streamed once computed.
+        analysis = await asyncio.to_thread(
+            service.feature_extractor.extract_track_analysis, audio_path, None, False, 0.0, 300.0
+        )
+        segments = analysis['segments']
+        for idx, seg in enumerate(segments):
             msg = {
                 'trackId': track_id,
-                'index': i,
-                'total': num_windows,
-                'segment': seg_data,
-                'status': 'complete' if i == num_windows - 1 else 'processing'
+                'index': idx,
+                'total': len(segments),
+                'segment': seg,
+                'status': 'complete' if idx == len(segments) - 1 else 'processing'
             }
             yield f"data: {json.dumps(msg)}\n\n"
             await asyncio.sleep(0.02)
@@ -298,7 +273,8 @@ def get_track_stems(
     if not any(cached_availability.values()):
         audio_path = service.find_cached_audio(track_id)
         if audio_path and audio_path.is_file():
-            waveform, sample_rate = librosa.load(str(audio_path), sr=22050, mono=True, duration=600)
+            sample_rate = service.feature_extractor.sample_rate
+            waveform = load_audio(audio_path, sample_rate, duration_sec=service.feature_extractor.config.audio.max_duration_sec)
             stems = service.stem_separator.separate(waveform, sample_rate)
             service.stem_separator.save_stems_to_cache(track_id, stems, sample_rate)
             cached_availability = {name: True for name in stem_names}

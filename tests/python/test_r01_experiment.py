@@ -1,5 +1,7 @@
 import numpy as np
 
+from musicdna.config import load_config
+
 from musicdna.corpus.coke_studio import CorpusEntry, CorpusManifest
 from musicdna.corpus.feature_store import FeatureStore
 from musicdna.experiments.r01 import primary_artist, run
@@ -12,7 +14,7 @@ def entry(video_id: str, artists: str) -> CorpusEntry:
 
 def build_store(tmp_path, songs: list[str]) -> FeatureStore:
     """Preference is planted in vocal feature 5 (sustain); loudness is unrelated noise."""
-    store = FeatureStore(tmp_path)
+    store = FeatureStore(load_config(overrides=['windows.window_sec=10', 'windows.hop_sec=10']), tmp_path)
     rng = np.random.default_rng(1)
     for song in songs:
         vocal = rng.standard_normal((20, 9))

@@ -1,0 +1,60 @@
+# Music DNA analysis parameters. Every field is optional; missing ones use the code defaults.
+# Override any value from the command line: --set windows.window_sec=10
+
+# Analysis grid shared by every feature, listening signal and experiment.
+[windows]
+window_sec = 12.0
+hop_sec = 6.0
+min_window_sec = 0.5
+
+# Sample rates and limits for decoding.
+[audio]
+analysis_sr = 22050
+stereo_sr = 44100
+max_duration_sec = 600.0
+stem_model = "htdemucs"
+
+# pYIN pitch tracking on the vocal stem and the descriptors built on it.
+[vocal]
+sample_rate = 16000
+hop = 256
+fmin_hz = 70.0
+fmax_hz = 1100.0
+vibrato_min_hz = 4.0
+vibrato_max_hz = 8.5
+min_run_sec = 0.5
+ornament_prominence_st = 0.75
+ornament_max_width_sec = 0.3
+max_step_st = 1.0
+
+# Stereo image analysis.
+[spatial]
+band_edges_hz = [20.0, 250.0, 4000.0, 16000.0]
+n_fft = 4096
+
+# How listening events (saves, likes, loops, rewinds, skips) become evidence about a window.
+[signals]
+min_overlap_fraction = 0.5
+heard_fraction = 0.8
+rewind_min_sec = 4.0
+forward_seek_min_sec = 5.0
+max_rewind_count = 3
+weight_saved_moment = 3.0
+weight_liked = 2.0
+weight_loop_started = 2.0
+weight_rewound_into = 1.0
+weight_disliked = 3.0
+weight_left_early = 1.5
+weight_heard_without_action = 1.0
+weight_repeat_session = 1.5
+weight_seek_arrival = 1.0
+
+# Pairwise preference ranker and R01 evaluation.
+[ranker]
+embedding_pca_components = 16
+regularization_c = 0.1
+min_songs = 3
+min_pairs = 20
+experiment_d_min_pairs = 500
+bootstrap_samples = 2000
+seed = 0

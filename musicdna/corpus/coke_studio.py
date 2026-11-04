@@ -13,13 +13,10 @@ import argparse
 import hashlib
 import json
 import re
-import subprocess
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-
-import numpy as np
 
 from musicdna.paths import CORPUS_DIR
 
@@ -208,16 +205,11 @@ def verify(manifest: CorpusManifest, audio_directory: Path = AUDIO_DIRECTORY) ->
     return problems
 
 
-def load_audio(entry: CorpusEntry, sample_rate: int, mono: bool = True,
-               audio_directory: Path = AUDIO_DIRECTORY) -> np.ndarray:
-    """Decodes a corpus file with ffmpeg to float32 at `sample_rate`; shape (n,) mono or (2, n) stereo."""
+def audio_path(entry: CorpusEntry, audio_directory: Path = AUDIO_DIRECTORY) -> Path:
+    """Local file for a corpus song; decode it with `musicdna.audio.io.load_audio`."""
     if not entry.audio_file:
         raise FileNotFoundError(f'{entry.video_id} has not been downloaded')
-    channels = 1 if mono else 2
-    command = ['ffmpeg', '-v', 'error', '-i', str(audio_directory / entry.audio_file),
-               '-f', 'f32le', '-ac', str(channels), '-ar', str(sample_rate), '-']
-    samples = np.frombuffer(subprocess.run(command, check=True, capture_output=True).stdout, dtype=np.float32)
-    return samples if mono else samples.reshape(-1, 2).T
+    return audio_directory / entry.audio_file
 
 
 def main() -> None:

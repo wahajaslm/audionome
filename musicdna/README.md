@@ -6,8 +6,11 @@ All Python for Music DNA lives here. The player (`index.html`, `src/`) only talk
 
 ```
 musicdna/
+├── config.py             every tunable parameter (see "Parameters")
 ├── paths.py              project locations (demo audio, caches, corpus, outputs)
 ├── audio/                audio in, stems out
+│   ├── io.py             the one audio decoder (ffmpeg)
+│   ├── windows.py        the one analysis window grid
 │   ├── beats.py          Beat This! beat grid (librosa fallback)
 │   └── stems.py          Demucs / MIR stem separation
 ├── features/             per-window descriptors of a recording
@@ -19,8 +22,9 @@ musicdna/
 │   ├── spectral.py       STFT / mel / CQT data for plots
 │   └── projection.py     PaCMAP 2-D projection of embeddings
 ├── preference/           learning what the listener likes
-│   ├── implicit_pairs.py within-song pairs from saves, loops, rewinds, skips
-│   ├── evaluation.py     behaviour aggregation, A-D ablation, evidence insights
+│   ├── signals.py        the one reading of listening events -> evidence per window
+│   ├── implicit_pairs.py within-song pairs built from that evidence
+│   ├── evaluation.py     behaviour summaries, behaviour-only AUC, evidence insights
 │   ├── active_learning.py which passage/question to ask about next
 │   ├── favorite_passages.py FAV-corpus reason taxonomy and passage contrast
 │   └── emotion.py        personalised dynamic emotion baseline (DMER)
@@ -30,7 +34,6 @@ musicdna/
 ├── experiments/          runnable studies, each writes to research-output/
 │   ├── pipeline.py       corpus -> features -> pairs -> R01, in one command
 │   ├── r01.py            R01: vocal pitch vs general embeddings
-│   ├── benchmark_suite.py older integration benchmark (synthetic tracks, see below)
 │   └── acoustic_explorer.py feature CSV + plots for one recording
 └── service/              localhost FastAPI the player calls
     ├── app.py, studio.py         HTTP routes
@@ -40,7 +43,7 @@ musicdna/
     └── templates/studio.html     research studio page
 ```
 
-**Dependency rule:** each layer imports only from layers above it in this list: `audio` → `features` → `preference` → `corpus` → `experiments` / `service`. Nothing imports from `service`.
+**Dependency rule:** each layer imports only from layers above it in this list: `config`/`paths` → `audio` → `features` → `preference` → `corpus` → `experiments` / `service`. Nothing imports from `service`.
 
 Tests: `tests/python/`. Notebook: `notebooks/`.
 
@@ -84,15 +87,42 @@ Checked by `ModelLicenseManager` in `features/embeddings.py`, separately from co
 - **MERT, MuQ**: CC BY-NC 4.0 weights. Blocked unless `--allow-nc-weights` or `MUSIC_DNA_ALLOW_NC_WEIGHTS=1`.
 - **Essentia models**: CC BY-NC-SA 4.0. Blocked by default.
 
-## Known overlaps still to merge
+## Parameters
 
-These do similar jobs in different places. They were left as-is to avoid changing results:
+All analysis parameters live in `config.py`, grouped into sections. `configs/default.toml` lists
+every one with its default. Change them by editing that file, pointing `--config` (or
+`MUSIC_DNA_CONFIG`) at another TOML file, or overriding single values:
 
-| Topic | Places | Note |
+```bash
+python -m musicdna.experiments.pipeline --profile p.json --set windows.window_sec=10 --set windows.hop_sec=5
+python -m musicdna.corpus.feature_store --set vocal.hop=160 --set vocal.vibrato_min_hz=5
+```
+
+| Section | Controls |
+| :--- | :--- |
+| `windows` | window length, hop, shortest tail window. One grid for every feature, signal and experiment |
+| `audio` | analysis and stereo sample rates, max duration, Demucs model |
+| `vocal` | pYIN rate/hop/range, vibrato band, ornament prominence and width, glide step limit |
+| `spatial` | the 4 band edges for low/mid/high stereo width, FFT size |
+| `signals` | overlap and "heard" thresholds, rewind/seek minimums, evidence weights |
+| `ranker` | PCA size, regularization, minimum data, bootstrap samples, seed |
+
+Cached corpus features are named by a hash of the sections they depend on
+(`data/coke_studio/features/<song>/<stage>-<hash>.npy`, settings in `features/configs/<hash>.json`).
+Changing the window recomputes DSP, spatial, vocal and embeddings but reuses stems and pitch contours.
+Each pipeline run writes `research-output/r01_report_<hash>.json` with the full config inside.
+
+The player's service reads the same config (`MUSIC_DNA_CONFIG` or `configs/default.toml`).
+
+## Single implementations
+
+| Job | Module | Replaced |
 | :--- | :--- | :--- |
-| Window length | `features.dsp` 12 s / 6 s hop, `preference.implicit_pairs` 10 s, `preference.evaluation` 5 s bins | Pick one grid |
-| Listening behaviour | `preference.evaluation.ListeningBehaviorAggregator`, `preference.implicit_pairs`, `src/intelligence/personalize.ts` | Three readings of the same events |
-| Vocal analysis | `features.structure` (rough pitch spread), `features.vocal` (pYIN) | Structure's version is not real pitch tracking |
-| Audio loading | `features.dsp.load_audio_safely`, `corpus.coke_studio.load_audio` (ffmpeg) | |
-| Preference evaluation | `preference.evaluation` (A-D ablation), `experiments.r01` | R01 tests on held-out songs/artists |
-| Benchmark | `experiments.benchmark_suite` | Built on synthetic tracks with a planted vocal, so it confirms the code runs, not that preference is learned |
+| Decode audio | `audio.io.load_audio` | `load_audio_safely`, corpus ffmpeg loader, 4 direct `librosa.load` calls |
+| Window grid | `audio.windows.window_grid` | 12 s/6 s in DSP and the stream endpoint, 10 s in pairs, 5 s bins in evaluation |
+| Listening evidence | `preference.signals.collect_evidence` | separate parsers in `evaluation` and `implicit_pairs` |
+| Vocal pitch | `features.vocal` | rough pitch-spread in `structure`, estimated pitch in `spectral` |
+| Preference model comparison | `experiments.r01` | A-D ablation in `evaluation`, synthetic `benchmark_suite` |
+
+`src/intelligence/personalize.ts` still reads listening events itself: it runs in the browser and
+cannot call Python.

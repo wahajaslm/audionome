@@ -9,18 +9,22 @@ from dataclasses import dataclass
 import json
 import math
 from pathlib import Path
-import subprocess
 from typing import Any
 import librosa
 import numpy as np
 
-from musicdna.audio.stems import StemSeparator
-from musicdna.features.structure import MusicalStructureAnalyzer
 from musicdna.audio.beats import BeatTracker, _DEFAULT_BEAT_TRACKER
+from musicdna.audio.io import load_audio
+from musicdna.audio.stems import StemSeparator
+from musicdna.audio.windows import window_grid
+from musicdna.config import DEFAULT, Config
+from musicdna.features.structure import MusicalStructureAnalyzer
+from musicdna.features.vocal import PitchContour, VocalDescriptors, describe_window
 
-SAMPLE_RATE: int = 22050
-WINDOW_SECONDS: float = 12.0
-HOP_SECONDS: float = 6.0
+# Defaults, kept for callers that only need the numbers. Pass a Config to change them.
+SAMPLE_RATE: int = DEFAULT.audio.analysis_sr
+WINDOW_SECONDS: float = DEFAULT.windows.window_sec
+HOP_SECONDS: float = DEFAULT.windows.hop_sec
 FEATURE_VERSION: str = 'librosa-m3-segment-v3'
 DSP_REFERENCE_FILE: Path = Path(__file__).resolve().parent / 'dsp_reference.json'
 
@@ -93,49 +97,22 @@ class AudioAnalysisSegment:
         }
 
 
-def load_audio_safely(
-    audio_path: str | Path,
-    sr: int = SAMPLE_RATE,
-    offset: float = 0.0,
-    duration: float | None = None
-) -> tuple[np.ndarray, int]:
-    """Robust audio loader using librosa with automatic ffmpeg fallback for WebM, Opus, AAC, M4A, or unrecognised formats."""
-    path_str = str(audio_path)
-    dur = duration if duration is not None else 600.0
-    try:
-        return librosa.load(path_str, sr=sr, mono=True, offset=offset, duration=dur)
-    except Exception:
-        cmd = ['ffmpeg', '-nostdin', '-threads', '0']
-        if offset > 0:
-            cmd.extend(['-ss', str(offset)])
-        cmd.extend(['-i', path_str])
-        if duration is not None:
-            cmd.extend(['-t', str(duration)])
-        cmd.extend(['-f', 'f32le', '-ac', '1', '-ar', str(sr), '-'])
-        proc = subprocess.run(cmd, capture_output=True, check=True)
-        waveform = np.frombuffer(proc.stdout, dtype=np.float32)
-        if len(waveform) == 0:
-            raise ValueError(f"ffmpeg could not decode audio from {path_str}")
-        return waveform, sr
-
-
 class AcousticFeatureExtractor:
     """Deterministic, time-aligned acoustic feature and DSP embedding extractor."""
 
     def __init__(
         self,
-        sample_rate: int = SAMPLE_RATE,
-        window_seconds: float = WINDOW_SECONDS,
-        hop_seconds: float = HOP_SECONDS,
+        config: Config = DEFAULT,
         model_id: str = FEATURE_VERSION,
         stem_separator: StemSeparator | None = None,
         structure_analyzer: MusicalStructureAnalyzer | None = None,
         beat_tracker: BeatTracker | None = None,
         dsp_reference: tuple[np.ndarray, np.ndarray] | None | bool = True,
     ) -> None:
-        self.sample_rate = sample_rate
-        self.window_seconds = window_seconds
-        self.hop_seconds = hop_seconds
+        self.config = config
+        self.sample_rate = config.audio.analysis_sr
+        self.window_seconds = config.windows.window_sec
+        self.hop_seconds = config.windows.hop_sec
         self.model_id = model_id
         self.stem_separator = stem_separator or StemSeparator()
         self.structure_analyzer = structure_analyzer or MusicalStructureAnalyzer()
@@ -149,6 +126,7 @@ class AcousticFeatureExtractor:
         sample_rate: int,
         separated_clip_stems: dict[str, np.ndarray] | None = None,
         beat_times: np.ndarray | None = None,
+        vocal_pitch: VocalDescriptors | None = None,
     ) -> tuple[dict[str, Any], list[float]]:
         """Computes descriptors and normalized 25-D DSP embedding vector for a window."""
         rms_frames = librosa.feature.rms(y=audio_clip, frame_length=2048, hop_length=512)[0]
@@ -190,7 +168,7 @@ class AcousticFeatureExtractor:
 
         # 4. Five musical dimensions
         musical_dimensions = self.structure_analyzer.analyze_dimensions(
-            audio_clip, sample_rate, stems=separated_clip_stems, beat_times=beat_times
+            audio_clip, sample_rate, stems=separated_clip_stems, beat_times=beat_times, vocal_pitch=vocal_pitch
         )
 
         window_descriptors = WindowAcousticDescriptors(
@@ -241,8 +219,13 @@ class AcousticFeatureExtractor:
         separated_stems: dict[str, np.ndarray] | None = None,
         separate_stems_flag: bool = True,
         track_identifier: str | None = None,
+        pitch_contour: PitchContour | None = None,
     ) -> dict[str, Any]:
-        """Performs feature extraction and window analysis directly on an in-memory waveform."""
+        """Performs feature extraction and window analysis directly on an in-memory waveform.
+
+        pitch_contour: from `features.vocal.track_pitch` on a real vocal stem. Without it, windows
+        report no vocal pitch rather than an estimate from the mix.
+        """
         if not len(audio_waveform):
             raise ValueError('No decodable samples')
         duration_seconds = len(audio_waveform) / sample_rate
@@ -258,12 +241,8 @@ class AcousticFeatureExtractor:
         beat_grid = np.asarray(rhythm['beats'], dtype=np.float64)
 
         analysis_segments: list[AudioAnalysisSegment] = []
-        window_start_times = np.arange(0.0, duration_seconds, self.hop_seconds)
-        for start_time in window_start_times:
-            end_time = min(duration_seconds, float(start_time) + self.window_seconds)
+        for start_time, end_time in window_grid(duration_seconds, self.config.windows):
             clip_waveform = audio_waveform[int(start_time * sample_rate):int(end_time * sample_rate)]
-            if len(clip_waveform) < int(0.5 * sample_rate):
-                continue
             clip_stems = None
             if separated_stems:
                 clip_stems = {
@@ -271,8 +250,11 @@ class AcousticFeatureExtractor:
                     for name, stem_waveform in separated_stems.items()
                 }
             window_beats = beat_grid[(beat_grid >= start_time) & (beat_grid < end_time)] - start_time
+            window_pitch = (describe_window(pitch_contour, start_time, end_time, self.config.vocal)
+                            if pitch_contour is not None else None)
             descriptors_dict, embedding_vector = self.extract_window_features(
-                clip_waveform, sample_rate, separated_clip_stems=clip_stems, beat_times=window_beats
+                clip_waveform, sample_rate, separated_clip_stems=clip_stems, beat_times=window_beats,
+                vocal_pitch=window_pitch,
             )
             analysis_segments.append(AudioAnalysisSegment(
                 start_seconds=round(float(start_offset + start_time), 3),
@@ -284,8 +266,10 @@ class AcousticFeatureExtractor:
         if not analysis_segments:
             raise ValueError('No usable windows extracted')
 
+        track_pitch = (describe_window(pitch_contour, 0.0, duration_seconds, self.config.vocal)
+                       if pitch_contour is not None else None)
         track_dimensions = self.structure_analyzer.analyze_dimensions(
-            audio_waveform, sample_rate, stems=separated_stems, beat_times=beat_grid
+            audio_waveform, sample_rate, stems=separated_stems, beat_times=beat_grid, vocal_pitch=track_pitch
         )
 
         return {
@@ -314,13 +298,13 @@ class AcousticFeatureExtractor:
         duration: float | None = None,
     ) -> dict[str, Any]:
         """Loads recording, performs stem decomposition, and extracts overlapping window features."""
-        dur = duration if duration is not None else 600.0
-        audio_waveform, sample_rate = load_audio_safely(
-            str(audio_path), sr=self.sample_rate, offset=start_offset, duration=dur
+        audio_waveform = load_audio(
+            audio_path, self.sample_rate, offset_sec=start_offset,
+            duration_sec=duration if duration is not None else self.config.audio.max_duration_sec,
         )
         return self.extract_from_waveform(
             audio_waveform=audio_waveform,
-            sample_rate=sample_rate,
+            sample_rate=self.sample_rate,
             start_offset=start_offset,
             separated_stems=None,
             separate_stems_flag=separate_stems_flag,
@@ -328,16 +312,16 @@ class AcousticFeatureExtractor:
         )
 
 
-def compute_dsp_reference(audio_paths: list[str | Path], out_path: Path = DSP_REFERENCE_FILE) -> dict[str, Any]:
+def compute_dsp_reference(audio_paths: list[str | Path], out_path: Path = DSP_REFERENCE_FILE,
+                          config: Config = DEFAULT) -> dict[str, Any]:
     """Measures per-feature mean/std of the raw DSP vector over every window of the given recordings."""
-    extractor = AcousticFeatureExtractor(dsp_reference=None)
+    extractor = AcousticFeatureExtractor(config, dsp_reference=None)
+    sample_rate = extractor.sample_rate
     raw_rows: list[np.ndarray] = []
     for audio_path in audio_paths:
-        waveform, sample_rate = load_audio_safely(str(audio_path), sr=extractor.sample_rate, duration=600.0)
-        for start_time in np.arange(0.0, len(waveform) / sample_rate, extractor.hop_seconds):
-            clip = waveform[int(start_time * sample_rate):int((start_time + extractor.window_seconds) * sample_rate)]
-            if len(clip) < int(0.5 * sample_rate):
-                continue
+        waveform = load_audio(audio_path, sample_rate, duration_sec=config.audio.max_duration_sec)
+        for start_time, end_time in window_grid(len(waveform) / sample_rate, config.windows):
+            clip = waveform[int(start_time * sample_rate):int(end_time * sample_rate)]
             extractor.extract_window_features(clip, sample_rate)
             raw_rows.append(extractor.last_raw_vector)
     matrix = np.stack(raw_rows)
