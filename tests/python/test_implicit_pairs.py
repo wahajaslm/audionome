@@ -67,3 +67,16 @@ def test_matches_imported_track_to_corpus_song() -> None:
     songs = {'Chaap Tilak': 'v1', 'Tilak': 'v2'}
     assert ImplicitPairBuilder.match_song('Chaap-Tilak-Sab-Cheeni-Abida-Parveen', songs) == 'v1'
     assert ImplicitPairBuilder.match_song('Pasoori', songs) is None
+
+
+def test_file_hash_links_the_exact_corpus_file_and_overrides_the_title() -> None:
+    songs, files = {'Chaap Tilak': 'v1'}, {'abc': 'v9'}
+    moment = [{'trackId': 't1', 'startSec': 20, 'endSec': 30}]
+    exact = profile(moments=moment)
+    exact['tracks'][0].update(title='7SDrjwtfKMk', sha256='abc')  # corpus file imported by its file name
+    assert {(p.corpus_video_id, p.linked_by) for p in ImplicitPairBuilder(TEN_SECOND).build_pairs(exact, songs, files)} == {('v9', 'file_hash')}
+    other_file = profile(moments=moment)
+    other_file['tracks'][0]['sha256'] = 'not-in-corpus'  # same title, different audio file: not linked
+    assert {p.corpus_video_id for p in ImplicitPairBuilder(TEN_SECOND).build_pairs(other_file, songs, files)} == {None}
+    old_export = profile(moments=moment)  # exported before the player stored hashes: title fallback
+    assert {(p.corpus_video_id, p.linked_by) for p in ImplicitPairBuilder(TEN_SECOND).build_pairs(old_export, songs, files)} == {('v1', 'title')}

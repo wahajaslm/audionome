@@ -78,12 +78,14 @@ class ResearchPipeline:
 
     def build_pairs(self, profile: dict[str, Any], corpus: CorpusManifest) -> list[dict[str, Any]]:
         print('3/4 preference pairs')
-        pairs = [asdict(p) for p in ImplicitPairBuilder(self.config).build_pairs(profile, corpus.song_index())]
+        files = {e.sha256: e.video_id for e in corpus.entries if e.sha256}
+        pairs = [asdict(p) for p in ImplicitPairBuilder(self.config).build_pairs(profile, corpus.song_index(), files)]
         self.output_directory.mkdir(exist_ok=True)
         (self.output_directory / f'preference_pairs_{self.tag}.json').write_text(
             json.dumps(pairs, indent=2, ensure_ascii=False) + '\n', encoding='utf8')
         linked = sum(p['corpus_video_id'] is not None for p in pairs)
-        print(f'   {len(pairs)} pairs, {linked} on corpus songs')
+        by_title = sum(p['linked_by'] == 'title' for p in pairs)
+        print(f'   {len(pairs)} pairs, {linked} on corpus songs ({by_title} linked by title only, not by file hash)')
         return pairs
 
     def run_experiment(self, pairs: list[dict[str, Any]], corpus: CorpusManifest) -> dict[str, Any]:

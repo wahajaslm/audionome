@@ -34,6 +34,7 @@ export async function importFiles(files: FileList | File[]): Promise<Track[]> {
     if (!durationSec || !Number.isFinite(durationSec)) durationSec = 180;
     const title = file.name.replace(/\.[^.]+$/, '').replaceAll('_', ' ');
     const buf = await file.arrayBuffer();
+    const sha256 = await sha256Hex(buf);
     const nameLower = file.name.toLowerCase();
     const mimeType = file.type || (
       nameLower.endsWith('.wav') ? 'audio/wav' :
@@ -53,12 +54,19 @@ export async function importFiles(files: FileList | File[]): Promise<Track[]> {
       source: 'local-file',
       analysisRight: 'cleared',
       audioBlob,
-      addedAt: Date.now()
+      addedAt: Date.now(),
+      sha256
     };
     await db.tracks.add(trackItem);
     added.push(trackItem);
   }
   return added;
+}
+/** Hex SHA-256 of a file, or undefined where WebCrypto is unavailable (pages served over plain http from a LAN address). */
+async function sha256Hex(buf: ArrayBuffer): Promise<string | undefined> {
+  if (!globalThis.crypto?.subtle) return undefined;
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
+  return Array.from(digest, b => b.toString(16).padStart(2, '0')).join('');
 }
 export async function audioDuration(blob: Blob): Promise<number> {
   const url = URL.createObjectURL(blob);
@@ -93,7 +101,7 @@ export async function exportProfile(): Promise<void> {
   const [tracks, moments, events, settings, analyses, ratings] = await Promise.all([db.tracks.toArray(), db.moments.toArray(), db.events.toArray(), db.settings.toArray(), db.analyses.toArray(), db.ratings.toArray()]);
   const payload = {
     format: 'music-dna-profile-v1', exportedAt: new Date().toISOString(),
-    tracks: tracks.map(t => ({ id: t.id, title: t.title, artist: t.artist, durationSec: t.durationSec, mimeType: t.mimeType, source: t.source, analysisRight: t.analysisRight, addedAt: t.addedAt, providerId: t.providerId })), moments, events, settings, ratings, analyses: analyses.map(a => ({ trackId: a.trackId, method: a.method, modelId: a.modelId, analyzedAt: a.analyzedAt, segments: a.segments })),
+    tracks: tracks.map(t => ({ id: t.id, title: t.title, artist: t.artist, durationSec: t.durationSec, mimeType: t.mimeType, source: t.source, analysisRight: t.analysisRight, addedAt: t.addedAt, providerId: t.providerId, sha256: t.sha256 })), moments, events, settings, ratings, analyses: analyses.map(a => ({ trackId: a.trackId, method: a.method, modelId: a.modelId, analyzedAt: a.analyzedAt, segments: a.segments })),
     notice: 'Audio files are not included. This profile may include sensitive listening preferences.'
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });

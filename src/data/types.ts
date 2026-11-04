@@ -11,6 +11,10 @@ export interface Track {
   addedAt: number;
   audioBlob?: Blob; // never upload silently; future adapters may only supply provider references
   providerId?: string;
+  // SHA-256 (hex) of the imported file's bytes. Research links a track to a corpus song by this, not by title:
+  // a corpus file imported as '7rLxN41avhY.m4a' has the title '7rLxN41avhY', which no song name matches,
+  // and a re-encoded copy titled 'Garaj Baras' would match by name but not by audio. Unset for older imports.
+  sha256?: string;
   artwork?: string;
 }
 export interface Moment {

@@ -36,6 +36,7 @@ class PreferencePair:
     passed_over_evidence: list[str]
     weight: float
     strength: str
+    linked_by: str | None = None  # 'file_hash' (the exact corpus file), 'title', or None (not a corpus song)
 
 
 class ImplicitPairBuilder:
@@ -50,16 +51,25 @@ class ImplicitPairBuilder:
         return self.collector.collect(durations, profile.get('events', []), profile.get('moments', []),
                                       profile.get('ratings', []))
 
-    def build_pairs(self, profile: dict[str, Any], songs: dict[str, str] | None = None) -> list[PreferencePair]:
-        """`songs` maps a known song name to its corpus id, to link imported tracks to the corpus."""
+    def build_pairs(self, profile: dict[str, Any], songs: dict[str, str] | None = None,
+                    files: dict[str, str] | None = None) -> list[PreferencePair]:
+        """Links imported tracks to corpus songs: `files` maps a corpus file's sha256 to its id, `songs` a song name.
+
+        The file hash wins, because only the exact corpus file guarantees pair windows land on the audio
+        the features were computed from. Example: importing data/coke_studio/audio/7rLxN41avhY.m4a gives a
+        track titled '7rLxN41avhY'; no song name matches it, but its sha256 does (-> Garaj Baras).
+        A track with a hash that is *not* in the corpus (e.g. a re-encoded 'Garaj Baras.mp3') is not linked
+        by title either: its audio may be offset or trimmed against the corpus file.
+        """
         signals = self.config.signals
-        titles = {t['id']: str(t.get('title') or '') for t in profile.get('tracks', [])}
+        tracks = {t['id']: t for t in profile.get('tracks', [])}
+        titles = {track_id: str(t.get('title') or '') for track_id, t in tracks.items()}
         pairs: list[PreferencePair] = []
         for track_id, windows in self.label_windows(profile).items():
             # A window with both kinds of evidence is ambiguous and left out.
             preferred = [w for w in windows if w.positive() and not w.negative(signals)]
             passed_over = [w for w in windows if w.negative(signals) and not w.positive()]
-            video_id = self.match_song(titles[track_id], songs) if songs else None
+            video_id, linked_by = self.link(tracks.get(track_id, {}), songs or {}, files or {})
             for good in preferred:
                 for bad in passed_over:
                     if WindowGrid.overlap(good.start_sec, good.end_sec, bad.start_sec, bad.end_sec) > 0:
@@ -71,9 +81,19 @@ class ImplicitPairBuilder:
                         preferred=(good.start_sec, good.end_sec), passed_over=(bad.start_sec, bad.end_sec),
                         preferred_evidence=sorted(good.positive()), passed_over_evidence=sorted(bad.negative(signals)),
                         weight=round(min(good.positive_score(signals), bad.negative_score(signals)), 3),
-                        strength='strong' if explicit else 'weak',
+                        strength='strong' if explicit else 'weak', linked_by=linked_by,
                     ))
         return pairs
+
+    @classmethod
+    def link(cls, track: dict[str, Any], songs: dict[str, str], files: dict[str, str]) -> tuple[str | None, str | None]:
+        """(corpus id, how it was linked). Title matching is only a fallback for tracks exported before
+        the player stored file hashes."""
+        digest = track.get('sha256')
+        if digest:
+            return (files[digest], 'file_hash') if digest in files else (None, None)
+        video_id = cls.match_song(str(track.get('title') or ''), songs) if songs else None
+        return video_id, 'title' if video_id else None
 
     @staticmethod
     def match_song(track_title: str, songs: dict[str, str]) -> str | None:
