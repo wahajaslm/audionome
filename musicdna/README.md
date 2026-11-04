@@ -149,3 +149,17 @@ slides, ornaments in `features/vocal.py`).
   18 as near-silent). R02 reports the kept share per song.
 - Known limits: the gate cannot tell a soft sung note from loud leakage at the same level, and pitch-tracker errors remain.
 
+## Keeping the notebook in step with the pipeline
+
+`notebooks/01_interactive_audio_exploration.ipynb` follows `ResearchPipeline` step by step and prints a
+pipeline fingerprint (`musicdna.experiments.pipeline.fingerprint_hash`: feature stages, experiment systems,
+config defaults). `tests/python/test_notebook.py` fails when:
+- the saved fingerprint differs from the code (re-run the notebook);
+- a feature stage or experiment class is missing from the notebook;
+- a `musicdna` import in the notebook no longer exists, or a saved cell has an error.
+
+Re-run after any pipeline change:
+```bash
+.venv/bin/jupyter nbconvert --to notebook --execute --inplace notebooks/01_interactive_audio_exploration.ipynb
+```
+

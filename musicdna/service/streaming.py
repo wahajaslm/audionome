@@ -13,8 +13,12 @@ import yt_dlp
 from fastapi import HTTPException
 from starlette.responses import StreamingResponse
 
+# M4A FIX - prefer AAC in .m4a over WebM/Opus. Safari cannot play WebM in <audio>, and its
+# Web Audio decoder (used for the waveform) cannot read it either. Every browser plays M4A.
+# Example: a YouTube link resolved to format 251 (webm/opus) and stayed silent in Safari;
+# it now resolves to 140 (m4a/aac).
 YDL_OPTS = {
-    'format': 'bestaudio/best',
+    'format': 'bestaudio[ext=m4a]/bestaudio/best',
     'quiet': True,
     'no_warnings': True,
     'extract_flat': False,
@@ -117,8 +121,11 @@ async def create_proxy_stream_response(
     headers: dict[str, str] = {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
     }
-    if range_header:
-        headers['Range'] = range_header
+    # FULL FILE FIX - YouTube cuts a plain GET short (about 1.9 MB of a 3.4 MB song), so the
+    # waveform download got a truncated file. Always ask upstream for a range; when the browser
+    # did not ask for one, answer it with a normal 200 for the whole file.
+    # Example: fetch(proxyUrl) with no Range header now returns all 3,433,755 bytes.
+    headers['Range'] = range_header or 'bytes=0-'
 
     client = httpx.AsyncClient(timeout=15.0, follow_redirects=True)
     try:
@@ -146,6 +153,9 @@ async def create_proxy_stream_response(
         val = upstream_res.headers.get(key)
         if val:
             response_headers[key] = val
+    if not range_header and status_code == 206:
+        status_code = 200
+        response_headers.pop('content-range', None)
 
     if 'content-type' not in response_headers or 'html' in response_headers['content-type'].lower():
         response_headers['content-type'] = 'audio/mpeg'

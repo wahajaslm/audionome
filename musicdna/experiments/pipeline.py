@@ -8,6 +8,7 @@ Every step reuses what is already on disk, so re-running after more listening on
 """
 from __future__ import annotations
 import argparse
+import hashlib
 import json
 from dataclasses import asdict
 from pathlib import Path
@@ -16,11 +17,29 @@ from typing import Any
 from musicdna.config import Config
 from musicdna.corpus.coke_studio import CokeStudioManifest
 from musicdna.corpus.manifest import CorpusManifest
-from musicdna.corpus.feature_store import DEFAULT_STAGES, FeatureBuilder, FeatureStore
+from musicdna.corpus.feature_store import DEFAULT_STAGES, STAGES, FeatureBuilder, FeatureStore
 from musicdna.experiments.r01 import R01Experiment
 from musicdna.experiments.r02 import R02Experiment
 from musicdna.paths import RESEARCH_OUTPUT_DIR
 from musicdna.preference.implicit_pairs import ImplicitPairBuilder
+
+
+def pipeline_fingerprint() -> dict[str, Any]:
+    """What the pipeline consists of right now: feature stages and their outputs, the systems each
+    experiment compares, and every config default. The notebook prints its hash when it runs, and
+    tests/python/test_notebook.py fails if the saved notebook's hash no longer matches the code.
+    Example: changing vocal.gate_min_vocal_to_accompaniment_db from -15 to -12 changes the hash,
+    so the notebook must be re-run before the change is committed."""
+    return {
+        'stages': {name: sorted(stage.artifacts) for name, stage in STAGES.items()},
+        'default_stages': list(DEFAULT_STAGES),
+        'experiments': {'r01': sorted(R01Experiment.SYSTEMS), 'r02': sorted(R02Experiment.SYSTEMS)},
+        'config': Config().to_dict(),
+    }
+
+
+def fingerprint_hash() -> str:
+    return hashlib.sha1(json.dumps(pipeline_fingerprint(), sort_keys=True, default=str).encode()).hexdigest()[:12]
 
 
 class ResearchPipeline:
