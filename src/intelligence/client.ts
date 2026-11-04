@@ -78,7 +78,12 @@ export async function analyzeLocalTrack(
     throw new Error('Analysis restricted by policy');
   }
 
-  let audioBlob = track.audioBlob;
+  // EMPTY AUDIO FIX - a stored Blob can read back as 0 bytes (IndexedDB after storage
+  // pressure). It used to be sent as is, the service answered 400 "Empty audio file" and the
+  // song never got analysed. An empty copy now counts as missing, so the service's copy is used.
+  // Example: song 23bf7ba9… sent 0 bytes; the service still had all 8.8 MB at /api/audio/<id>.
+  let audioBlob = track.audioBlob?.size ? track.audioBlob : undefined;
+  if (audioBlob && !(await audioBlob.slice(0, 1).arrayBuffer().catch(() => new ArrayBuffer(0))).byteLength) audioBlob = undefined;
   if (!audioBlob) {
     if (track.id === 'original-demo') {
       try {
@@ -94,12 +99,13 @@ export async function analyzeLocalTrack(
       try {
         const res = await fetch(`${ENDPOINT}/api/audio/${encodeURIComponent(track.id)}`);
         if (res.ok) audioBlob = await res.blob();
+        if (audioBlob && !audioBlob.size) audioBlob = undefined;
       } catch { }
     }
   }
 
   if (!audioBlob) {
-    throw new Error('Audio unavailable for analysis');
+    throw new Error('Audio missing on this device and on the local service. Import the file again.');
   }
 
   const form = new FormData();

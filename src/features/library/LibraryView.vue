@@ -24,7 +24,7 @@ const intelligence = useIntelligenceStore();
 const playback = usePlaybackStore();
 const ui = useUiStore();
 const router = useRouter();
-const { tracks, analyzing, rightsAsk, autoAnalyze, analysisQueue, waitingForService } = storeToRefs(library);
+const { tracks, analyzing, rightsAsk, autoAnalyze, analysisQueue, waitingForService, analysisFailed } = storeToRefs(library);
 
 const fileInput = ref<HTMLInputElement | null>(null);
 const showStream = ref(false);
@@ -142,6 +142,7 @@ async function remove(id: string) {
               <template v-if="analyzing[t.id]"> · {{ analyzing[t.id] }}</template>
               <template v-else-if="analysisOf(t.id)"> · {{ analysisOf(t.id)!.segments.length }} windows analysed ({{ analysisOf(t.id)!.method }})</template>
               <template v-else> · Not analysed yet</template>
+              <template v-if="analysisFailed[t.id] && !analyzing[t.id] && !library.isFullyAnalysed(t.id)"> · <span class="fail">Analysis failed: {{ analysisFailed[t.id] }}</span></template>
             </div>
 
             <!-- Rights rule (classic confirm, now in place): asked only when automatic analysis is off. -->
@@ -166,7 +167,8 @@ async function remove(id: string) {
           </div>
           <span v-if="analyzing[t.id]" class="state label">Analysing…</span>
           <span v-else-if="analysisQueue.includes(t.id) || waitingForService.includes(t.id)" class="state label">Queued</span>
-          <template v-else-if="analysisOf(t.id)">
+          <!-- Only a full analysis says "Analysed"; a link's quick pass has no stems yet. -->
+          <template v-else-if="library.isFullyAnalysed(t.id)">
             <span class="state label">Analysed</span>
             <Button size="sm" class="hide-phone" @click="router.push({ path: '/admin', query: { track: t.id } })">Anatomy →</Button>
           </template>
@@ -212,6 +214,7 @@ h1 { margin: 0; color: var(--ink); }
 .now { color: var(--ink-sub); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 1px 6px; margin-left: 6px; }
 .meta { color: var(--ink-mute); margin-top: 3px; }
 .state { color: var(--ink-sub); white-space: nowrap; }
+.fail { color: var(--ink); }
 .ask { margin-top: var(--space-3); padding: var(--space-3); border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--bg-panel); }
 .ask p { color: var(--ink-sub); margin: 0 0 var(--space-2); }
 .ask-btns { display: flex; flex-wrap: wrap; gap: var(--space-2); }

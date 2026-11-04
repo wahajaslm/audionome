@@ -49,13 +49,15 @@ export async function fetchTimeline(trackId: string, fetcher: typeof fetch = fet
 }
 
 /**
- * Starts the job, or moves it to the front (the song being played).
+ * Starts the job, or moves it to the front (the song being played). front=false adds it to the
+ * back of the service's line instead (background analysis queue).
  * 'off' = no answer; 'outdated' = the service answers but has no timeline route (started
  * before this code, needs a restart). Example: POST → 404 Not Found → 'outdated'.
  */
-export async function startTimeline(trackId: string, fetcher: typeof fetch = fetch): Promise<'ok' | 'off' | 'outdated'> {
+export async function startTimeline(trackId: string, fetcher: typeof fetch = fetch, front = true): Promise<'ok' | 'off' | 'outdated'> {
   try {
-    const r = await fetcher(SERVICE_URL + '/api/timeline/' + encodeURIComponent(trackId), { method: 'POST', signal: AbortSignal.timeout(5000) });
+    const url = SERVICE_URL + '/api/timeline/' + encodeURIComponent(trackId) + (front ? '' : '?front=false');
+    const r = await fetcher(url, { method: 'POST', signal: AbortSignal.timeout(5000) });
     return r.ok ? 'ok' : r.status === 404 || r.status === 405 ? 'outdated' : 'off';
   } catch { return 'off'; }
 }

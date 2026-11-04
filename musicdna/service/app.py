@@ -454,6 +454,7 @@ async def analyze_recording(
         raise HTTPException(400, f"Unknown analysis method '{method}'")
 
     if method in ('clap', 'multimodal', 'both') and not service.deep_encoder.is_available():
+        print(f'[analyze] 400 for {track_id}: CLAP model not available', flush=True)
         raise HTTPException(400, 'CLAP model not available. Install transformers and download laion/clap-htsat-unfused (see README)')
 
     file_suffix = Path(file.filename or '').suffix.lower()
@@ -462,6 +463,7 @@ async def analyze_recording(
 
     audio_bytes = await file.read()
     if not audio_bytes:
+        print(f'[analyze] 400 for {track_id or file.filename}: empty audio file', flush=True)
         raise HTTPException(400, 'Empty audio file')
     if len(audio_bytes) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, 'Audio file exceeds local analysis size limit')
@@ -517,8 +519,11 @@ def _run_analysis(service: AudioIntelligenceService, audio_bytes: bytes, filenam
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
     except ValueError as exc:
+        # Logged so a failing background queue shows why in the service output.
+        print(f'[analyze] 400 for {track_id or filename} ({method}): {exc}', flush=True)
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
+        print(f'[analyze] 422 for {track_id or filename} ({method}): {type(exc).__name__}: {exc}', flush=True)
         raise HTTPException(422, f"Could not analyze audio: {type(exc).__name__}: {str(exc)[:160]}") from exc
 
 

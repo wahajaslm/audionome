@@ -3,6 +3,7 @@ import { computed, reactive, ref, shallowRef } from 'vue';
 import type { Track } from '../data/types';
 import { deleteTrackEverywhere, forgetDeleted, getSetting, importAudioFiles, loadTracks, putAnalysis, putSetting, putTrack, syncFromAnalysisService, updateTrackDuration } from '../core/repository';
 import { intelligenceHealth, uploadAudioToCache } from '../intelligence/client';
+import { startTimeline } from '../core/timeline';
 import { useMomentsStore } from './moments';
 import { runLocalAnalysis } from '../core/intelligence';
 import type { PlayableTrack } from '../core/library';
@@ -21,8 +22,6 @@ const isQuick = (a: { modelId: string }) => a.modelId === QUICK_STREAM_MODEL || 
  * and run CLAP, so more than 2 at a time risks running the service out of memory.
  */
 const ANALYSIS_WORKERS = 2;
-/** The queue stops after this many failures in a row: the service is most likely off. */
-const QUEUE_MAX_FAILS = 3;
 /** While the queue is paused, how often to check whether the service is back. */
 const SERVICE_RETRY_MS = 10_000;
 
@@ -30,9 +29,16 @@ export const useLibraryStore = defineStore('library', () => {
   const tracks = shallowRef<PlayableTrack[]>([]);
   /** trackId -> current analysis step, while a job runs. */
   const analyzing = reactive<Record<string, string>>({});
+  /** trackId -> why its last analysis failed (shown in Library as "Analysis failed"). */
+  const analysisFailed = reactive<Record<string, string>>({});
   const autoAnalyze = ref(true);
 
   const byId = computed(() => new Map(tracks.value.map(t => [t.id, t])));
+  /**
+   * QUICK ≠ DONE - a link's quick pass (sound only, no stems) used to count as analysed, so a
+   * song whose full analysis was interrupted was never queued again.
+   */
+  const isFullyAnalysed = (id: string) => useIntelligenceStore().analyses.some(a => a.trackId === id && !isQuick(a));
   const track = (id: string | null | undefined) => (id ? byId.value.get(id) : undefined);
 
   /** Reloads tracks, first pulling anything the local analysis service knows about. */
@@ -89,10 +95,12 @@ export const useLibraryStore = defineStore('library', () => {
       await runLocalAnalysis(t, step => { analyzing[id] = step; }, putAnalysis);
       await useIntelligenceStore().refresh();
       delete analyzing[id];
+      delete analysisFailed[id];
       ui.notify('Analysis complete · ' + t.title + ' is ready for Music DNA.');
       return true;
     } catch (err) {
       delete analyzing[id];
+      analysisFailed[id] = String((err as Error).message || err);
       // Background jobs (silent) fail quietly: with the service off, every page load used to
       // end in an error toast. The Library row still says "Not analysed yet".
       if (!silent) ui.notify('Python analysis unavailable: ' + String((err as Error).message || err).slice(0, 75));
@@ -114,8 +122,14 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   function queueUnanalysed(): number {
-    const analyses = useIntelligenceStore().analyses;
-    const pending = tracks.value.filter(t => !analyses.some(a => a.trackId === t.id)).map(t => t.id);
+    const intelligence = useIntelligenceStore();
+    const pending = tracks.value.filter(t => !isFullyAnalysed(t.id)).map(t => t.id);
+    // EXPLORE FIX - stems, beats, chords and sections come from the service's timeline job, which
+    // only started when a song was played. Analysed songs ask for it here, at the back of the
+    // service's line; complete ones are skipped by the service. This also restarts jobs left
+    // "stale" when the service was restarted mid-job.
+    const done = tracks.value.filter(t => t.id !== 'original-demo' && intelligence.analysisFor(t.id) && isFullyAnalysed(t.id));
+    (async () => { for (const t of done) await startTimeline(t.id, fetch, false); })().catch(console.warn);
     return queueAnalysis(pending);
   }
 
@@ -162,7 +176,9 @@ export const useLibraryStore = defineStore('library', () => {
   /**
    * BACKGROUND QUEUE - songs waiting for analysis, run ANALYSIS_WORKERS at a time while you keep
    * using the app. Library shows waiting songs as "Queued". One failing song (a video that is
-   * region-blocked) no longer stops the rest; QUEUE_MAX_FAILS failures in a row do.
+   * region-blocked) is marked "Analysis failed" and skipped; only a service that does not
+   * answer pauses the queue (AUTO RESUME). Each analysed song then queues its timeline job
+   * (stems, beats, chords for Explore) at the back of the service's own line.
    * Example: import a 25-song playlist → songs 1 and 2 analyse, 23 are queued; each finished
    * song frees a worker for the next one.
    */
@@ -171,8 +187,7 @@ export const useLibraryStore = defineStore('library', () => {
 
   /** Adds songs to the end of the queue (skipping queued, running and analysed ones); returns how many. */
   function queueAnalysis(ids: string[]): number {
-    const intelligence = useIntelligenceStore();
-    const add = ids.filter((id, i) => ids.indexOf(id) === i && !analysisQueue.value.includes(id) && !analyzing[id] && !intelligence.analysisFor(id));
+    const add = ids.filter((id, i) => ids.indexOf(id) === i && !analysisQueue.value.includes(id) && !analyzing[id] && !isFullyAnalysed(id));
     analysisQueue.value = [...analysisQueue.value, ...add];
     // runWorker takes its first song before its first await, so this loop always ends.
     while (workers < ANALYSIS_WORKERS && analysisQueue.value.length) runWorker();
@@ -207,8 +222,6 @@ export const useLibraryStore = defineStore('library', () => {
 
   async function runWorker(): Promise<void> {
     workers++;
-    let failsInARow = 0;
-    const failed: string[] = [];
     try {
       while (analysisQueue.value.length) {
         // NOW PLAYING FIRST - the song you are listening to is analysed next, wherever it sits
@@ -216,12 +229,14 @@ export const useLibraryStore = defineStore('library', () => {
         const playing = usePlaybackStore().trackId;
         const id = playing && analysisQueue.value.includes(playing) ? playing : analysisQueue.value[0];
         analysisQueue.value = analysisQueue.value.filter(x => x !== id);
-    waitingForService.value = waitingForService.value.filter(x => x !== id);
-        if (await analyze(id, true)) { failsInARow = 0; failed.length = 0; continue; }
-        failed.push(id);
-        if (++failsInARow < QUEUE_MAX_FAILS) continue;
-        useUiStore().notify('Analysis paused: the local service is not answering. It resumes by itself when the service is back.');
-        waitForService([...failed, ...analysisQueue.value]);
+        if (await analyze(id, true)) { await startTimeline(id, fetch, false); continue; }
+        // RETRY LOOP FIX - any 3 failures used to pause the queue and the health check then
+        // resumed it at once, so songs the service rejects (400 "Empty audio file") were retried
+        // every 10 s forever. Now only a service that does not answer pauses the queue.
+        if (await intelligenceHealth().then(() => true, () => false)) continue;
+        if (!waitingForService.value.length) useUiStore().notify('Analysis paused: the local service is not answering. It resumes by itself when the service is back.');
+        delete analysisFailed[id];
+        waitForService([id, ...analysisQueue.value]);
         analysisQueue.value = [];
       }
     } finally {
@@ -235,6 +250,7 @@ export const useLibraryStore = defineStore('library', () => {
     // The row leaves the list at once; the database and service work follows.
     tracks.value = tracks.value.filter(t => t.id !== id);
     analysisQueue.value = analysisQueue.value.filter(x => x !== id);
+    waitingForService.value = waitingForService.value.filter(x => x !== id);
     await deleteTrackEverywhere(id);
     await load();
     await useMomentsStore().load();
@@ -362,7 +378,7 @@ export const useLibraryStore = defineStore('library', () => {
 
   return {
     tracks, analyzing, autoAnalyze, rightsAsk, isResolvingStream, isStreamingAnalysis, streamProgress,
-    analysisQueue, waitingForService,
+    analysisQueue, waitingForService, analysisFailed, isFullyAnalysed,
     track, load, loadSettings, correctDuration, setAutoAnalyze, analyze, analyzeAll, autoAnalyzeLibrary, upsert, openStream,
     openLink, queueAnalysis, importFiles, deleteTrack,
   };
