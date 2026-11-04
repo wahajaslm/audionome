@@ -148,7 +148,11 @@ h1 { margin: 0; color: var(--ink); }
 .list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line);
   /* Shrinks to fit and scrolls inside; the gutter is kept so rows do not shift when it appears.
      Example: 30 saved moments → the list scrolls, the Play all button stays on screen. */
-  flex: 0 1 auto; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
+  flex: 0 1 auto; min-height: 0; overflow-y: auto; scrollbar-gutter: stable;
+  /* SCROLLBAR FIX - macOS draws its scrollbar on top of the content, so it covered the rows'
+     right edge (remove ✕, answer buttons). The list now reaches 12px into the page's side
+     padding, and that strip holds the scrollbar; rows stay aligned with the header. */
+  margin-right: calc(-1 * var(--space-3)); padding-right: var(--space-3); }
 .none { padding: var(--space-4) 0; color: var(--ink-sub); border-bottom: 1px solid var(--line); }
 .edit { padding: var(--space-3) 0; border-bottom: 1px solid var(--line); }
 /* An empty list is still an open list: hairlines, no dashed box. */

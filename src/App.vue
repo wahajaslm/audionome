@@ -100,6 +100,17 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* SCROLLBAR FIX - thin, quiet scrollbars everywhere instead of the wide system bar.
+   Firefox/Chrome use the standard properties; Safari uses the ::-webkit ones. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-mute); }
+
 /* Accessibility rule "Focus ring: 1px ink outline, 2px offset" — e.g. Tab onto a nav item. */
 :focus-visible {
   outline: 1px solid var(--ink);
