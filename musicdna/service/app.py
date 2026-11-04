@@ -152,13 +152,16 @@ async def cache_audio(
         raise HTTPException(400, 'Missing track_id parameter')
 
     audio_bytes = await file.read()
-    service.cache_uploaded_audio(
-        audio_bytes=audio_bytes,
-        track_id=track_id,
-        filename=file.filename or f'{track_id}.wav',
-        content_type=file.content_type or 'audio/wav',
-        track_title=track_title,
-    )
+    try:
+        service.cache_uploaded_audio(
+            audio_bytes=audio_bytes,
+            track_id=track_id,
+            filename=file.filename or f'{track_id}.wav',
+            content_type=file.content_type or 'audio/wav',
+            track_title=track_title,
+        )
+    except ValueError as exc:  # EMPTY UPLOAD FIX: the cached copy is kept
+        raise HTTPException(400, str(exc)) from exc
     # UPLOAD WAIT FIX - the player timeline (beats, chords, parts, then stems) starts as soon as
     # the audio is here, behind the song being played. See musicdna.service.timeline_jobs.
     TIMELINE_JOBS.request(track_id, front=False)
@@ -458,34 +461,44 @@ async def analyze_recording(
 
     clean_title = track_title or Path(file.filename or 'Untitled').stem.replace('_', ' ')
     if track_id:
-        AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        for old_file in AUDIO_CACHE_DIR.glob(f'{track_id}.*'):
-            old_file.unlink(missing_ok=True)
-        (AUDIO_CACHE_DIR / f'{track_id}{file_suffix}').write_bytes(audio_bytes)
+        service.cache_uploaded_audio(audio_bytes=audio_bytes, track_id=track_id, filename=f'{track_id}{file_suffix}',
+                                      content_type=file.content_type or 'audio/*')
 
+    # FROZEN SERVICE FIX - this endpoint is async but ran the whole analysis (stems, CLAP)
+    # on the event loop, so for minutes the service answered nothing else: no audio, no
+    # health check, no timeline. The work now runs in a worker thread.
+    # Example: uploading a 4:38 song used to make /api/health time out for the whole
+    # analysis; now playback and Explore keep working while it runs.
+    return await asyncio.to_thread(_run_analysis, service, audio_bytes, file.filename or 'audio.wav',
+                                   method, local_analysis_confirmed, track_id, clean_title)
+
+
+def _run_analysis(service: AudioIntelligenceService, audio_bytes: bytes, filename: str, method: str,
+                  local_analysis_confirmed: bool, track_id: str, clean_title: str) -> dict[str, Any]:
+    """The analysis behind POST /api/analyze, run off the event loop."""
     try:
         if method in ('dsp', 'stems', 'm3'):
             return service.analyze_audio_bytes(
-                audio_bytes, file.filename or 'audio.wav', method='dsp',
+                audio_bytes, filename, method='dsp',
                 local_confirmed=local_analysis_confirmed, track_id=track_id
             )
         elif method == 'clap':
             return service.analyze_audio_bytes(
-                audio_bytes, file.filename or 'audio.wav', method='clap',
+                audio_bytes, filename, method='clap',
                 local_confirmed=local_analysis_confirmed, track_id=track_id
             )
         elif method == 'multimodal':
             return service.analyze_audio_bytes(
-                audio_bytes, file.filename or 'audio.wav', method='multimodal',
+                audio_bytes, filename, method='multimodal',
                 local_confirmed=local_analysis_confirmed, track_id=track_id
             )
         else:  # 'both'
             dsp_result = service.analyze_audio_bytes(
-                audio_bytes, file.filename or 'audio.wav', method='dsp',
+                audio_bytes, filename, method='dsp',
                 local_confirmed=local_analysis_confirmed, track_id=track_id
             )
             clap_result = service.analyze_audio_bytes(
-                audio_bytes, file.filename or 'audio.wav', method='clap',
+                audio_bytes, filename, method='clap',
                 local_confirmed=local_analysis_confirmed, track_id=track_id
             )
             fused_result = service.fusion_engine.fuse(dsp_result, clap_result, deep_weight=0.7)

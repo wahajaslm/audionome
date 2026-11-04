@@ -132,13 +132,24 @@ class AudioIntelligenceService:
         if not track_id:
             raise ValueError('Missing track_id')
 
+        # EMPTY UPLOAD FIX - the old copy was deleted first and then whatever arrived was
+        # written, even 0 bytes. The browser can hand over an empty Blob (IndexedDB after
+        # storage pressure), so one start-up sync could wipe a song's only server copy.
+        # Now an empty upload is refused, and the new file is written in full before any old
+        # copy is removed.
+        # Example: song 5580a385 became a 0-byte .m4a at start-up; the player then got HTTP 416
+        # and showed no song. Now that upload gets a 400 and the good .m4a stays.
+        if not audio_bytes:
+            raise ValueError('Empty audio file')
         suffix = Path(filename).suffix.lower() or '.wav'
         AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        for old_file in AUDIO_CACHE_DIR.glob(f'{track_id}.*'):
-            old_file.unlink(missing_ok=True)
-
         target_file = AUDIO_CACHE_DIR / f'{track_id}{suffix}'
-        target_file.write_bytes(audio_bytes)
+        partial = AUDIO_CACHE_DIR / f'{track_id}{suffix}.part'
+        partial.write_bytes(audio_bytes)
+        partial.replace(target_file)
+        for old_file in AUDIO_CACHE_DIR.glob(f'{track_id}.*'):
+            if old_file != target_file:
+                old_file.unlink(missing_ok=True)
 
         if track_title:
             cached_analyses = self.repository.get_analyses(track_id=track_id)
@@ -160,9 +171,12 @@ class AudioIntelligenceService:
         if track_id == 'original-demo' and DEMO_AUDIO_FILE.is_file():
             return DEMO_AUDIO_FILE
 
+        # A 0-byte or half-written file is not audio (EMPTY UPLOAD FIX): skip it, so the
+        # player gets a clean 404 and falls back, instead of an HTTP 416 on an empty file.
+        usable = lambda p: p.suffix.lower() not in ('.json', '.part') and p.is_file() and p.stat().st_size > 0
         if AUDIO_CACHE_DIR.exists():
             for cached_path in AUDIO_CACHE_DIR.glob(f'{track_id}.*'):
-                if cached_path.suffix.lower() not in ('.json',):
+                if usable(cached_path):
                     return cached_path
 
             all_rows = self.repository.get_analyses()
@@ -171,7 +185,7 @@ class AudioIntelligenceService:
                 tid = row.get('trackId', '')
                 if tid:
                     for cached_path in AUDIO_CACHE_DIR.glob(f'{tid}.*'):
-                        if cached_path.suffix.lower() not in ('.json',):
+                        if usable(cached_path):
                             return cached_path
         return None
 

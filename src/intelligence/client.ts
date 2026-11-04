@@ -47,12 +47,19 @@ export async function deleteTrackFromSQLite(trackId: string): Promise<void> {
 }
 
 export async function uploadAudioToCache(track: Track): Promise<void> {
-  if (!track.audioBlob || track.id === 'original-demo') return;
+  // EMPTY UPLOAD FIX - an empty Blob (IndexedDB after storage pressure) is never sent: the
+  // service would have replaced the song's good copy with 0 bytes. It also refuses one now.
+  if (!track.audioBlob || !track.audioBlob.size || track.id === 'original-demo') return;
   try {
     const form = new FormData();
     const mime = track.mimeType.toLowerCase();
     const ext = mime.includes('wav')?'.wav':mime.includes('flac')?'.flac':mime.includes('mpeg')?'.mp3':mime.includes('ogg')?'.ogg':mime.includes('mp4')||mime.includes('m4a')?'.m4a':mime.includes('aac')?'.aac':mime.includes('opus')?'.opus':'.wav';
-    form.append('file', track.audioBlob, `audio${ext}`);
+    // A stored Blob can report a size and still read back nothing, so read it first and send
+    // only real bytes. Example: after a reload every song re-uploaded as 0 bytes and the
+    // service copies were wiped; now such a song is skipped and its server copy stays.
+    const bytes = await track.audioBlob.arrayBuffer().catch(() => new ArrayBuffer(0));
+    if (!bytes.byteLength) { console.warn('Audio cache sync skipped: the stored audio for "' + track.title + '" is empty'); return; }
+    form.append('file', new Blob([bytes], { type: track.mimeType || 'audio/*' }), `audio${ext}`);
     form.append('track_id', track.id);
     form.append('track_title', track.title);
     await fetch(`${ENDPOINT}/api/audio/cache`, {method: 'POST', body: form});

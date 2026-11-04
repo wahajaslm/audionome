@@ -124,3 +124,23 @@ def test_jobs_report_missing_audio_as_an_error(tmp_path: Path) -> None:
     while time.time() < deadline and (jobs.get('gone') or {}).get('status', {}).get('quick') != 'error':
         time.sleep(0.05)
     assert jobs.get('gone')['status']['error'].startswith('Audio is not cached')
+
+
+def test_an_empty_upload_never_replaces_the_cached_song(tmp_path: Path, monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+    import musicdna.service.app as app_module
+    import musicdna.service.service as service_module
+    monkeypatch.setattr(service_module, 'AUDIO_CACHE_DIR', tmp_path)
+    monkeypatch.setattr(app_module.TIMELINE_JOBS, 'request', lambda *a, **k: {})
+    service = app_module._DEFAULT_SERVICE
+    good = tmp_path / 'song.m4a'
+    good.write_bytes(b'x' * 4096)
+    client = TestClient(app_module.app)
+    r = client.post('/api/audio/cache', data={'track_id': 'song', 'track_title': 'Song'}, files={'file': ('audio.m4a', b'', 'audio/mp4')})
+    assert r.status_code == 400
+    assert good.read_bytes() == b'x' * 4096, 'the good copy is kept'
+    r = client.post('/api/audio/cache', data={'track_id': 'song'}, files={'file': ('audio.wav', b'RIFF' + b'y' * 100, 'audio/wav')})
+    assert r.status_code == 200
+    assert not good.exists() and (tmp_path / 'song.wav').stat().st_size == 104, 'a real upload replaces it'
+    (tmp_path / 'other.m4a').write_bytes(b'')
+    assert service.find_cached_audio('other') is None, 'a 0-byte file is not audio'

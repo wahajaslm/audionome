@@ -18,8 +18,9 @@ export const useTimelineStore = defineStore('timeline', () => {
   const timeline = shallowRef<Timeline | null>(null);
   const spectrum = shallowRef<Spectrum | null>(null);
   const spectrumState = ref<'idle' | 'decoding' | 'done' | 'error'>('idle');
-  /** True after a start request failed: the service is not running. */
+  /** True after a start request failed: the service is not running, or runs code without timelines. */
   const serviceOff = ref(false);
+  const serviceOutdated = ref(false);
 
   let seq = 0;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -33,6 +34,7 @@ export const useTimelineStore = defineStore('timeline', () => {
   const statusText = computed(() => {
     const st = timeline.value?.status;
     if (full.value) return { busy: false, text: 'Analysed · stems, beats, chords, parts' };
+    if (serviceOutdated.value) return { busy: false, text: 'Restart the analysis service to see beats, chords and stems' };
     if (serviceOff.value) return { busy: false, text: spectrum.value ? 'Analysis service is off · spectrum only' : 'Analysis service is off' };
     if (st?.full === 'error' || st?.quick === 'error') return { busy: false, text: 'Analysis failed · ' + (st.error || 'try again') };
     if (quick.value) return { busy: true, text: (st?.stage || 'Separating stems') + '… · beats and chords ready' };
@@ -51,10 +53,12 @@ export const useTimelineStore = defineStore('timeline', () => {
     const st = tl?.status;
     const needsStart = !tl || (!hasFull(tl) && (st?.full === 'stale' || st?.quick === 'stale' || (!st?.full && !st?.quick)));
     if (needsStart) {
-      serviceOff.value = !(await startTimeline(id));
+      const started = await startTimeline(id);
+      serviceOff.value = started !== 'ok';
+      serviceOutdated.value = started === 'outdated';
       if (mySeq !== seq) return;
       if (!serviceOff.value) tl = (await fetchTimeline(id)) ?? tl;
-    } else serviceOff.value = false;
+    } else { serviceOff.value = false; serviceOutdated.value = false; }
     if (mySeq !== seq) return;
     if (tl) timeline.value = tl;
     const finished = hasFull(tl) || tl?.status?.full === 'error';
@@ -105,6 +109,7 @@ export const useTimelineStore = defineStore('timeline', () => {
     spectrum.value = null;
     spectrumState.value = 'idle';
     serviceOff.value = false;
+    serviceOutdated.value = false;
     if (!id) return;
     const mySeq = seq;
     poll(id, mySeq).catch(console.warn);
