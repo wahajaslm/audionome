@@ -172,7 +172,9 @@ export const useLibraryStore = defineStore('library', () => {
       };
       await putTrack(t);
       await load();
-      await usePlaybackStore().changeTrack(track(t.id) || t, false);
+      // Opening a link plays it, like choosing a song in Library (it used to stop the old song
+      // and leave the new one paused).
+      await usePlaybackStore().changeTrack(track(t.id) || t, true);
       ui.notify('Loaded "' + meta.title + '" · Playing from stream');
       // A song opened before keeps its analysis; only a quick one is upgraded to the full one.
       const have = useIntelligenceStore().analysisFor(t.id);

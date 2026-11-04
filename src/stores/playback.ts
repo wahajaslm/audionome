@@ -3,7 +3,7 @@ import { computed, reactive, ref, shallowRef, toRefs } from 'vue';
 import type { NativeAudioEngine } from '../core/audioEngine';
 import { fullMixUrl, resolveTrackSource, stemUrl, type PlayableTrack } from '../core/library';
 import {
-  contains, defaultLoopRange, enforceMinimumSelection, previewStart, quickSaveRange, rangeAround,
+  contains, defaultLoopRange, enforceMinimumSelection, quickSaveRange, rangeAround,
   RegionController, seekTarget, type Range, type RegionState,
 } from '../core/playback';
 import { PeakDecoder, placeholderPeaks } from '../core/waveformPeaks';
@@ -178,18 +178,18 @@ export const usePlaybackStore = defineStore('playback', () => {
     else { region.previewEnd = null; engineRef?.pause(); }
   }
 
-  /** Play/pause. With a selection, plays the selection to its end (a preview). */
+  /**
+   * Play/pause from the playhead.
+   * KEEPS PLAYING FIX - with a passage selected, Play used to play only that passage and stop
+   * at its end, so the music seemed to stop by itself. Now, like Spotify, playback runs until
+   * you pause, the song ends or another song starts. Loop still repeats the passage.
+   * Example: 0:40–0:55 selected, playhead 0:42, Play → plays on past 0:55.
+   */
   async function togglePlay(): Promise<void> {
     const e = engineRef, listening = useListeningStore();
     if (!e) return;
     if (e.isPlaying()) { e.pause(); listening.emit('pause'); return; }
-    if (region.sel) {
-      region.previewEnd = region.sel.b;
-      const start = previewStart(region.t, region.sel);
-      if (start !== null) { region.t = start; e.setTime(start); }
-    } else {
-      region.previewEnd = null;
-    }
+    region.previewEnd = null;
     try { await e.play(); listening.emit('play'); } catch (err) {
       console.warn('Playback notice:', err);
       if (!isQuietPlayError(err)) useUiStore().notify('Unable to play this recording.');
@@ -234,10 +234,11 @@ export const usePlaybackStore = defineStore('playback', () => {
     const flow = useMomentFlowStore();
     const from = region.t;
     if (target < region.t - 3) useIntelligenceStore().rewoundTo(target);
-    if (region.sel && contains(region.sel, target)) { region.t = target; region.previewEnd = region.sel.b; }
+    // KEEPS PLAYING FIX - clicks on the waveform only move the playhead; they never set an end.
+    if (region.sel && contains(region.sel, target)) { region.t = target; region.previewEnd = null; }
     else {
       const hit = useMomentsStore().savedForCurrent.find(r => contains(r, target));
-      if (hit) { region.t = hit.a; region.sel = { a: hit.a, b: hit.b }; region.previewEnd = hit.b; }
+      if (hit) { region.t = hit.a; region.sel = { a: hit.a, b: hit.b }; region.previewEnd = null; }
       else {
         region.t = target; region.sel = null; region.previewEnd = null; region.loop = false;
         flow.describe = null; flow.explore = false; flow.nudge = false;
@@ -296,7 +297,6 @@ export const usePlaybackStore = defineStore('playback', () => {
   function selectAroundPlayhead(): void {
     if (region.sel) return;
     region.sel = rangeAround(region.t, duration.value);
-    region.previewEnd = region.sel.b;
   }
 
   function clearSelection(): void {
