@@ -135,6 +135,7 @@ function show(key: string, v: number): string {
 
     <!-- ONE SAVE PATH: the same Feels / Love / Note strip and the same save as after ♡ Save. -->
     <DescribeStrip
+      flat
       :feelings="FEELINGS"
       :qualities="QUALITIES"
       :feel="feel"

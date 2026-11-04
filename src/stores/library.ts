@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, reactive, ref, shallowRef } from 'vue';
 import type { Track } from '../data/types';
-import { deleteTrackEverywhere, getSetting, importAudioFiles, loadTracks, putAnalysis, putSetting, putTrack, syncFromAnalysisService, updateTrackDuration } from '../core/repository';
+import { deleteTrackEverywhere, forgetDeleted, getSetting, importAudioFiles, loadTracks, putAnalysis, putSetting, putTrack, syncFromAnalysisService, updateTrackDuration } from '../core/repository';
 import { uploadAudioToCache } from '../intelligence/client';
 import { useMomentsStore } from './moments';
 import { runLocalAnalysis } from '../core/intelligence';
@@ -139,6 +139,8 @@ export const useLibraryStore = defineStore('library', () => {
   /** Deletes a song with its analyses and moments. If it was loaded, the next song is loaded. */
   async function deleteTrack(id: string): Promise<void> {
     if (id === 'original-demo') return;
+    // The row leaves the list at once; the database and service work follows.
+    tracks.value = tracks.value.filter(t => t.id !== id);
     await deleteTrackEverywhere(id);
     await load();
     await useMomentsStore().load();
@@ -170,6 +172,7 @@ export const useLibraryStore = defineStore('library', () => {
         mimeType: 'audio/mp4', source: 'external-reference', analysisRight: 'cleared', addedAt: Date.now(),
         streamPlaybackUrl: streamAudioUrl(meta.id, meta.originalUrl), originalUrl: meta.originalUrl,
       };
+      await forgetDeleted(t.id);
       await putTrack(t);
       await load();
       // Opening a link plays it, like choosing a song in Library (it used to stop the old song

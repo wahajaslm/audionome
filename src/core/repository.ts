@@ -24,6 +24,7 @@ export const downloadProfile = (): Promise<void> => exportProfile();
  * service's copy (silently skipped when the service is off). Same as the classic 'deltrack'.
  */
 export async function deleteTrackEverywhere(id: string): Promise<void> {
+  await rememberDeleted(id);
   await db.tracks.delete(id);
   await db.analyses.where('trackId').equals(id).delete();
   await db.moments.where('trackId').equals(id).delete();
@@ -78,6 +79,26 @@ export async function getSetting<T extends boolean | number | string>(key: strin
 }
 export const putSetting = (key: string, value: boolean | number | string) => db.settings.put({ key, value });
 
+// DELETE FIX - a deleted song came back on the next library load: the sync below re-adds
+// every song the analysis service still has, and the service's copy could survive (delete
+// request failed while the service was busy, or a running analysis saved it again).
+// Deleted ids are remembered on this device and never re-added by the sync.
+// Example: delete "Naina Moray" while its analysis runs -> it stays deleted after reload.
+const DELETED_KEY = 'deletedTrackIds';
+async function deletedIds(): Promise<Set<string>> {
+  try { return new Set(JSON.parse((await getSetting<string>(DELETED_KEY)) || '[]') as string[]); } catch { return new Set(); }
+}
+async function rememberDeleted(id: string): Promise<void> {
+  const ids = await deletedIds();
+  ids.add(id);
+  await putSetting(DELETED_KEY, JSON.stringify([...ids]));
+}
+/** The listener added this song again (e.g. the same link): the sync may bring it back. */
+export async function forgetDeleted(id: string): Promise<void> {
+  const ids = await deletedIds();
+  if (ids.delete(id)) await putSetting(DELETED_KEY, JSON.stringify([...ids]));
+}
+
 /**
  * Pulls analyses the local Python service already holds (e.g. from another browser) into
  * IndexedDB, adding placeholder track rows for unknown ids. Silent when the service is off.
@@ -89,8 +110,9 @@ export async function syncFromAnalysisService(): Promise<void> {
     if (!res || !res.ok) return;
     const sqlRows: Array<Partial<TrackAnalysis> & { trackId?: string; title?: string; artist?: string }> = await res.json();
     const existingIds = new Set((await db.tracks.toArray()).map(x => x.id));
+    const deleted = await deletedIds();
     for (const r of sqlRows) {
-      if (!r.trackId) continue;
+      if (!r.trackId || deleted.has(r.trackId)) continue;
       if (!existingIds.has(r.trackId) && r.trackId !== 'original-demo') {
         existingIds.add(r.trackId);
         await db.tracks.put({

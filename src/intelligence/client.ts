@@ -12,8 +12,12 @@ export interface IntelligenceHealth {
   dataPolicy: string;
 }
 
+// BUSY FIX - the health check gave up after 2.5 s. While the service analyses another song it
+// can take longer to answer, so the app said "Python analysis unavailable: Fetch is aborted"
+// although the service was fine. It now waits up to 15 s.
+// Example: upload two songs at once -> the second one's analysis waits instead of failing.
 export async function intelligenceHealth(): Promise<IntelligenceHealth> {
-  const reply=await fetch(`${ENDPOINT}/api/health`,{signal:AbortSignal.timeout(2500)});
+  const reply=await fetch(`${ENDPOINT}/api/health`,{signal:AbortSignal.timeout(15000)});
   if(!reply.ok)throw new Error('Local intelligence service unavailable');
   return reply.json();
 }

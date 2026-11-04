@@ -8,12 +8,13 @@
 import Button from './Button.vue';
 import Chip from './Chip.vue';
 
-defineProps<{ feelings: string[]; qualities: string[]; feel: string[]; love: string[]; note: string }>();
+/** flat: no box of its own; rows sit in the parent panel, split by lines (Explore). */
+defineProps<{ feelings: string[]; qualities: string[]; feel: string[]; love: string[]; note: string; flat?: boolean }>();
 const emit = defineEmits<{ 'toggle-feel': [v: string]; 'toggle-love': [v: string]; 'update:note': [v: string]; cancel: []; done: [] }>();
 </script>
 
 <template>
-  <section class="describe" aria-label="Describe this moment">
+  <section class="describe" :class="{ flat }" aria-label="Describe this moment">
     <div class="row">
       <span class="lbl">Feels</span>
       <div class="chips">
@@ -55,6 +56,14 @@ const emit = defineEmits<{ 'toggle-feel': [v: string]; 'toggle-love': [v: string
   border-radius: var(--radius-md);
   padding: 2px 10px;
 }
+/* FLAT FIX - inside Explore the strip was a box inside the panel's box. Flat: no border or
+   background, labels on the panel's 96 px column, rows split by the same lines as the panel.
+   Example: Explore -> Hear / Feels / Love / Note read as one list, not a nested card. */
+.describe.flat { border: 0; background: none; border-radius: 0; padding: 0; }
+.describe.flat .row { border-top: 1px solid var(--line); padding: var(--space-3) 0; gap: var(--space-3); }
+.describe.flat .row:last-child { padding-bottom: 0; }
+.describe.flat .lbl { width: 96px; }
+@media (max-width: 520px) { .describe.flat .lbl { width: 72px; } }
 .row { display: flex; align-items: center; gap: var(--space-2); min-height: 40px; padding: 6px 0; }
 .row + .row { border-top: 1px solid var(--line); }
 .lbl { flex: none; width: 40px; font-size: 12px; color: var(--ink-mute); }

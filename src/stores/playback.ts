@@ -345,13 +345,29 @@ export const usePlaybackStore = defineStore('playback', () => {
     const e = engineRef;
     stem = String(stem).toLowerCase();
     if (!e || !trackId.value || activeStem.value === stem) return;
+    // STEM STALL FIX - ask first whether the stem exists, and only then swap the source.
+    // Before, the source was swapped blind: a missing stem left the player on a dead URL
+    // (silence, "stalled") and the song had to be reloaded.
+    // Example: Vocals on a song not fully analysed -> "not separated yet", the mix keeps playing.
+    const url = stemUrl(trackId.value, stem), id = trackId.value;
+    const ok = stem === 'all' || await fetch(url, { headers: { Range: 'bytes=0-1' } }).then(r => r.ok, () => false);
+    if (trackId.value !== id) return;
+    if (!ok) { useUiStore().notify(stem.charAt(0).toUpperCase() + stem.slice(1) + ' is not separated yet. Run the full analysis first.'); return; }
+    const prevSrc = e.el.src, prevStem = activeStem.value;
     activeStem.value = stem;
     const pos = region.t, wasPlaying = playing.value;
     useUiStore().notify('Loading ' + stem + ' stem…');
     try {
-      await e.load(stemUrl(trackId.value, stem), pos);
+      await e.load(url, pos);
+      if (!e.hasSource()) throw new Error('stem failed to load');
       if (wasPlaying) { await e.play(); playing.value = true; }
-    } catch (err) { console.warn('Stem loading notice:', err); }
+    } catch (err) {
+      console.warn('Stem loading notice:', err);
+      useUiStore().notify('Could not play the ' + stem + ' stem · back to what was playing.');
+      activeStem.value = prevStem;
+      await e.load(prevSrc, region.t || pos);
+      if (wasPlaying) e.play().catch(console.warn);
+    }
   }
 
   /** Leaving Explore returns to the full mix. */
