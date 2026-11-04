@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+from pathlib import Path
 from typing import Any, AsyncIterator
 import httpx
 import yt_dlp
@@ -111,6 +112,46 @@ def resolve_stream(url: str) -> dict[str, Any]:
             status_code=400,
             detail=f"Unable to resolve stream from '{url}': {str(exc)}"
         ) from exc
+
+
+# STREAM CACHE FIX - analysis reads audio from the service's cache, but a streamed song was
+# never written there, so "Analyze" failed with "audio not found". Resolving a link now saves
+# the audio to the cache in the background, and analysis waits for that download.
+# Example: open a YouTube link -> <cache>/youtube-kJQP7kiw5Fk.m4a appears a few seconds later.
+_pending_downloads: dict[str, asyncio.Task[Path | None]] = {}
+
+_SUFFIX_BY_TYPE = {'audio/mp4': '.m4a', 'audio/webm': '.webm', 'audio/mpeg': '.mp3', 'audio/ogg': '.ogg', 'audio/wav': '.wav'}
+
+
+async def _download_to_cache(track_id: str, stream_url: str, cache_dir: Path) -> Path | None:
+    headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36', 'Range': 'bytes=0-'}
+    try:
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+            res = await client.get(stream_url, headers=headers)
+            if res.status_code not in (200, 206) or not res.content:
+                return None
+        kind = res.headers.get('content-type', '').split(';')[0].strip().lower()
+        suffix = _SUFFIX_BY_TYPE.get(kind) or Path(stream_url.split('?')[0]).suffix or '.m4a'
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        target = cache_dir / f'{track_id}{suffix}'
+        await asyncio.to_thread(target.write_bytes, res.content)
+        return target
+    except Exception:
+        return None
+    finally:
+        _pending_downloads.pop(track_id, None)
+
+
+def start_cache_download(track_id: str, stream_url: str, cache_dir: Path) -> None:
+    """Starts saving a resolved stream to the audio cache (once per track)."""
+    if track_id not in _pending_downloads and not any(cache_dir.glob(f'{track_id}.*')):
+        _pending_downloads[track_id] = asyncio.create_task(_download_to_cache(track_id, stream_url, cache_dir))
+
+
+async def wait_for_cache_download(track_id: str) -> Path | None:
+    """Waits for a download started by start_cache_download; None if there is none."""
+    task = _pending_downloads.get(track_id)
+    return await task if task else None
 
 
 async def create_proxy_stream_response(

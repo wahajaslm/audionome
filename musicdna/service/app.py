@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
+import asyncio
 import shutil
 import librosa
 import numpy as np
@@ -22,7 +23,9 @@ from musicdna.service.repository import AnalysisRepository, _DEFAULT_REPOSITORY,
 from musicdna.audio.io import load_audio
 from musicdna.paths import PUBLIC_DIR
 from musicdna.service.studio import router as studio_router, DEMO_WAV
-from musicdna.service.streaming import resolve_stream, create_proxy_stream_response
+from musicdna.service.streaming import (
+    resolve_stream, create_proxy_stream_response, start_cache_download, wait_for_cache_download,
+)
 from musicdna.preference.emotion import DynamicEmotionModel
 
 MAX_UPLOAD_BYTES: int = 200 * 1024 * 1024
@@ -182,9 +185,12 @@ def serve_stem_audio(
 
 
 @app.post('/api/stream/resolve')
-def resolve_online_audio_stream(payload: ResolveStreamRequest) -> dict[str, Any]:
-    """Resolves YouTube, SoundCloud, or direct web audio URLs into playable streams."""
-    return resolve_stream(payload.url)
+async def resolve_online_audio_stream(payload: ResolveStreamRequest) -> dict[str, Any]:
+    """Resolves YouTube, SoundCloud, or direct web audio URLs into playable streams.
+    Also saves the audio to the cache in the background, so the song can be analysed."""
+    meta = await asyncio.to_thread(resolve_stream, payload.url)
+    start_cache_download(meta['id'], meta['streamUrl'], AUDIO_CACHE_DIR)
+    return meta
 
 
 @app.get('/api/stream/proxy')
@@ -226,7 +232,7 @@ async def stream_analysis_events(
             return
 
         # Look for cached audio
-        audio_path = service.find_cached_audio(track_id)
+        audio_path = service.find_cached_audio(track_id) or await wait_for_cache_download(track_id)
         if not audio_path or not audio_path.is_file():
             if track_id == 'original-demo':
                 audio_path = DEMO_WAV
