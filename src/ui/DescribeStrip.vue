@@ -13,7 +13,7 @@ const emit = defineEmits<{ 'toggle-feel': [v: string]; 'toggle-love': [v: string
 </script>
 
 <template>
-  <section class="strip" aria-label="Describe this moment">
+  <section class="describe" aria-label="Describe this moment">
     <div class="row">
       <span class="lbl">Feels</span>
       <div class="chips">
@@ -44,16 +44,21 @@ const emit = defineEmits<{ 'toggle-feel': [v: string]; 'toggle-love': [v: string
 </template>
 
 <style scoped>
-.strip {
+/* LAYOUT FIX - the root was class "strip", and ExplorePanel's scoped .strip (a horizontal
+   scroller) also hit it, so Feels and Love sat side by side inside scroll bars. Unique name
+   now, and the chips wrap instead of scrolling, so every option is visible.
+   Example: Feels has 7 chips on a narrow panel -> before: "Othe" cut off behind a scroll bar;
+   now: they wrap onto a second line. */
+.describe {
   border: 1px solid var(--line-strong);
   background: var(--bg-panel);
   border-radius: var(--radius-md);
   padding: 2px 10px;
 }
-.row { display: flex; align-items: center; gap: var(--space-2); min-height: 40px; }
+.row { display: flex; align-items: center; gap: var(--space-2); min-height: 40px; padding: 6px 0; }
 .row + .row { border-top: 1px solid var(--line); }
 .lbl { flex: none; width: 40px; font-size: 12px; color: var(--ink-mute); }
-.chips { display: flex; align-items: center; gap: 5px; overflow-x: auto; scrollbar-width: none; flex: 1; min-width: 0; }
+.chips { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; flex: 1; min-width: 0; }
 .in {
   flex: 1;
   min-width: 0;
