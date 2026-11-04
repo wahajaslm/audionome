@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { markRaw, ref } from 'vue';
 import type { EventKind, ListeningEvent } from '../data/types';
 import { ListeningLog, readMediaTime, type ExtraFields } from '../core/listening';
-import { clearListeningEvents, downloadProfile, eventSink, getSetting, putSetting } from '../core/repository';
+import { clearListeningEvents, deleteAllUserData, downloadProfile, eventSink, getSetting, putSetting } from '../core/repository';
 import { useMomentFlowStore } from './momentFlow';
 import { useUiStore } from './ui';
 import { usePlaybackStore } from './playback';
@@ -60,11 +60,16 @@ export const useListeningStore = defineStore('listening', () => {
     useUiStore().notify('Listening event history cleared');
   }
 
+  /** Deletes every song, moment, rating, event, analysis and setting on this device (the demo stays). */
+  async function deleteAllData(): Promise<number> {
+    return deleteAllUserData();
+  }
+
   /** Downloads the profile JSON (no audio). */
   async function exportProfile(): Promise<void> {
     await downloadProfile();
     useUiStore().notify('Profile exported; audio files are not included.');
   }
 
-  return { learning, log, mediaTime, emit, openSpan, flushSpan, loadSettings, setLearning, clearHistory, exportProfile };
+  return { learning, log, mediaTime, emit, openSpan, flushSpan, loadSettings, setLearning, clearHistory, deleteAllData, exportProfile };
 });

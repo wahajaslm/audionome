@@ -9,7 +9,6 @@ import { computed, ref } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRouter } from 'vue-router';
 import { STUDIO_URL } from '../../core/diagnostics';
-import { deleteAllUserData } from '../../core/repository';
 import { openStudio } from '../../core/studioLink';
 import { useIntelligenceStore } from '../../stores/intelligence';
 import { useLibraryStore } from '../../stores/library';
@@ -40,7 +39,7 @@ async function clear() {
 const confirmReset = ref(false);
 async function resetAll() {
   confirmReset.value = false;
-  await deleteAllUserData();
+  await listening.deleteAllData();
   // Reload so every store starts from the empty database instead of patching each one.
   window.location.reload();
 }
