@@ -72,6 +72,7 @@ weight_left_early = 1.5
 weight_heard_without_action = 1.0
 weight_repeat_session = 1.5
 weight_seek_arrival = 1.0
+max_player_offset_sec = 0.1
 
 # Pairwise preference ranker and R01 evaluation.
 [ranker]

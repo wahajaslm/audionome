@@ -116,6 +116,9 @@ class SignalConfig:
     weight_heard_without_action: float = 1.0
     weight_repeat_session: float = 1.5  # attention score only: each extra session that revisited
     weight_seek_arrival: float = 1.0    # attention score only: forward seek landed here
+    # Largest player-vs-corpus clock gap that is corrected (Safari skips ~48 ms of AAC padding; see
+    # ImplicitPairBuilder.player_offset). Bigger gaps mean the duration was not measured, so no shift.
+    max_player_offset_sec: float = 0.1
 
 
 @dataclass(frozen=True)

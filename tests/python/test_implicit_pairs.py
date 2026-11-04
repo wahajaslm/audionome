@@ -80,3 +80,19 @@ def test_file_hash_links_the_exact_corpus_file_and_overrides_the_title() -> None
     assert {p.corpus_video_id for p in ImplicitPairBuilder(TEN_SECOND).build_pairs(other_file, songs, files)} == {None}
     old_export = profile(moments=moment)  # exported before the player stored hashes: title fallback
     assert {(p.corpus_video_id, p.linked_by) for p in ImplicitPairBuilder(TEN_SECOND).build_pairs(old_export, songs, files)} == {('v1', 'title')}
+
+
+def test_safari_clock_is_shifted_onto_the_corpus_timeline() -> None:
+    """Safari skips ~48 ms of AAC padding, so its times run that much behind the corpus decode.
+    A forward seek Safari logged from 113.96 s really left at 114.01 s: window 114-126 s, not 102-114 s."""
+    builder = ImplicitPairBuilder(DEFAULT)
+    safari = {'tracks': [{'id': 't1', 'title': 'x', 'durationSec': 465.9771, 'sha256': 'abc'}],
+              'moments': [{'trackId': 't1', 'startSec': 239.9526, 'endSec': 251.9526}], 'ratings': [],
+              'events': [event('seek', fromSec=113.96, toSec=130)]}
+    pairs = builder.build_pairs(safari, {}, {'abc': 'v1'}, {'v1': 466.0245})
+    assert {p.time_shift_sec for p in pairs} == {0.047}
+    assert {p.passed_over for p in pairs} == {(108.0, 120.0), (114.0, 126.0)}
+    assert {p.preferred for p in pairs} >= {(240.0, 252.0)}
+    chrome = {**safari, 'tracks': [{**safari['tracks'][0], 'durationSec': 466.02449}]}  # float noise, no shift
+    assert {p.time_shift_sec for p in builder.build_pairs(chrome, {}, {'abc': 'v1'}, {'v1': 466.0245})} == {0.0}
+    assert builder.player_offset({'durationSec': 180}, 466.0245) == 0.0  # import fallback duration: not measured

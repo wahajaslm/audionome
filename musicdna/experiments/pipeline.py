@@ -79,7 +79,11 @@ class ResearchPipeline:
     def build_pairs(self, profile: dict[str, Any], corpus: CorpusManifest) -> list[dict[str, Any]]:
         print('3/4 preference pairs')
         files = {e.sha256: e.video_id for e in corpus.entries if e.sha256}
-        pairs = [asdict(p) for p in ImplicitPairBuilder(self.config).build_pairs(profile, corpus.song_index(), files)]
+        # Decoded corpus lengths, for the player delay compensation (only songs the profile imported).
+        imported = {t.get('sha256') for t in profile.get('tracks', [])}
+        durations = {e.video_id: self.store.duration(e) for e in corpus.entries if e.sha256 in imported}
+        pairs = [asdict(p) for p in ImplicitPairBuilder(self.config).build_pairs(
+            profile, corpus.song_index(), files, durations)]
         self.output_directory.mkdir(exist_ok=True)
         (self.output_directory / f'preference_pairs_{self.tag}.json').write_text(
             json.dumps(pairs, indent=2, ensure_ascii=False) + '\n', encoding='utf8')
