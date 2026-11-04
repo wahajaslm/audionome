@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
+    "service": ".venv/bin/python -m uvicorn musicdna.service.app:app --host 127.0.0.1 --port 8765 --reload --reload-dir musicdna",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "node --test tests/project.test.mjs && node --experimental-strip-types --test tests/core.test.mjs",

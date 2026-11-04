@@ -19,7 +19,7 @@ For authorized local music analysis, run the Python service in a second terminal
 python -m venv .venv
 source .venv/bin/activate       # Windows: .venv\\Scripts\\activate
 pip install -r requirements.txt
-python -m uvicorn musicdna.service.app:app --host 127.0.0.1 --port 8765
+npm run service   # = uvicorn musicdna.service.app:app --port 8765 --reload: restarts itself when musicdna/ changes
 ```
 
 In **Library**, import MP3/WAV or other browser-supported audio; press **Analyse locally** only if you have the necessary analysis rights (with automatic analysis off, the row asks you to confirm them first). Analysis is opt-in. Original recordings remain in the browser's IndexedDB; temporary analysis copies sent to your own localhost Python service are removed after processing. Streamed tracks are **not** assumed to be analyzable.
