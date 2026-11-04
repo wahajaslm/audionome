@@ -142,35 +142,55 @@ class DeepAudioEncoder:
         return embeddings
 
     def load_mert(self, allow_noncommercial: bool | None = None) -> tuple[Any, Any]:
-        """Loads MERT once. Its weights are CC BY-NC 4.0 and its model code runs via trust_remote_code."""
+        """Loads MERT once. Its weights are CC BY-NC 4.0 and its model code runs via trust_remote_code.
+
+        Layer outputs are captured with forward hooks on the 12 encoder layers. FIX: MERT's remote code
+        ignores output_hidden_states under transformers 5.x and returns hidden_states=None.
+        Example: asking for all layers gave only last_hidden_state (1, 374, 768); the hooks give all 12.
+        """
         if self._mert is None:
             self.license_manager.verify_license('mert', allow_noncommercial=allow_noncommercial)
             from transformers import AutoModel, Wav2Vec2FeatureExtractor
             model = AutoModel.from_pretrained(MERT_MODEL_ID, trust_remote_code=True)
             model.eval()
             processor = Wav2Vec2FeatureExtractor.from_pretrained(MERT_MODEL_ID, trust_remote_code=True)
+            self._mert_layers: list[Any] = []
+            for layer in model.encoder.layers:
+                layer.register_forward_hook(
+                    lambda _module, _inputs, output: self._mert_layers.append(output[0] if isinstance(output, tuple) else output))
             self._mert = (model, processor)
         return self._mert
 
     def encode_clips_with_mert(
         self, audio_clips: list[np.ndarray], sample_rate: int, allow_noncommercial: bool | None = None
     ) -> list[np.ndarray]:
-        """768-D MERT embedding per clip: time-averaged hidden states, averaged over all layers."""
+        """768-D MERT embedding per clip: time-averaged hidden states, averaged over all 12 layers.
+
+        Clips are batched only with clips of the same length. FIX: padding shorter clips with silence
+        put that silence into the time average. Example: a song's 4.5 s tail window batched with 12 s
+        windows was 60% padding, so its embedding mostly described silence.
+        """
         import torch
         model, processor = self.load_mert(allow_noncommercial)
         resampled = [
             librosa.resample(np.asarray(clip, dtype=np.float32), orig_sr=sample_rate, target_sr=MERT_SAMPLE_RATE)
             for clip in audio_clips
         ]
-        embeddings: list[np.ndarray] = []
-        for batch_start in range(0, len(resampled), HF_CLAP_BATCH_SIZE):
-            batch = resampled[batch_start:batch_start + HF_CLAP_BATCH_SIZE]
-            inputs = processor(batch, sampling_rate=MERT_SAMPLE_RATE, return_tensors='pt', padding=True)
-            with torch.no_grad():
-                hidden_states = model(**inputs, output_hidden_states=True).hidden_states
-            layers = torch.stack(hidden_states)  # (layers, batch, time, 768)
-            embeddings.extend(layers.mean(dim=2).mean(dim=0).cpu().numpy().astype(np.float64))
-        return embeddings
+        embeddings: dict[int, np.ndarray] = {}
+        by_length: dict[int, list[int]] = {}
+        for index, clip in enumerate(resampled):
+            by_length.setdefault(len(clip), []).append(index)
+        for indices in by_length.values():
+            for batch_start in range(0, len(indices), HF_CLAP_BATCH_SIZE):
+                batch_indices = indices[batch_start:batch_start + HF_CLAP_BATCH_SIZE]
+                inputs = processor([resampled[i] for i in batch_indices], sampling_rate=MERT_SAMPLE_RATE, return_tensors='pt')
+                self._mert_layers.clear()
+                with torch.no_grad():
+                    model(**inputs)
+                layers = torch.stack(self._mert_layers)  # (12, batch, time, 768)
+                for i, vector in zip(batch_indices, layers.mean(dim=2).mean(dim=0).cpu().numpy().astype(np.float64)):
+                    embeddings[i] = vector
+        return [embeddings[i] for i in range(len(resampled))]
 
     def encode_via_colab(self, audio_files: list[str], service_url: str) -> list[list[float]]:
         embeddings: list[list[float]] = []
