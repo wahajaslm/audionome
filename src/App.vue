@@ -6,6 +6,9 @@ import { useAudioEngine } from './composables/useAudioEngine';
 import { useAppBootstrap } from './composables/useAppBootstrap';
 import AppSidebar from './features/shell/AppSidebar.vue';
 import Toast from './ui/Toast.vue';
+import PlaybackBar from './ui/PlaybackBar.vue';
+import { usePlaybackStore } from './stores/playback';
+import { useMomentFlowStore } from './stores/momentFlow';
 
 // One audio engine for the whole app, created before any screen renders.
 useAudioEngine();
@@ -14,6 +17,8 @@ useAppBootstrap();
 const ui = useUiStore();
 const { toast } = storeToRefs(ui);
 const router = useRouter();
+const playback = usePlaybackStore();
+const flow = useMomentFlowStore();
 
 function onToastAction(): void {
   const to = toast.value?.actionTo;
@@ -28,6 +33,27 @@ function onToastAction(): void {
     <main class="main-content">
       <RouterView />
     </main>
+    <!-- One bottom player for every screen (Now playing, Library, Feature analysis, ...). -->
+    <PlaybackBar
+      :title="playback.currentTrack?.title || 'No track'"
+      :artist="playback.currentTrack?.artist || 'Import audio in Library'"
+      :current-time="playback.t"
+      :duration="playback.duration"
+      :playing="playback.playing"
+      :loop="playback.loop && !!playback.sel"
+      :volume="playback.volume"
+      @open="router.push('/')"
+      @save-last="flow.quickSave()"
+      @prev="playback.seekBy(-15)"
+      @toggle-play="playback.togglePlay()"
+      @next="playback.seekBy(15)"
+      @loop="playback.toggleLoop()"
+      @volume="playback.setVolume"
+      @scrub-start="playback.beginScrub()"
+      @scrub="playback.scrubTo"
+      @scrub-end="playback.endScrub"
+      @step="playback.stepBy"
+    />
     <div v-if="toast" class="toast-slot">
       <Toast :message="toast.message" :action-label="toast.actionLabel" @action="onToastAction" />
     </div>
@@ -66,12 +92,13 @@ body {
   flex: 1;
   min-width: 0;
   box-sizing: border-box;
-  padding: var(--space-5);
+  /* Bottom room for the fixed 76px playback bar. */
+  padding: var(--space-5) var(--space-5) calc(76px + var(--space-5));
 }
 /* Toast rule: bottom centre, above the playback bar (desktop) or tab bar (phone). */
 .toast-slot {
   position: fixed;
-  bottom: calc(var(--space-8) + var(--space-7));
+  bottom: calc(76px + var(--space-5));
   left: 50%;
   transform: translateX(-50%);
   z-index: 1000;
@@ -83,7 +110,8 @@ body {
     flex-direction: column;
   }
   .main-content {
-    padding: var(--space-4) var(--space-4) calc(var(--space-8) + var(--space-5));
+    /* Room for the tab bar (space-8) plus the compact 56px playback bar above it. */
+    padding: var(--space-4) var(--space-4) calc(var(--space-8) + 56px + var(--space-5));
   }
 }
 </style>

@@ -12,6 +12,7 @@ import { storeToRefs } from 'pinia';
 import { useRoute } from 'vue-router';
 import type { AudioSegment } from '../../data/types';
 import { dmerRows, inSelection, STUDIO_URL, visibleWindows, windowSummary } from '../../core/diagnostics';
+import { openStudio } from '../../core/studioLink';
 import { useDiagnosticsStore } from '../../stores/diagnostics';
 import { useIntelligenceStore } from '../../stores/intelligence';
 import { useLibraryStore } from '../../stores/library';
@@ -77,7 +78,7 @@ async function analyzeAll() {
       </div>
       <div class="actions">
         <Button variant="outline" @click="analyzeAll">Analyse all songs</Button>
-        <a class="ext label" :href="STUDIO_URL" target="_blank" rel="noopener">Research studio ↗</a>
+        <a class="ext label" :href="STUDIO_URL" target="music-dna-studio" @click.prevent="openStudio()">Research studio ↗</a>
       </div>
     </div>
 

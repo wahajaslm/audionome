@@ -9,6 +9,7 @@ import { computed, ref } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRouter } from 'vue-router';
 import { STUDIO_URL } from '../../core/diagnostics';
+import { openStudio } from '../../core/studioLink';
 import { useIntelligenceStore } from '../../stores/intelligence';
 import { useLibraryStore } from '../../stores/library';
 import { useListeningStore } from '../../stores/listening';
@@ -103,7 +104,7 @@ async function clear() {
         </div>
         <div class="btns">
           <Button variant="outline" @click="router.push('/admin')">Feature analysis</Button>
-          <a class="ext label" :href="STUDIO_URL" target="_blank" rel="noopener">Research studio ↗</a>
+          <a class="ext label" :href="STUDIO_URL" target="music-dna-studio" @click.prevent="openStudio()">Research studio ↗</a>
         </div>
       </li>
       <li class="row">

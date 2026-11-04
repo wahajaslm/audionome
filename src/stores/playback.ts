@@ -258,15 +258,17 @@ export const usePlaybackStore = defineStore('playback', () => {
     region.sel = { a: Math.min(a, b), b: Math.max(a, b) };
   }
 
-  /** Drag released: widen to the minimum, jump to its start and play it once. */
+  /**
+   * Drag released: widen to the minimum. Nothing else.
+   * NO AUTO-PLAY FIX - releasing a drag used to jump to the passage start and play it, so just
+   * marking a passage (to loop or save it) started it. Now the selection is only marked;
+   * Play or Loop starts it.
+   * Example: paused at 0:40, drag 1:10–1:25 -> still paused at 0:40, 1:10–1:25 selected.
+   */
   function commitSelection(): void {
-    const e = engineRef;
-    if (!e || !region.sel) return;
+    if (!engineRef || !region.sel) return;
     region.sel = enforceMinimumSelection(region.sel, duration.value);
-    const from = region.t;
-    region.t = region.sel.a; region.previewEnd = region.sel.b; e.setTime(region.sel.a);
-    useListeningStore().emit('seek', 'user', { fromSec: from, toSec: region.sel.a });
-    e.play().catch(() => { });
+    region.previewEnd = null;
   }
 
   /** Waveform Enter: select ±10 s around the playhead (only when nothing is selected). */
@@ -288,9 +290,11 @@ export const usePlaybackStore = defineStore('playback', () => {
     if (!e) return;
     if (!region.sel) region.sel = defaultLoopRange(region.t, duration.value);
     region.loop = !region.loop; region.loops = 0;
+    // NO AUTO-PLAY FIX - switching the loop on no longer starts playback. Paused: the playhead
+    // moves to the loop start, so Play starts the loop. Playing: it jumps to the loop start.
+    // Example: paused, select 1:10–1:25, press Loop -> still paused, playhead at 1:10.
     if (region.loop) {
       region.t = region.sel.a; region.previewEnd = region.sel.b; e.setTime(region.t);
-      if (!e.isPlaying()) e.play().catch(() => { });
     }
     useListeningStore().emit(region.loop ? 'loop_enabled' : 'loop_disabled', 'user',
       { momentStartSec: region.sel.a, momentEndSec: region.sel.b });

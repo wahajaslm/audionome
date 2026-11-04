@@ -1,13 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRoute, useRouter } from 'vue-router';
 import { useMomentsStore } from '../../stores/moments';
-import { usePlaybackStore } from '../../stores/playback';
 import { useLibraryStore } from '../../stores/library';
-import Icon, { type IconName } from '../../ui/Icon.vue';
+import { type IconName } from '../../ui/Icon.vue';
 import NavItem from '../../ui/NavItem.vue';
-import ProgressRail from '../../ui/ProgressRail.vue';
 import { COLLECTIONS } from '../../core/moments';
 import { useListeningStore } from '../../stores/listening';
 
@@ -24,10 +21,8 @@ const navItems: { to: string; label: string; short: string; icon: IconName }[] =
 
 const route = useRoute();
 const router = useRouter();
-const playback = usePlaybackStore();
 const library = useLibraryStore();
 const { moments } = storeToRefs(useMomentsStore());
-const onPlayer = computed(() => route.path === '/');
 const { learning } = storeToRefs(useListeningStore());
 const collectionCurrent = (i: number) => route.path === '/moments' && Number(route.query.c) === i + 1;
 const badge = (to: string) => (to === '/moments' ? moments.value.length : to === '/library' ? library.tracks.length : undefined);
@@ -69,30 +64,6 @@ const badge = (to: string) => (to === '/moments' ? moments.value.length : to ===
       <button type="button" class="sec-link label" :aria-current="route.path === '/admin' ? 'page' : undefined" @click="router.push('/admin')">Feature analysis</button>
     </nav>
 
-    <!-- NavItem rule: the mini player shows only when away from the player and returns to
-         Now playing. The rail scrubs the song (SYNC FIX 8: the seek logs where the drag began). -->
-    <div v-if="!onPlayer" class="mini">
-      <div class="mini-player">
-        <button class="mini-open" aria-label="Open Now playing" @click="router.push('/')">
-          <span class="mini-art"><Icon name="wave" :size="18" /></span>
-          <span class="mini-text">
-            <span class="mini-title body">{{ playback.currentTrack?.title || 'No track' }}</span>
-            <span class="mini-artist caption">{{ playback.currentTrack?.artist || 'Import audio' }}</span>
-          </span>
-        </button>
-        <button class="mini-play" :aria-label="playback.playing ? 'Pause' : 'Play'" @click="playback.togglePlay()">
-          <Icon :name="playback.playing ? 'pause' : 'play'" :size="16" />
-        </button>
-      </div>
-      <ProgressRail
-        :current-time="playback.t"
-        :duration="playback.duration"
-        @scrub-start="playback.beginScrub()"
-        @scrub="playback.scrubTo"
-        @scrub-end="playback.endScrub"
-        @step="playback.stepBy"
-      />
-    </div>
   </aside>
 </template>
 
@@ -132,84 +103,6 @@ const badge = (to: string) => (to === '/moments' ? moments.value.length : to ===
 }
 .sec-link:hover, .sec-link[aria-current='page'] { background: var(--bg-raise); color: var(--ink); }
 .paused { color: var(--ink-mute); }
-.mini {
-  margin-top: auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-.mini-player {
-  width: 100%;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3);
-  border-radius: var(--radius-md);
-  background: var(--bg-panel);
-  border: 1px solid var(--line);
-  color: var(--ink);
-  text-align: left;
-  cursor: pointer;
-}
-.mini-art {
-  width: var(--space-6);
-  height: var(--space-6);
-  flex: none;
-  border-radius: var(--radius-pill);
-  background: var(--bg-raise);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--ink-sub);
-}
-.mini-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1;
-}
-.mini-title {
-  color: var(--ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.mini-open {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.mini-play {
-  border: 0;
-  background: none;
-  cursor: pointer;
-  width: var(--space-6);
-  height: var(--space-6);
-  flex: none;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--ink);
-}
-.mini-play:hover {
-  background: var(--bg-raise);
-}
-.mini-artist {
-  color: var(--ink-sub);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
 /* NavItem rule: below breakpoint-tabs (820px; media queries cannot read CSS variables) the
    same five items become a bottom tab bar on bg-side, icon above a short label, 52px tall,
@@ -236,10 +129,6 @@ const badge = (to: string) => (to === '/moments' ? moments.value.length : to ===
   .nav-menu {
     flex-direction: row;
     justify-content: space-around;
-  }
-  /* Mini player sits above the tabs on phones. */
-  .mini {
-    margin: 0 0 var(--space-1);
   }
 }
 </style>

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 /**
  * Now playing (design-system layout): cover + title → waveform → selection toolbar →
- * ask row / describe strip / explore / nudge slot → caption line → playback bar.
+ * ask row / describe strip / explore / nudge slot → caption line.
+ * The playback bar is app-wide (App.vue), so it looks the same on every screen.
  * Behaviour is ported from index.html's player screen; state lives in the stores.
  */
 import { computed } from 'vue';
@@ -22,7 +23,6 @@ import Waveform from '../../ui/Waveform.vue';
 import SelectionToolbar from '../../ui/SelectionToolbar.vue';
 import AskRow from '../../ui/AskRow.vue';
 import DescribeStrip from '../../ui/DescribeStrip.vue';
-import PlaybackBar from '../../ui/PlaybackBar.vue';
 import Button from '../../ui/Button.vue';
 import ExplorePanel from './ExplorePanel.vue';
 import { formatTime } from '../../ui/format';
@@ -36,7 +36,7 @@ const listening = useListeningStore();
 const router = useRouter();
 const wf = useWaveform();
 
-const { sel, loop, loops, t, duration, playing, volume, currentTrack } = storeToRefs(playback);
+const { sel, loop, loops, t, duration, currentTrack } = storeToRefs(playback);
 const { ask, describe, feel, love, note, nudge, explore } = storeToRefs(flow);
 
 useKeyboardShortcuts({ ' ': () => { playback.togglePlay(); } });
@@ -150,29 +150,14 @@ function onLoopButton(): void { playback.toggleLoop(); }
       </div>
     </div>
 
-    <PlaybackBar
-      class="pbar"
-      :current-time="t"
-      :duration="duration"
-      :playing="playing"
-      :loop="loop && !!sel"
-      :volume="volume"
-      @save-last="flow.quickSave()"
-      @prev="playback.seekBy(-15)"
-      @toggle-play="playback.togglePlay()"
-      @next="playback.seekBy(15)"
-      @loop="onLoopButton"
-      @volume="playback.setVolume"
-    />
   </div>
 </template>
 
 <style scoped>
-/* Layout rule "Now playing": centred column; the playback bar sits low and sticks to the bottom. */
+/* Layout rule "Now playing": centred column. */
 .pcol {
   max-width: var(--content-max);
   margin: 0 auto;
-  min-height: calc(100vh - 2 * var(--space-5));
   display: flex;
   flex-direction: column;
   padding: var(--space-6) var(--space-4) 0;
@@ -219,12 +204,9 @@ button.pill:hover { color: var(--ink); border-color: var(--chip-on-line); }
 .loopflag { color: var(--accent); font-variant-numeric: tabular-nums; }
 .hint { display: inline-flex; align-items: center; gap: var(--space-1); }
 .extras { margin-left: auto; display: inline-flex; gap: var(--space-1); }
-.pbar { margin-top: auto; position: sticky; bottom: 0; }
 @media (prefers-reduced-motion: reduce) { .slot { transition: none; } }
-/* Below breakpoint-tabs the tab bar (space-8 tall) is fixed at the bottom: the bar sits above it. */
 @media (max-width: 820px) {
-  .pcol { min-height: calc(100vh - var(--space-4) - var(--space-8) - var(--space-5)); padding-top: var(--space-4); }
-  .pbar { bottom: var(--space-8); }
+  .pcol { padding-top: var(--space-4); }
 }
 @media (max-width: 600px) {
   .track { gap: var(--space-4); }

@@ -2827,6 +2827,17 @@ canvas.pcanvas{display:block;width:100%!important;max-width:100%;box-sizing:bord
     updateDawPlayhead();
   });
 
+  // ONE PLAYER FIX - the studio opened from the app is the same listening session, so only one
+  // of them may sound at a time. Starting audio here tells the app to pause; the app starting
+  // tells this tab to pause.
+  // Example: the app plays Naina Moray, you press play in the studio -> the app pauses.
+  audio.addEventListener('play',()=>{
+    if(window.opener)window.opener.postMessage({source:'music-dna-studio',type:'playing'},'*');
+  });
+  window.addEventListener('message',e=>{
+    if(e.source===window.opener&&e.data&&e.data.source==='music-dna'&&e.data.type==='pause'&&!audio.paused)audio.pause();
+  });
+
   window.addEventListener('resize',()=>{
     if(S.view==='waveform'){
       drawWave();

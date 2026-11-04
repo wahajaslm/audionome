@@ -3,6 +3,7 @@ import { NativeAudioEngine } from '../core/audioEngine';
 import { usePlaybackStore } from '../stores/playback';
 import { useListeningStore } from '../stores/listening';
 import { useMediaClock } from './useMediaClock';
+import { onStudioPlay, pauseStudio } from '../core/studioLink';
 
 let instance: NativeAudioEngine | null = null;
 
@@ -34,7 +35,9 @@ export function useAudioEngine(): NativeAudioEngine {
   engine.on('play', () => {
     playback.playing = true; // button state only; listening time starts on 'playing' (SYNC FIX 1)
     clock.start();
+    pauseStudio(); // ONE PLAYER FIX: the studio tab stops when the app plays
   });
+  onStudioPlay(() => { if (engine.isPlaying()) engine.pause(); });
   engine.on('playing', () => {
     // SYNC FIX 1: sound is audible from here, so the listening span starts here.
     listening.openSpan();
