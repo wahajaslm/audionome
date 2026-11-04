@@ -417,7 +417,9 @@ export function selectActiveLearningQuestions(
   trackId: string,
   startSec: number,
   endSec: number,
-  topK = 5
+  topK = 5,
+  /** Timeline evidence for the passage (core/timeline.ts passageEvidence); replaces the window rule. */
+  evidence?: { salience: Record<string, number>; question: string } | null
 ): ActiveQuestionPrompt {
   const candidates = ['Vocals', 'Melody', 'Instruments', 'Rhythm', 'Build-up', 'Harmony', 'Atmosphere', 'Drop'];
   const counts: Record<string, number> = Object.fromEntries(candidates.map(c => [c, 0]));
@@ -451,16 +453,17 @@ export function selectActiveLearningQuestions(
     Atmosphere: Math.min(1, (1 - onset * 0.3) + noise * 2)
   };
 
+  const source = evidence?.salience ?? (seg ? salience : null);
   const scored = candidates.map(chip => {
     const freq = (counts[chip] + 1) / totalObs;
     const infoGain = -Math.log2(freq) / Math.log2(candidates.length);
-    const s = seg ? 0.65 * (salience[chip] ?? 0.5) + 0.35 * infoGain : infoGain;
+    const s = source ? 0.65 * (source[chip] ?? 0.5) + 0.35 * infoGain : infoGain;
     return { chip, score: s };
   });
   scored.sort((a, b) => b.score - a.score);
 
-  let question = 'Saved. What stood out?';
-  if (seg) {
+  let question = evidence?.question ?? 'Saved. What stood out?';
+  if (seg && !evidence) {
     if (slope > 0.04 && vocalP > 0.42) question = 'Saved. Did the vocals or the building intensity stand out?';
     else if (slope > 0.04) question = 'Saved. Was it the build-up or rhythmic intensity that stood out?';
     else if (vocalP > 0.48) question = 'Saved. Did the vocal delivery or melody draw you in?';

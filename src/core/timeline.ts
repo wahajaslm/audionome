@@ -126,17 +126,23 @@ function movingAverage(curve: ArrayLike<number>, w: number): Float32Array {
   return out;
 }
 
-export interface PassageMoment { at: number; text: string; needs: 'quick' | 'full'; ghost?: number }
+export interface PassageMoment { at: number; text: string; needs: 'quick' | 'full'; ghost?: number; /** Stems that drop out, for a drop-out moment. */ stems?: StemName[] }
 
 const fmt = (s: number) => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+const STEM_WORD: Record<StemName, string> = { vocals: 'vocals', drums: 'drums', bass: 'bass', other: 'other instruments' };
+/** "drums", "drums and bass", "drums, bass and other instruments". */
+function listStems(stems: StemName[]): string {
+  const w = stems.map(x => STEM_WORD[x]);
+  return w.length < 2 ? w.join('') : w.slice(0, -1).join(', ') + ' and ' + w[w.length - 1];
+}
 
 /**
  * Up to three one-line moments in the passage, from the measured curves:
  *   stems that drop out and come back   (needs stems)
  *   a chord pattern heard elsewhere     (quick tier)
  *   the highest sung note and the range (needs stems)
- * Example (1:35–2:41): "1:44 Bass and drums drop out. The voice carries it alone until 1:49."
+ * Example (1:35–2:41): "1:44 Drums and bass drop out until 1:49."
  */
 export function passageMoments(tl: Timeline, r: { a: number; b: number }): PassageMoment[] {
   const fps = tl.fps ?? 10, out: PassageMoment[] = [];
@@ -151,7 +157,9 @@ export function passageMoments(tl: Timeline, r: { a: number; b: number }): Passa
         if (sm[i] < 0.12 && sm[i - 10] > 0.3) {
           let j = i;
           while (j < end && sm[j] < 0.3) j++;
-          events.push({ s, a: i / fps, b: j / fps });
+          // SHORT DIP FIX - a gap under 1.5 s is a breath between phrases, not a drop-out.
+          // Example: vocals, bass and other dip for 0.4 s at 1:40 → no "Almost everything stops".
+          if (j - i >= 1.5 * fps) events.push({ s, a: i / fps, b: j / fps });
           i = j + 20;
         } else i++;
       }
@@ -159,12 +167,14 @@ export function passageMoments(tl: Timeline, r: { a: number; b: number }): Passa
     if (events.length) {
       events.sort((x, y) => x.a - y.a);
       const g = events.filter(e => Math.abs(e.a - events[0].a) < 1.5);
-      const who = g.map(e => cap(e.s)).join(' and ');
-      const back = Math.min(...g.map(e => e.b));
-      const alone = g.length >= 2 && !g.some(e => e.s === 'vocals');
-      out.push({ at: events[0].a, needs: 'full', text: back < r.b
-        ? `${who} drop out${alone ? '. The voice carries it alone' : ''} until ${fmt(back)}.`
-        : `${who} drop out for the rest of the passage.` });
+      const stems = STEM_NAMES.filter(s => g.some(e => e.s === s));
+      const back = Math.min(...g.map(e => e.b)), until = back < r.b ? ` until ${fmt(back)}` : ' for the rest of the passage';
+      // Example: "Drums and bass drop out until 1:49. The voice carries it alone."
+      const alone = ['drums', 'bass', 'other'].every(s => stems.includes(s as StemName)) && !stems.includes('vocals');
+      const text = stems.length >= 3 && stems.includes('vocals')
+        ? `Almost everything stops${until}.`
+        : `${cap(listStems(stems))} ${stems.length === 1 && stems[0] === 'bass' ? 'drops' : 'drop'} out${until}.${alone ? ' The voice carries it alone.' : ''}`;
+      out.push({ at: events[0].a, needs: 'full', stems, text });
     }
   }
   const rep = (tl.repeats ?? []).filter(x => x.at >= r.a && x.at < r.b).sort((x, y) => y.sim - x.sim)[0];
@@ -274,4 +284,77 @@ export function chordChart(tl: Timeline): { order: SheetSection[]; parts: ChartP
   }
   parts.sort((x, y) => x.label.localeCompare(y.label));
   return { order, parts };
+}
+
+/** What the timeline measured in a passage, as salience for the "What stood out?" chips. */
+export interface PassageEvidence {
+  /** 0..1 per chip: how strongly the audio points at it. */
+  salience: Record<string, number>;
+  /** The question for the strongest evidence. */
+  question: string;
+}
+
+/**
+ * ADAPTIVE QUESTION FIX - the question after Save read one 12 s window's energy slope and vocal
+ * share, so most passages got "What stood out?" or a guess about a build-up. It now asks about
+ * what the timeline measured in this passage, strongest first:
+ *   drums/bass drop out → Drop      loudness rises → Build-up      strong or wide voice → Vocals, Melody
+ *   chords come back elsewhere → Harmony      heavy drums → Rhythm      other stem leads → Instruments
+ * Example (1:35–2:41): "Saved. Was it the drop at 1:44, when the drums and bass cut out?"
+ * Returns null before the quick tier has arrived (the window rule is used then).
+ */
+export function passageEvidence(tl: Timeline | null | undefined, r: { a: number; b: number }): PassageEvidence | null {
+  if (!tl?.mix?.length) return null;
+  const fps = tl.fps ?? 10, i0 = Math.floor(r.a * fps), i1 = Math.max(i0 + 1, Math.ceil(r.b * fps));
+  const mean = (c: ArrayLike<number> | undefined, a = i0, b = i1) => {
+    if (!c) return 0;
+    let s = 0, n = 0;
+    for (let i = a; i < Math.min(b, c.length); i++) { s += Number(c[i]); n++; }
+    return n ? s / n : 0;
+  };
+  /** Where the passage sits among every frame of the song (0..1). */
+  const songRank = (c: number[] | undefined) => (c?.length ? rankIn([...c].sort((x, y) => x - y), mean(c)) : 0);
+  const sal: Record<string, number> = { Vocals: 0.35, Melody: 0.35, Harmony: 0.3, Rhythm: 0.3, Instruments: 0.3, 'Build-up': 0.2, Drop: 0.15, Atmosphere: 0.3 };
+  const asks: { score: number; q: string }[] = [];
+
+  // Only the backing leaving is a drop (drums, or bass with the other instruments); everything
+  // stopping is a break; the bass alone pausing is neither. Example: bass only → no drop question.
+  const out = passageMoments(tl, r).find(m => m.stems?.length);
+  const st = out?.stems ?? [];
+  if (out && st.length >= 3 && st.includes('vocals')) {
+    sal.Drop = 0.85;
+    asks.push({ score: 0.85, q: `Saved. Was it the break at ${fmt(out.at)}, when almost everything stops?` });
+  } else if (out && (st.includes('drums') || (st.includes('bass') && st.includes('other')))) {
+    sal.Drop = 0.95;
+    asks.push({ score: 0.95, q: `Saved. Was it the drop at ${fmt(out.at)}, when the ${listStems(st)} cut out?` });
+  }
+  const third = Math.max(1, Math.floor((i1 - i0) / 3));
+  const rise = mean(tl.mix, i1 - third, i1) - mean(tl.mix, i0, i0 + third);
+  if (rise > 0.08) {
+    sal['Build-up'] = Math.min(1, 0.5 + rise * 3);
+    asks.push({ score: sal['Build-up'], q: `Saved. Was it the build-up? It gets louder towards ${fmt(r.b)}.` });
+  }
+  const vocals = songRank(tl.stems?.vocals);
+  const mel = tl.melody ? tl.melody.midi.slice(Math.floor(r.a * tl.melody.fps), Math.ceil(r.b * tl.melody.fps)).filter((v): v is number => v != null) : [];
+  const span = mel.length > 50 ? quantile(mel, 0.95) - quantile(mel, 0.05) : 0;
+  if (tl.stems) sal.Vocals = Math.max(sal.Vocals, vocals);
+  if (span) sal.Melody = Math.min(1, 0.3 + span / 20);
+  if (vocals > 0.7 || span >= 12) {
+    asks.push({ score: Math.min(0.9, Math.max(vocals, span / 16)),   // a real drop (0.95) outranks the voice
+      q: span >= 12 ? `Saved. Was it the voice? It climbs to ${noteName(quantile(mel, 0.95))} here.` : 'Saved. Was it the voice? It is up front here.' });
+  }
+  const rep = (tl.repeats ?? []).filter(x => x.at >= r.a && x.at < r.b).sort((x, y) => y.sim - x.sim)[0];
+  if (rep) {
+    sal.Harmony = Math.max(sal.Harmony, rep.sim * 0.8);
+    asks.push({ score: rep.sim * 0.7, q: `Saved. Was it this chord pattern? It comes back at ${fmt(rep.same_as)}.` });
+  }
+  const drums = songRank(tl.stems?.drums), other = songRank(tl.stems?.other);
+  if (tl.stems) {
+    sal.Rhythm = Math.max(sal.Rhythm, drums);
+    sal.Instruments = Math.max(sal.Instruments, other * (1 - vocals * 0.5));
+    if (drums > 0.75) asks.push({ score: drums * 0.75, q: 'Saved. Was it the rhythm? The drums are at their heaviest here.' });
+    if (other > 0.75 && vocals < 0.4) asks.push({ score: other * 0.7, q: 'Saved. Was it the instruments? They carry this part.' });
+  }
+  asks.sort((x, y) => y.score - x.score);
+  return { salience: sal, question: asks[0]?.q ?? 'Saved. What stood out in this passage?' };
 }

@@ -40,7 +40,8 @@ export const useMomentFlowStore = defineStore('momentFlow', () => {
    * Save (the loop bar's ♡): stores the selection once and asks one question about it.
    * KEEP LOOPING FIX - saving used to clear the selection and stop the loop you were
    * listening to. Now the passage stays selected and keeps looping.
-   * When Explore is open its own Feels / Love section is the question, so no ask row.
+   * With Explore open the question shows inside Explore (EXPLORE ASK FIX: it used to be
+   * skipped there, so saving from Explore asked nothing once Describe was folded away).
    */
   function saveSelection(): void {
     const playback = usePlaybackStore();
@@ -50,7 +51,6 @@ export const useMomentFlowStore = defineStore('momentFlow', () => {
     if (!id) return;
     nudge.value = false; justSaved.value = true;
     useUiStore().notify(isNew ? 'Saved to My Moments' : 'Already in My Moments', 'View', '/moments');
-    if (explore.value) return;
     const aq = useIntelligenceStore().questionFor(playback.trackId || '', r.a, r.b);
     describe.value = null;
     ask.value = { q: aq.question, chips: aq.chips, a: r.a, b: r.b, mid: id };

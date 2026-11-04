@@ -10,6 +10,8 @@ import { useMomentsStore } from './moments';
 import { usePlaybackStore } from './playback';
 import { useListeningStore } from './listening';
 import { useUiStore } from './ui';
+import { useTimelineStore } from './timeline';
+import { passageEvidence } from '../core/timeline';
 
 /** Analyses, ratings, the event history and the attention hints computed from them. */
 export const useIntelligenceStore = defineStore('intelligence', () => {
@@ -57,7 +59,10 @@ export const useIntelligenceStore = defineStore('intelligence', () => {
 
   /** The "What stood out?" question for a newly saved passage. */
   function questionFor(trackId: string, a: number, b: number): ActiveQuestionPrompt {
-    return selectActiveLearningQuestions(analyses.value, useMomentsStore().moments, trackId, a, b, 5);
+    // ADAPTIVE QUESTION FIX: ask about what the song's timeline measured in this passage.
+    const timeline = useTimelineStore();
+    const evidence = timeline.trackId === trackId ? passageEvidence(timeline.timeline, { a, b }) : null;
+    return selectActiveLearningQuestions(analyses.value, useMomentsStore().moments, trackId, a, b, 5, evidence);
   }
 
   /** "Not this one": logged as a dismissal, without penalty. */

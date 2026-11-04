@@ -6,7 +6,7 @@ import {
   RegionController, enforceMinimumSelection, rangeAround, defaultLoopRange, previewStart, seekTarget, quickSaveRange,
 } from '../src/core/playback.ts';
 import { toDbMoment, withTags, collectionsOf, newMoment, savedRanges } from '../src/core/moments.ts';
-import { barAt, beatInBar, blockIndexAt, chordChart, chordSheet, noteName, passageMoments, rankIn } from '../src/core/timeline.ts';
+import { barAt, beatInBar, blockIndexAt, chordChart, chordSheet, noteName, passageEvidence, passageMoments, rankIn } from '../src/core/timeline.ts';
 import { computeSpectrum, fft, hzToMel, melFilters, melToHz, SPEC_SR } from '../src/core/spectrum.ts';
 
 /** Minimal HTMLMediaElement stand-in: an EventTarget with the fields the engine reads. */
@@ -384,7 +384,13 @@ test('timeline: moments name stems that drop out, repeats and the vocal range', 
   const m = passageMoments(tl, { a: 10, b: 50 });
   assert.equal(m.length, 3);
   const drop = m.find(x => /drop out/.test(x.text));
-  assert.match(drop.text, /^Drums and Bass drop out\. The voice carries it alone until 0:2[56]\.$/);
+  assert.match(drop.text, /^Drums and bass drop out until 0:2[56]\.$/);
+  assert.deepEqual(drop.stems, ['drums', 'bass']);
+  const alone = passageMoments({ ...tl, stems: { vocals: on, drums: hole, bass: hole, other: hole } }, { a: 10, b: 50 }).find(x => x.stems);
+  assert.match(alone.text, /^Drums, bass and other instruments drop out until 0:2[56]\. The voice carries it alone\.$/);
+  const bassOnly = { ...tl, mix: Array(n).fill(0.5), stems: { vocals: on, drums: on, bass: hole, other: on } };
+  assert.match(passageMoments(bassOnly, { a: 10, b: 50 }).find(x => x.stems).text, /^Bass drops out/);
+  assert.doesNotMatch(passageEvidence(bassOnly, { a: 10, b: 50 }).question, /drop/, 'the bass alone pausing is not a drop');
   assert.ok(Math.abs(drop.at - 20) < 1, 'at the drop');
   assert.deepEqual(m.map(x => x.at), [...m.map(x => x.at)].sort((p, q) => p - q), 'in time order');
   assert.equal(m.find(x => x.ghost != null).text, 'Same chords as 0:05.');
@@ -440,4 +446,15 @@ test('timeline: the chord chart shows each part once, as its repeating bar patte
   assert.equal(a.repeats, 4);
   assert.equal(a.times.length, 2, 'heard twice');
   assert.deepEqual(parts.find(p => p.label === 'B').pattern, [['C#'], ['D#m']], '3 of 4 bars match a 2-bar loop');
+});
+
+test('timeline: the save question asks about the strongest measured event in the passage', () => {
+  const n = 600, on = Array(n).fill(0.6), hole = on.map((v, i) => (i >= 200 && i < 260 ? 0 : v));
+  const tl = { trackId: 'x', version: 2, status: {}, fps: 10, mix: Array(n).fill(0.5), stems: { vocals: on, drums: hole, bass: hole, other: on } };
+  const e = passageEvidence(tl, { a: 10, b: 50 });
+  assert.equal(e.question, 'Saved. Was it the drop at 0:20, when the drums and bass cut out?');
+  assert.ok(e.salience.Drop > 0.9);
+  const rising = { trackId: 'x', version: 2, status: {}, fps: 10, mix: Array.from({ length: n }, (_, i) => i / n) };
+  assert.match(passageEvidence(rising, { a: 0, b: 60 }).question, /build-up/);
+  assert.equal(passageEvidence({ trackId: 'x', version: 2, status: {} }, { a: 0, b: 10 }), null, 'no timeline yet: the window rule is used');
 });

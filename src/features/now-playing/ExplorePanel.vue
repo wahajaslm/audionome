@@ -8,7 +8,7 @@
  * three rows (guessed in time), and a Hear row whose "Vocals" was a 300–3400 Hz filter.
  * Everything here now follows the playhead and comes from the timeline tiers
  * (stores/timeline.ts); each lane says what it is waiting for until its tier arrives.
- * Example (1:35–2:41): "1:44 Bass and drums drop out. The voice carries it alone until 1:49."
+ * Example (1:35–2:41): "1:44 Drums and bass drop out until 1:49."
  */
 import { computed, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
@@ -21,6 +21,7 @@ import { exactSummary, passageSummary } from '../../core/diagnostics';
 import { barAt, passageMoments, quantile, rankIn, type StemName } from '../../core/timeline';
 import { FEELINGS, QUALITIES } from '../../core/moments';
 import DescribeStrip from '../../ui/DescribeStrip.vue';
+import AskRow from '../../ui/AskRow.vue';
 import LiveLanes from './LiveLanes.vue';
 import { formatTime } from '../../ui/format';
 
@@ -30,7 +31,11 @@ const intelligence = useIntelligenceStore();
 const momentsStore = useMomentsStore();
 const timelineStore = useTimelineStore();
 const { sel, activeStem, t, playing } = storeToRefs(playback);
-const { feel, love, note } = storeToRefs(flow);
+const { feel, love, note, ask } = storeToRefs(flow);
+/** The question after Save, for this passage (EXPLORE ASK FIX); More… opens Describe below. */
+const askHere = computed(() => (ask.value && sel.value && Math.abs(ask.value.a - sel.value.a) < 0.5 && Math.abs(ask.value.b - sel.value.b) < 0.5 ? ask.value : null));
+const describeOpen = ref(false);
+function askMore(): void { flow.skipAsk(); describeOpen.value = true; }
 const { timeline, spectrum, spectrumState, serviceOff } = storeToRefs(timelineStore);
 
 const zoom = ref<'live' | 'all'>('live');
@@ -140,6 +145,8 @@ const measurements = computed(() => {
       </div>
     </header>
 
+    <AskRow v-if="askHere" :question="askHere.q" :chips="askHere.chips" @answer="flow.answer" @more="askMore" @skip="flow.skipAsk()" />
+
     <div class="moments">
       <button v-for="m in moments" :key="m.at + m.text" type="button" class="mo" @click="jump(m.at)">
         <span class="mt">{{ formatTime(m.at) }}</span><span>{{ m.text }}</span>
@@ -182,7 +189,7 @@ const measurements = computed(() => {
         </table>
       </div>
     </details>
-    <details class="fold">
+    <details class="fold" :open="describeOpen" @toggle="describeOpen = ($event.target as HTMLDetailsElement).open">
       <summary>Describe this moment</summary>
       <!-- ONE SAVE PATH: the same Feels / Love / Note strip and the same save as after ♡ Save. -->
       <DescribeStrip
