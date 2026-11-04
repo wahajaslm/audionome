@@ -110,13 +110,21 @@ body {
 <style scoped>
 .app-layout {
   display: flex;
-  min-height: 100vh;
+  /* SCROLL FIX - the window used to scroll as one long page, so on My Moments the title and
+     tabs scrolled away with the list. Now the app is exactly one screen tall and only
+     .main-content scrolls; pages that opt in (My Moments, Discover) scroll just their list. */
+  height: 100vh;
   background: var(--bg);
 }
 .main-content {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   box-sizing: border-box;
+  overflow-y: auto;
+  /* Space for the scrollbar is always kept, so content does not jump sideways when a page
+     becomes long enough to scroll. */
+  scrollbar-gutter: stable;
   /* Bottom room for the fixed 76px playback bar. */
   padding: var(--space-5) var(--space-5) calc(76px + var(--space-5));
 }

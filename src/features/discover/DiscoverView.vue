@@ -118,17 +118,23 @@ function selectTab(i: number) {
       </ol>
     </template>
 
-    <AttentionList />
+    <AttentionList class="att-slot" />
   </div>
 </template>
 
 <style scoped>
-.page { max-width: var(--content-max); margin: 0 auto; padding: var(--space-6) var(--space-4); font-variant-numeric: tabular-nums; }
+.page { width: 100%; max-width: var(--content-max); margin: 0 auto; padding: var(--space-6) var(--space-4); font-variant-numeric: tabular-nums; box-sizing: border-box;
+  /* One screen tall: header and tabs stay put, only .list scrolls (see SCROLL FIX in App.vue). */
+  height: 100%; display: flex; flex-direction: column; }
+.head, .tabs, .empty, .att-slot { flex: none; }
 .head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--space-4); }
 h1 { margin: 0; color: var(--ink); }
 .lead { color: var(--ink-sub); margin: var(--space-2) 0 0; max-width: 70ch; }
 .tabs { margin: var(--space-5) 0 var(--space-4); }
-.list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line);
+  /* Shrinks to fit and scrolls inside; the gutter is kept so rows do not shift when it appears.
+     Example: 30 saved moments → the list scrolls, the Play all button stays on screen. */
+  flex: 0 1 auto; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
 .none { padding: var(--space-4) 0; color: var(--ink-sub); border-bottom: 1px solid var(--line); }
 .empty { margin-top: var(--space-5); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: var(--space-6) 0; text-align: center; color: var(--ink-sub); }
 .empty p { margin: 0 0 var(--space-4); }

@@ -27,4 +27,13 @@ export const routes: RouteRecordRaw[] = [
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ];
 
-export const router = createRouter({ history: createWebHashHistory(), routes, scrollBehavior: () => ({ top: 0 }) });
+export const router = createRouter({ history: createWebHashHistory(), routes });
+
+/**
+ * SCROLL FIX - the app's scroll container is now .main-content, not the window (see App.vue),
+ * so the router's scrollBehavior no longer reached it. Example: scroll down Library, open
+ * Settings → Settings used to open half way down. Now each new page starts at the top.
+ */
+router.afterEach((to, from) => {
+  if (to.path !== from.path) document.querySelector('.main-content')?.scrollTo({ top: 0 });
+});
