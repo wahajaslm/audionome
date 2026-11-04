@@ -117,13 +117,25 @@ def test_jobs_save_quick_then_full_and_never_report_done_before_the_file(tmp_pat
     assert jobs.request('song') == saved['status'], 'a complete timeline is not run again'
 
 
-def test_jobs_report_missing_audio_as_an_error(tmp_path: Path) -> None:
-    jobs = TimelineJobs(tmp_path, lambda tid: None, FakeStems(tmp_path), beat_tracker=FakeBeats())
-    jobs.request('gone')
+def test_jobs_wait_for_the_upload_instead_of_failing(tmp_path: Path) -> None:
+    audio = tmp_path / 'late.wav'
+    found = {'ok': False}
+    jobs = TimelineJobs(tmp_path, lambda tid: audio if found['ok'] else None, FakeStems(tmp_path),
+                        beat_tracker=FakeBeats(), audio_wait_sec=0.3)
+    jobs.request('late')
     deadline = time.time() + 10
-    while time.time() < deadline and (jobs.get('gone') or {}).get('status', {}).get('quick') != 'error':
+    while time.time() < deadline and (jobs.get('late') or {}).get('status', {}).get('stage') != 'Waiting for the audio upload':
         time.sleep(0.05)
-    assert jobs.get('gone')['status']['error'].startswith('Audio is not cached')
+    time.sleep(0.6)
+    st = jobs.get('late')
+    assert st is None or st['status'].get('quick') in (None, 'waiting'), 'no audio yet is not an error'
+    sf.write(audio, chord_tone(['C', 'G', 'Am', 'F'] * 6, 0.5), SR)
+    found['ok'] = True
+    jobs.request('late')   # what POST /api/audio/cache does when the upload lands
+    deadline = time.time() + 120
+    while time.time() < deadline and (jobs.get('late') or {}).get('status', {}).get('full') != 'done':
+        time.sleep(0.1)
+    assert jobs.get('late')['status']['full'] == 'done'
 
 
 def test_an_empty_upload_never_replaces_the_cached_song(tmp_path: Path, monkeypatch) -> None:

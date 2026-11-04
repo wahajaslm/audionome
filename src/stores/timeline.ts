@@ -45,13 +45,29 @@ export const useTimelineStore = defineStore('timeline', () => {
 
   function stopPolling(): void { if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; } }
 
-  /** Polls every 2 s until the full tier is in (every 10 s while the service is off). */
+  /**
+   * Polls until the full tier is in: every 2 s while a job runs, every 10 s while the service
+   * is off or a job failed (a failed job is started again, at most 3 times per song).
+   *
+   * LIVE UPDATE FIX - polling stopped for good on an 'error' status, and a new upload got one
+   * (its timeline was asked for before the audio arrived). The job then ran anyway, but the
+   * player never asked again, so Explore and the player kept the old view until a reload.
+   * Now only a complete timeline stops polling, and coming back to the tab asks at once.
+   * Example: import a song → Explore fills in with chords ~25 s later and stems ~2 min later,
+   * without touching anything.
+   */
+  let retries = 0;
   async function poll(id: string, mySeq: number): Promise<void> {
     if (mySeq !== seq) return;
+    if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
     let tl = await fetchTimeline(id);
     if (mySeq !== seq) return;
     const st = tl?.status;
-    const needsStart = !tl || (!hasFull(tl) && (st?.full === 'stale' || st?.quick === 'stale' || (!st?.full && !st?.quick)));
+    const failed = st?.quick === 'error' || st?.full === 'error';
+    const idle = st?.quick === 'waiting' && st?.stage === 'Waiting for the audio upload';
+    const needsStart = !tl || (!hasFull(tl) && (st?.full === 'stale' || st?.quick === 'stale' || (!st?.full && !st?.quick)
+      || idle || (failed && retries < 3)));
+    if (needsStart && failed) retries++;
     if (needsStart) {
       const started = await startTimeline(id);
       serviceOff.value = started !== 'ok';
@@ -61,8 +77,7 @@ export const useTimelineStore = defineStore('timeline', () => {
     } else { serviceOff.value = false; serviceOutdated.value = false; }
     if (mySeq !== seq) return;
     if (tl) timeline.value = tl;
-    const finished = hasFull(tl) || tl?.status?.full === 'error';
-    if (!finished) pollTimer = setTimeout(() => poll(id, mySeq), serviceOff.value ? 10000 : 2000);
+    if (!hasFull(tl)) pollTimer = setTimeout(() => poll(id, mySeq), serviceOff.value || failed ? 10000 : 2000);
   }
 
   /** Decodes the song in the browser and hands the samples to the spectrum worker. */
@@ -71,12 +86,27 @@ export const useTimelineStore = defineStore('timeline', () => {
     if (!t) return;
     spectrumState.value = 'decoding';
     try {
-      const bytes = t.audioBlob instanceof Blob && t.audioBlob.size > 0
-        ? await t.audioBlob.arrayBuffer()
-        : await fetch(fallbackUrl(t)).then(r => { if (!r.ok) throw new Error('audio ' + r.status); return r.arrayBuffer(); });
-      if (mySeq !== seq) return;
+      // SPECTRUM SOURCE FIX - the browser's stored copy can report a size and still read back
+      // nothing (or bytes that do not decode); the player then plays the service copy, but the
+      // spectrum gave up with "Could not read the audio". Now each source is tried in turn:
+      // the stored copy, then the service copy.
+      // Example: after a refresh the stored Blob of song 2a970862 fails → service copy → spectrum.
       // An OfflineAudioContext decodes straight to 22.05 kHz, the rate the spectrum is made at.
-      const buf = await new OfflineAudioContext(1, 1, SPEC_SR).decodeAudioData(bytes);
+      const decode = (bytes: ArrayBuffer) => new OfflineAudioContext(1, 1, SPEC_SR).decodeAudioData(bytes);
+      const sources: (() => Promise<ArrayBuffer>)[] = [];
+      if (t.audioBlob instanceof Blob && t.audioBlob.size > 0) sources.push(() => t.audioBlob!.arrayBuffer());
+      sources.push(() => fetch(fallbackUrl(t)).then(r => { if (!r.ok) throw new Error('audio ' + r.status); return r.arrayBuffer(); }));
+      let buf: AudioBuffer | null = null, lastErr: unknown = null;
+      for (const read of sources) {
+        try {
+          const bytes = await read();
+          if (!bytes.byteLength) throw new Error('empty audio');
+          buf = await decode(bytes);
+          break;
+        } catch (err) { lastErr = err; }
+        if (mySeq !== seq) return;
+      }
+      if (!buf) throw lastErr ?? new Error('no audio source');
       if (mySeq !== seq) return;
       const mono = new Float32Array(buf.length);
       for (let c = 0; c < buf.numberOfChannels; c++) {
@@ -110,6 +140,7 @@ export const useTimelineStore = defineStore('timeline', () => {
     spectrumState.value = 'idle';
     serviceOff.value = false;
     serviceOutdated.value = false;
+    retries = 0;
     if (!id) return;
     const mySeq = seq;
     poll(id, mySeq).catch(console.warn);
@@ -125,6 +156,15 @@ export const useTimelineStore = defineStore('timeline', () => {
   function bind(): void {
     const playback = usePlaybackStore();
     watch(() => playback.trackId, id => { if (id !== trackId.value) load(id); }, { immediate: true });
+    // Background tabs slow timers to about once a minute; ask straight away when the tab is back.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && trackId.value && !hasFull(timeline.value)) poll(trackId.value, seq).catch(console.warn);
+    });
+    // The upload to the service (import, start-up sync) has finished: the job can run now.
+    window.addEventListener('musicdna:audio-cached', e => {
+      const id = (e as CustomEvent<string>).detail;
+      if (id && id === trackId.value && !hasFull(timeline.value)) poll(id, seq).catch(console.warn);
+    });
   }
 
   return { trackId, timeline, spectrum, spectrumState, serviceOff, quick, full, statusText, load, bind };

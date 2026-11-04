@@ -62,7 +62,9 @@ export async function uploadAudioToCache(track: Track): Promise<void> {
     form.append('file', new Blob([bytes], { type: track.mimeType || 'audio/*' }), `audio${ext}`);
     form.append('track_id', track.id);
     form.append('track_title', track.title);
-    await fetch(`${ENDPOINT}/api/audio/cache`, {method: 'POST', body: form});
+    const res = await fetch(`${ENDPOINT}/api/audio/cache`, {method: 'POST', body: form});
+    // Tells the timeline store the service has the audio now (LIVE UPDATE FIX).
+    if (res.ok) window.dispatchEvent(new CustomEvent('musicdna:audio-cached', { detail: track.id }));
   } catch (e) {
     console.warn('Audio cache sync skipped:', e);
   }

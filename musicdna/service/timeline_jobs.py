@@ -41,12 +41,13 @@ class TimelineJobs:
 
     def __init__(self, cache_dir: Path, find_audio: Callable[[str], Path | None],
                  stem_separator: StemSeparator, beat_tracker: BeatTracker | None = None,
-                 max_duration_sec: float | None = None) -> None:
+                 max_duration_sec: float | None = None, audio_wait_sec: float = 60.0) -> None:
         self.dir = cache_dir / 'timeline'
         self.find_audio = find_audio
         self.stems = stem_separator
         self.beats = beat_tracker or BeatTracker()
         self.max_duration_sec = max_duration_sec
+        self.audio_wait_sec = audio_wait_sec
         self._queue: deque[str] = deque()
         self._status: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
@@ -125,12 +126,24 @@ class TimelineJobs:
                     # Finished jobs are read from disk from now on.
                     if self._status.get(track_id, {}).get('full') in ('done', 'error'):
                         self._status.pop(track_id, None)
+                    elif track_id not in self._queue and self._status.get(track_id, {}).get('stage') == 'Waiting for the audio upload':
+                        self._status.pop(track_id, None)   # nothing running: a later request starts it again
 
     def _build(self, track_id: str) -> None:
+        # WAIT FOR UPLOAD FIX - a new song is asked for as soon as it is imported, usually before
+        # its upload to the service has finished. That used to end the job as an error, the
+        # player stopped asking, and the song never got its timeline.
+        # Now the job waits up to 60 s for the audio; if it is still missing the tiers stay
+        # 'waiting', and the upload itself (POST /api/audio/cache) queues the song again.
+        # Example: import a song → "Waiting for the audio upload" for 2 s → beats and chords.
         audio = self.find_audio(track_id)
+        deadline = time.time() + self.audio_wait_sec
+        while (not audio or not audio.is_file()) and time.time() < deadline:
+            self._set(track_id, stage='Waiting for the audio upload')
+            time.sleep(2)
+            audio = self.find_audio(track_id)
         if not audio or not audio.is_file():
-            self._set(track_id, quick='error', full='error', error='Audio is not cached on the service yet', stage='No audio')
-            self._save_status(track_id)
+            self._set(track_id, quick='waiting', full='waiting', stage='Waiting for the audio upload')
             return
         self._set(track_id, running=True)
         saved = self._read(track_id)
