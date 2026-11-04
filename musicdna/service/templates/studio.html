@@ -612,7 +612,11 @@ canvas.pcanvas{display:block;width:100%!important;max-width:100%;box-sizing:bord
         '<section class="ask" aria-label="TROMPA active question">'+
           '<span class="qq">'+svg('i-spark',16)+esc(prompt.question||'What stood out in this passage?')+'</span>'+
           (prompt.chips||[]).map(c=>'<button type="button" class="chip sq" aria-pressed="'+(contrast.corroborated_reasons||[]).includes(c)+'">'+esc(c)+'</button>').join('')+
-          '<span class="ghost" style="margin-left:auto;font-size:12px">Energy '+esc(contrast.energy_ratio||1)+'x track avg</span>'+
+          // FIX: energy_ratio fell back to 1, so passages with no contrast report showed "Energy 1x track avg".
+          // Now "—" with a tooltip when the ratio was not measured.
+          ((contrast.energy_ratio!==undefined&&contrast.energy_ratio!==null&&Number.isFinite(Number(contrast.energy_ratio)))
+            ?'<span class="ghost" style="margin-left:auto;font-size:12px">Energy '+esc(contrast.energy_ratio)+'x track avg</span>'
+            :'<span class="ghost" style="margin-left:auto;font-size:12px" title="Not measured for this track">Energy —x track avg</span>')+
         '</section>'+
       '</div></div>'+
       '<div class="wcap" id="hover-readout">Drag across the waveform or any Python plot below to select &amp; sync a passage across all plots.</div>'+
@@ -1718,123 +1722,195 @@ canvas.pcanvas{display:block;width:100%!important;max-width:100%;box-sizing:bord
     const inSel=segs.filter(s=>S.sel&&Math.max(S.sel.a,s.startSec)<Math.min(S.sel.b,s.endSec));
     const activeSegs=inSel.length?inSel:segs;
     const cl=(v,lo=0,hi=1)=>Math.max(lo,Math.min(hi,Number(v)||0));
-    const avgDesc=k=>activeSegs.reduce((a,s)=>a+Number(s.descriptors?.[k]||0),0)/Math.max(1,activeSegs.length);
-    const avgAllDesc=k=>segs.reduce((a,s)=>a+Number(s.descriptors?.[k]||0),0)/Math.max(1,segs.length);
-    const avgDim=(fam,k,fb=0)=>{
-      const vals=activeSegs.map(s=>s.musicalDimensions?.[fam]?.[k]).filter(v=>v!==undefined&&v!==null&&Number.isFinite(Number(v)));
-      if(vals.length)return vals.reduce((a,b)=>a+Number(b),0)/vals.length;
-      const tv=trackDims?.[fam]?.[k];
-      return (tv!==undefined&&tv!==null&&Number.isFinite(Number(tv)))?Number(tv):fb;
+    // FIX: every helper below returns null (not 0 or a made-up default) when nothing was measured.
+    // The display layer turns null into "—" with the tooltip NM_TIP.
+    // Example: a track with no vocal pitch used to show "Pitch Vibrato 58%"; it now shows "—".
+    const NM='—', NM_TIP='Not measured for this track';
+    const isNum=v=>v!==undefined&&v!==null&&v!==''&&typeof v!=='boolean'&&Number.isFinite(Number(v));
+    const meanOf=arr=>{const v=arr.filter(isNum).map(Number);return v.length?v.reduce((a,b)=>a+b,0)/v.length:null;};
+    const pctText=v=>v===null?NM:Math.round(v*100)+'%';
+    const nmTitle=v=>v===null?' title="'+NM_TIP+'"':'';
+    // FIX: avgDesc used `||0`, so a missing descriptor averaged in as 0 (e.g. "Vocal 0%").
+    // Now missing descriptors are skipped; no values at all gives null -> "—".
+    const avgDesc=k=>meanOf(activeSegs.map(s=>s.descriptors?.[k]));
+    const avgAllDesc=k=>meanOf(segs.map(s=>s.descriptors?.[k]));
+    // FIX: the page read `s.musicalDimensions`, but the backend sends per-window dimensions at
+    // `s.descriptors.dimensions` (features/structure.py analyze_dimensions). Example: tempo was
+    // always the 116 BPM fallback because the per-window value was never found.
+    const winDims=s=>s?.descriptors?.dimensions||null;
+    // FIX: avgDim/avgAllDim took a hard-coded fallback `fb` (0.58, 0.66, 116 ...) when no value existed.
+    // Example: every track without vocals showed "Expressive Dyn. 66%". Now they return null -> "—".
+    // avgDim = selected passage only. avgAllDim = all windows, then the track summary.
+    const avgDim=(fam,k)=>meanOf(activeSegs.map(s=>winDims(s)?.[fam]?.[k]));
+    const avgAllDim=(fam,k)=>{
+      const v=meanOf(segs.map(s=>winDims(s)?.[fam]?.[k]));
+      return v!==null?v:(isNum(trackDims?.[fam]?.[k])?Number(trackDims[fam][k]):null);
     };
-    const avgAllDim=(fam,k,fb=0)=>{
-      const vals=segs.map(s=>s.musicalDimensions?.[fam]?.[k]).filter(v=>v!==undefined&&v!==null&&Number.isFinite(Number(v)));
-      if(vals.length)return vals.reduce((a,b)=>a+Number(b),0)/vals.length;
-      const tv=trackDims?.[fam]?.[k];
-      return (tv!==undefined&&tv!==null&&Number.isFinite(Number(tv)))?Number(tv):fb;
+    // Vocal pitch descriptors (vocalsExpression.pitch) are null unless a real vocal stem was tracked.
+    const avgPitch=k=>meanOf(activeSegs.map(s=>winDims(s)?.vocalsExpression?.pitch?.[k]));
+    const avgAllPitch=k=>{
+      const v=meanOf(segs.map(s=>winDims(s)?.vocalsExpression?.pitch?.[k]));
+      return v!==null?v:(isNum(trackDims?.vocalsExpression?.pitch?.[k])?Number(trackDims.vocalsExpression.pitch[k]):null);
     };
+    // Passage stats from the spectral curves; null when the curve was not sent.
+    // FIX: Tonality fell back to `1 - flatness*2` and Rolloff to `brightness*1.85` (invented formulas).
+    // Example: with no rolloff curve the page showed "Spectral Rolloff 2775 Hz" from a 1500 Hz centroid.
+    const curves=S.data?.spectralPlots?.curves||{};
+    const psv=(k,curve)=>ps&&Array.isArray(curves[curve])&&curves[curve].length?ps[k]:null;
 
     // Key & Chords from Melody & Harmony dimension
-    const firstDimSeg=activeSegs.find(s=>s.musicalDimensions?.melodyHarmony)||segs[0]||{};
-    const mh=firstDimSeg.musicalDimensions?.melodyHarmony||trackDims.melodyHarmony||{};
-    const detectedKey=mh.key||trackDims.melodyHarmony?.key||'C Major';
-    const chords=(mh.chords&&mh.chords.length?mh.chords:(trackDims.melodyHarmony?.chords||['C','Am','F','G'])).slice(0,4);
-    const tempoBpm=Math.round(avgDim('rhythmGroove','tempoBpm',116));
-    const syncopation=cl(avgDim('rhythmGroove','syncopation',0.38));
-    const pulseClarity=cl(avgDim('rhythmGroove','pulseClarity',0.68));
-    const beatStrength=cl(avgDim('rhythmGroove','beatStrength',avgDesc('onset_activity')*0.65));
+    // FIX: key fell back to 'C Major' and chords to ['C','Am','F','G'] when nothing was detected.
+    // Example: a track with no harmony analysis was labelled "C Major · C → Am → F → G". Now "—".
+    const firstDimSeg=activeSegs.find(s=>winDims(s)?.melodyHarmony)||null;
+    const mh=winDims(firstDimSeg)?.melodyHarmony||trackDims.melodyHarmony||{};
+    const detectedKey=mh.key||trackDims.melodyHarmony?.key||null;
+    const keyText=detectedKey||NM;
+    const chordList=(mh.chords&&mh.chords.length?mh.chords:(trackDims.melodyHarmony?.chords||[])).slice(0,4);
+    const chordText=chordList.length?chordList.join(' → '):NM;
+    // FIX: tempo/syncopation/pulse used 116 / 0.38 / 0.68 fallbacks. beatStrength is not sent by the
+    // backend at all and was faked as onset_activity*0.65. Example: "116 BPM" on every unanalysed track.
+    const tempoRaw=avgDim('rhythmGroove','tempoBpm');
+    const tempoBpm=tempoRaw===null?null:Math.round(tempoRaw);
+    const tempoText=tempoBpm===null?NM+' BPM':tempoBpm+' BPM';
+    const syncopation=avgDim('rhythmGroove','syncopation');
+    const pulseClarity=avgDim('rhythmGroove','pulseClarity');
 
     // 12-pitch chroma profile
-    const chromaSel=ps?.chromaSel||NOTES.map((_,i)=>cl(avgDesc('chroma')?.[i]||0.3));
-    const chromaAll=ps?.chromaAll||chromaSel;
-    const maxChroma=Math.max(0.01,...chromaSel,...chromaAll);
-    const domPitchIdx=chromaSel.indexOf(Math.max(...chromaSel));
+    // FIX: missing chroma fell back to 0.3 per pitch class. Example: an empty profile showed
+    // "Chroma Peak (C) 100%". Now: spectral chroma, else window chroma, else track chroma, else null.
+    const descChroma=arr=>{const c=arr.map(s=>s.descriptors?.chroma).filter(c=>Array.isArray(c)&&c.length===12);
+      return c.length?NOTES.map((_,i)=>meanOf(c.map(x=>x[i]))):null;};
+    const hasSpecChroma=Array.isArray(S.data?.spectralPlots?.chroma)&&S.data.spectralPlots.chroma.length===12;
+    const trackChroma=Array.isArray(trackDims.melodyHarmony?.chroma)&&trackDims.melodyHarmony.chroma.length===12?trackDims.melodyHarmony.chroma.map(Number):null;
+    const chromaSel=(hasSpecChroma&&ps?ps.chromaSel:null)||descChroma(activeSegs)||trackChroma;
+    const chromaAll=(hasSpecChroma&&ps?ps.chromaAll:null)||descChroma(segs)||trackChroma;
+    const maxChroma=chromaSel?Math.max(0.01,...chromaSel,...(chromaAll||[])):null;
+    const domPitchIdx=chromaSel?chromaSel.indexOf(Math.max(...chromaSel)):-1;
 
     // 8-Instrument probabilities
+    // FIX: read `instrumentProbabilities` (the backend key is `probabilities`) and fell back to 0.22.
+    // Example: every instrument showed "22%" for every track. Now measured values or "—".
     const instKeys=['vocals','piano','guitar','strings','drums','bass','synthesizer','brass'];
     const instProbs=instKeys.map(k=>{
-      const vals=activeSegs.map(s=>s.musicalDimensions?.instrumentationTimbre?.instrumentProbabilities?.[k]).filter(v=>v!==undefined);
-      const v=vals.length?vals.reduce((a,b)=>a+Number(b),0)/vals.length:(trackDims.instrumentationTimbre?.instrumentProbabilities?.[k]??0.22);
-      return {key:k,label:k.charAt(0).toUpperCase()+k.slice(1),val:cl(v)};
-    }).sort((a,b)=>b.val-a.val);
+      let v=meanOf(activeSegs.map(s=>winDims(s)?.instrumentationTimbre?.probabilities?.[k]));
+      if(v===null&&isNum(trackDims.instrumentationTimbre?.probabilities?.[k]))v=Number(trackDims.instrumentationTimbre.probabilities[k]);
+      return {key:k,label:k.charAt(0).toUpperCase()+k.slice(1),val:v===null?null:cl(v)};
+    }).sort((a,b)=>(b.val??-1)-(a.val??-1));
 
     // 4-Stem energies
+    // FIX: missing stem energies fell back to 0.25 each. Example: "Vocals 25% · Drums 25% ..." for
+    // every track. Now the share is computed only from measured stem RMS, otherwise "—".
     const stemKeys=[['vocals','Vocals','#D97B88'],['drums','Drums','#E2A86B'],['bass','Bass','#829CD0'],['other','Harmonic / Other','#8EC5B8']];
     const stems=stemKeys.map(([k,lbl,col])=>{
-      const vals=activeSegs.map(s=>s.musicalDimensions?.arrangementTransitions?.stemEnergies?.[k]).filter(v=>v!==undefined);
-      const v=vals.length?vals.reduce((a,b)=>a+Number(b),0)/vals.length:(trackDims.arrangementTransitions?.stemEnergies?.[k]??0.25);
-      return {key:k,label:lbl,color:col,val:cl(v)};
+      let v=meanOf(activeSegs.map(s=>winDims(s)?.arrangementTransitions?.stemEnergies?.[k]));
+      if(v===null&&isNum(trackDims.arrangementTransitions?.stemEnergies?.[k]))v=Number(trackDims.arrangementTransitions.stemEnergies[k]);
+      return {key:k,label:lbl,color:col,val:v};
     });
-    const stemSum=stems.reduce((a,s)=>a+s.val,0)||1;
-    stems.forEach(s=>{s.pct=Math.round(s.val/stemSum*100);});
+    const stemSum=stems.reduce((a,s)=>a+(s.val||0),0);
+    stems.forEach(s=>{s.pct=(s.val===null||stemSum<=0)?null:Math.round(s.val/stemSum*100);});
+
+    const layering=avgDim('arrangementTransitions','layeringDensity');
+    const activeStemNames=[...new Set(activeSegs.flatMap(s=>winDims(s)?.arrangementTransitions?.activeStems||[]))];
+    const fmtPct=v=>pctText(v);
+    const fmtHzV=v=>v===null?NM:Math.round(v)+' Hz';
+    const fmtFix=d=>v=>v===null?NM:Number(v).toFixed(d);
+    const vocalPres=avgDesc('vocal_presence');
+    const vibExtent=avgPitch('vibrato_extent_st');
+    const vibRate=avgPitch('vibrato_rate_hz');
 
     // 5 Acoustic DNA Genomic Families aligned with the original Music DNA design system
+    // FIX: each `pct` had an `||<number>` default (76, 64, 58, 48, 54) and features had invented
+    // fallbacks or scale factors (e.g. vocal_presence*1.28). Example: an unanalysed track showed
+    // "Vocal Expression 76%". `pct` is now one measured value (0..1 -> %) or null -> "—".
+    // Feature `val`/`avg` are raw measured values; `fmt` formats both (null -> "—").
     const families=[
       {
         id:0, name:'Vocal Expression', short:'vocal presence', sub:'dominant expressive lead',
-        pct:Math.round(cl(avgDesc('vocal_presence')*1.28)*100)||76,
+        // pct = DSP vocal-band presence of the passage (was presence*1.28, clamped, ||76).
+        pct:vocalPres===null?null:Math.round(cl(vocalPres)*100),
         n:12,
         desc:'Prominent 300–3400 Hz vocal presence, pitch contour modulation, vibrato, and breath warmth',
-        raw:'Vocal '+Math.round(avgDesc('vocal_presence')*100)+'% · Vibrato '+Math.round(avgDim('vocalsExpression','vocalPitchVariation',0.58)*100)+'%',
+        // FIX: "Vibrato" read vocalsExpression.vocalPitchVariation (never sent) with fallback 0.58 -> "58%".
+        // It now shows the measured vibrato extent in semitones, e.g. "Vibrato 0.42 st", or "—".
+        raw:'Vocal '+pctText(vocalPres)+' · Vibrato '+(vibExtent===null?NM:vibExtent.toFixed(2)+' st'),
         features:[
-          {label:'Vocal Presence',val:cl(avgDesc('vocal_presence')*1.25),avg:cl(avgAllDesc('vocal_presence')*1.25),fmt:()=>Math.round(avgDesc('vocal_presence')*100)+'%'},
-          {label:'Expressive Dyn.',val:cl(avgDim('vocalsExpression','expressiveDynamic',0.66)),avg:cl(avgAllDim('vocalsExpression','expressiveDynamic',0.60)),fmt:v=>Math.round(v*100)+'%'},
-          {label:'Pitch Vibrato',val:cl(avgDim('vocalsExpression','vocalPitchVariation',0.58)),avg:cl(avgAllDim('vocalsExpression','vocalPitchVariation',0.52)),fmt:v=>Math.round(v*100)+'%'},
-          {label:'Vocal Warmth',val:cl(1-avgDim('vocalsExpression','vocalBreathiness',0.28)),avg:cl(1-avgAllDim('vocalsExpression','vocalBreathiness',0.32)),fmt:v=>Math.round(v*100)+'%'}
+          {label:'Vocal Presence',val:vocalPres,avg:avgAllDesc('vocal_presence'),fmt:fmtPct},
+          {label:'Expressive Dyn.',val:avgDim('vocalsExpression','expressiveDynamic'),avg:avgAllDim('vocalsExpression','expressiveDynamic'),fmt:fmtPct},
+          // FIX: was vocalPitchVariation (never sent) shown as "58%". Now pitch.vibrato_extent_st in
+          // semitones, rate (vibrato_rate_hz) in the label, e.g. "Pitch Vibrato (5.1 Hz) 0.42 st". "—" when no pitch.
+          {label:'Pitch Vibrato'+(vibRate!==null?' ('+vibRate.toFixed(1)+' Hz)':''),val:vibExtent,avg:avgAllPitch('vibrato_extent_st'),fmt:v=>v===null?NM:v.toFixed(2)+' st'},
+          // FIX: "Vocal Warmth" was 1 - vocalBreathiness (key never sent, fallback 0.28 -> "72%").
+          // Now shows the measured breathiness (spectral flatness of the vocal stem), e.g. "0.031".
+          {label:'Breathiness',val:avgDim('vocalsExpression','breathiness'),avg:avgAllDim('vocalsExpression','breathiness'),fmt:fmtFix(3)}
         ]
       },
       {
-        id:1, name:'Melodic & Harmonic Flow', short:'harmonic motion', sub:detectedKey+' · '+chords.join(' → '),
-        pct:Math.round(cl(avgDim('melodyHarmony','harmonicStability',0.74))*100)||64,
+        id:1, name:'Melodic & Harmonic Flow', short:'harmonic motion', sub:keyText+' · '+chordText,
+        // pct = harmonic stability (was ||64 and fallback 0.74).
+        pct:(v=>v===null?null:Math.round(cl(v)*100))(avgDim('melodyHarmony','harmonicStability')),
         n:10,
         desc:'Key center stability, chord progression shifts, pitch salience, and melodic continuity',
-        raw:detectedKey+' · '+chords.join(' → '),
+        raw:keyText+' · '+chordText,
         features:[
-          {label:'Tonality',val:cl(ps?ps.tonSel:(1-avgDesc('noisiness')*2)),avg:cl(ps?ps.tonAll:(1-avgAllDesc('noisiness')*2)),fmt:v=>Math.round(v*100)+'%'},
-          {label:'Harmonic Stab.',val:cl(avgDim('melodyHarmony','harmonicStability',0.74)),avg:cl(avgAllDim('melodyHarmony','harmonicStability',0.70)),fmt:v=>Math.round(v*100)+'%'},
-          {label:'Pitch Salience',val:cl(0.5+avgDim('melodyHarmony','melodicContourSlope',0.15)*0.45),avg:0.55,fmt:v=>Math.round(v*100)+'%'},
-          {label:'Chroma Peak ('+NOTES[domPitchIdx]+')',val:cl(chromaSel[domPitchIdx]/maxChroma),avg:cl(chromaAll[domPitchIdx]/maxChroma),fmt:v=>Math.round(v*100)+'%'}
+          {label:'Tonality',val:psv('tonSel','tonality'),avg:psv('tonAll','tonality'),fmt:fmtPct},
+          {label:'Harmonic Stab.',val:avgDim('melodyHarmony','harmonicStability'),avg:avgAllDim('melodyHarmony','harmonicStability'),fmt:fmtPct},
+          // FIX: was 0.5 + melodicContourSlope*0.45 (key never sent, fallback 0.15) with a fixed avg 0.55.
+          // Example: always "57% (avg 55%)". No real pitch-salience value exists, so it shows "—".
+          {label:'Pitch Salience',val:null,avg:null,fmt:fmtPct},
+          {label:'Chroma Peak ('+(domPitchIdx>=0?NOTES[domPitchIdx]:NM)+')',val:domPitchIdx>=0?cl(chromaSel[domPitchIdx]/maxChroma):null,avg:(domPitchIdx>=0&&chromaAll)?cl(chromaAll[domPitchIdx]/maxChroma):null,fmt:fmtPct}
         ]
       },
       {
-        id:2, name:'Rhythm & Groove', short:'tempo & pulse', sub:tempoBpm+' BPM · relaxed pulse',
-        pct:Math.round(cl(pulseClarity*0.7+beatStrength*0.3)*100)||58,
+        id:2, name:'Rhythm & Groove', short:'tempo & pulse', sub:tempoText+' · pulse '+pctText(pulseClarity),
+        // pct = pulse clarity (was pulse*0.7 + fake beatStrength*0.3, ||58).
+        pct:pulseClarity===null?null:Math.round(cl(pulseClarity)*100),
         n:9,
         desc:'Beat-grid regularity, tempo density, off-beat syncopation, and percussive onset drive',
-        raw:tempoBpm+' BPM · Pulse '+Math.round(pulseClarity*100)+'% · Sync '+Math.round(syncopation*100)+'%',
+        raw:tempoText+' · Pulse '+pctText(pulseClarity)+' · Sync '+pctText(syncopation),
         features:[
-          {label:'Tempo ('+tempoBpm+' BPM)',val:cl((tempoBpm-50)/130),avg:cl((avgAllDim('rhythmGroove','tempoBpm',tempoBpm)-50)/130),fmt:()=>tempoBpm+' BPM'},
-          {label:'Beat Strength',val:beatStrength,avg:cl(avgAllDim('rhythmGroove','beatStrength',0.58)),fmt:v=>Math.round(v*100)+'%'},
-          {label:'Syncopation',val:syncopation,avg:cl(avgAllDim('rhythmGroove','syncopation',0.36)),fmt:v=>Math.round(v*100)+'%'},
-          {label:'Pulse Clarity',val:pulseClarity,avg:cl(avgAllDim('rhythmGroove','pulseClarity',0.66)),fmt:v=>Math.round(v*100)+'%'}
+          // FIX: avg was shown as a % of (tempo-50)/130, e.g. "(avg 51%)". Now "(avg 116 BPM)".
+          {label:'Tempo',val:tempoBpm,avg:(v=>v===null?null:Math.round(v))(avgAllDim('rhythmGroove','tempoBpm')),fmt:v=>v===null?NM:v+' BPM'},
+          // FIX: beatStrength is not sent by the backend (was onset_activity*0.65 / fallback 0.58). Now "—".
+          {label:'Beat Strength',val:null,avg:null,fmt:fmtPct},
+          {label:'Syncopation',val:syncopation,avg:avgAllDim('rhythmGroove','syncopation'),fmt:fmtPct},
+          {label:'Pulse Clarity',val:pulseClarity,avg:avgAllDim('rhythmGroove','pulseClarity'),fmt:fmtPct}
         ]
       },
       {
         id:3, name:'Atmosphere & Timbre', short:'acoustic textures', sub:'spectral overtone warmth',
-        pct:Math.round(cl(avgDim('instrumentationTimbre','timbralRichness',0.68)*0.7+0.3*(avgDesc('brightness_hz')/4200))*100)||48,
+        // FIX: pct mixed timbralRichness (never sent, fallback 0.68) with brightness/4200, ||48.
+        // Example: "48%" on unanalysed tracks. No measured equivalent exists, so it shows "—".
+        pct:null,
         n:8,
         desc:'8-instrument spectral envelope, centroid brightness, rolloff frequency, and acoustic richness',
-        raw:'Top: '+instProbs.slice(0,2).map(x=>x.label+' '+Math.round(x.val*100)+'%').join(', '),
+        raw:'Top: '+(instProbs.some(x=>x.val!==null)?instProbs.filter(x=>x.val!==null).slice(0,2).map(x=>x.label+' '+Math.round(x.val*100)+'%').join(', '):NM),
         features:[
-          {label:'Brightness',val:cl(avgDesc('brightness_hz')/4200),avg:cl(avgAllDesc('brightness_hz')/4200),fmt:()=>Math.round(avgDesc('brightness_hz'))+' Hz'},
-          {label:'Spectral Rolloff',val:cl((ps?ps.rollSel:avgDesc('brightness_hz')*1.85)/8000),avg:cl((ps?ps.rollAll:avgAllDesc('brightness_hz')*1.85)/8000),fmt:()=>Math.round(ps?ps.rollSel:avgDesc('brightness_hz')*1.85)+' Hz'},
-          {label:'Spectral Flux',val:cl(avgDesc('spectral_flux')*3.2),avg:cl(avgAllDesc('spectral_flux')*3.2),fmt:()=>avgDesc('spectral_flux').toFixed(3)},
-          {label:'Timbral Richness',val:cl(avgDim('instrumentationTimbre','timbralRichness',0.68)),avg:cl(avgAllDim('instrumentationTimbre','timbralRichness',0.64)),fmt:v=>Math.round(v*100)+'%'}
+          {label:'Brightness',val:avgDesc('brightness_hz'),avg:avgAllDesc('brightness_hz'),fmt:fmtHzV},
+          {label:'Spectral Rolloff',val:psv('rollSel','rolloffHz'),avg:psv('rollAll','rolloffHz'),fmt:fmtHzV},
+          {label:'Spectral Flux',val:avgDesc('spectral_flux'),avg:avgAllDesc('spectral_flux'),fmt:fmtFix(3)},
+          // FIX: timbralRichness is never sent (fallback 0.68 -> "68%"). Now "—".
+          {label:'Timbral Richness',val:null,avg:null,fmt:fmtPct}
         ]
       },
       {
         id:4, name:'Arrangement & Stems', short:'source balance', sub:'harmonic + vocal foundation',
-        pct:Math.round(cl(avgDim('arrangementTransitions','harmonicRatio',0.64))*100)||54,
+        // FIX: pct read arrangementTransitions.harmonicRatio (never sent, fallback 0.64, ||54).
+        // Now the measured layering density (share of stems active), e.g. "75%", or "—".
+        pct:layering===null?null:Math.round(cl(layering)*100),
         n:8,
         desc:'HPSS harmonic/percussive split, 4-stem energy balance, dynamic energy, and novelty',
-        raw:'Harmonic '+Math.round(avgDim('arrangementTransitions','harmonicRatio',0.64)*100)+'% · Percussive '+Math.round(avgDim('arrangementTransitions','percussiveRatio',0.38)*100)+'%',
+        // FIX: was "Harmonic 64% · Percussive 38%" from never-sent keys. Now layering + active stems.
+        raw:'Layering '+pctText(layering)+' · Active stems: '+(activeStemNames.length?activeStemNames.join(', '):NM),
         features:[
-          {label:'Harmonic Stem',val:cl(avgDim('arrangementTransitions','harmonicRatio',0.64)),avg:cl(avgAllDim('arrangementTransitions','harmonicRatio',0.62)),fmt:v=>Math.round(v*100)+'%'},
-          {label:'Percussive Stem',val:cl(avgDim('arrangementTransitions','percussiveRatio',0.38)),avg:cl(avgAllDim('arrangementTransitions','percussiveRatio',0.38)),fmt:v=>Math.round(v*100)+'%'},
-          {label:'Dynamic Energy',val:cl(avgDesc('energy')*3.8),avg:cl(avgAllDesc('energy')*3.8),fmt:()=>avgDesc('energy').toFixed(3)},
-          {label:'Novelty / Shift',val:cl(avgDim('arrangementTransitions','noveltyScore',0.52)),avg:cl(avgAllDim('arrangementTransitions','noveltyScore',0.45)),fmt:v=>Math.round(v*100)+'%'}
+          // FIX: harmonicRatio / percussiveRatio / noveltyScore are never sent (fallbacks 0.64/0.38/0.52). Now "—".
+          {label:'Harmonic Stem',val:null,avg:null,fmt:fmtPct},
+          {label:'Percussive Stem',val:null,avg:null,fmt:fmtPct},
+          {label:'Dynamic Energy',val:avgDesc('energy'),avg:avgAllDesc('energy'),fmt:fmtFix(3)},
+          {label:'Novelty / Shift',val:null,avg:null,fmt:fmtPct}
         ]
       }
     ];
+    families.forEach(f=>{f.pctText=f.pct===null?NM:f.pct+'%';});
 
     const curFam=Math.max(0,Math.min(families.length-1,S.trait||0));
     const selFam=families[curFam];
@@ -1852,14 +1928,16 @@ canvas.pcanvas{display:block;width:100%!important;max-width:100%;box-sizing:bord
       pos+=span+3;
       const x=Math.sin(mid), y=-Math.cos(mid);
       const right=x>=0;
-      return '<button class="rlab'+(curFam===i?' on':'')+'" data-act="trait" data-v="'+i+'" style="left:calc(50% + '+Math.round(x*(R+68))+'px);top:calc(50% + '+Math.round(y*(R+46))+'px);transform:translate('+(right?'0':'-100%')+',-50%);text-align:'+(right?'left':'right')+'"><b>'+f.pct+'%</b><span>'+esc(f.name)+'</span></button>';
+      return '<button class="rlab'+(curFam===i?' on':'')+'" data-act="trait" data-v="'+i+'" style="left:calc(50% + '+Math.round(x*(R+68))+'px);top:calc(50% + '+Math.round(y*(R+46))+'px);transform:translate('+(right?'0':'-100%')+',-50%);text-align:'+(right?'left':'right')+'"'+nmTitle(f.pct)+'><b>'+f.pctText+'</b><span>'+esc(f.name)+'</span></button>';
     }).join('');
 
     // Underneath portrait sentence
     function pw(i,txt){
       return '<button class="pw'+(curFam===i?' on':'')+'" data-act="trait" data-v="' + i + '">' + txt + '</button>';
     }
-    const portrait='In this recording, '+pw(0,'vocals lift with prominent presence')+' over '+pw(3,'spacious acoustic textures')+', held by '+pw(1,'harmonic transitions in '+esc(detectedKey))+' and '+pw(2,'a relaxed '+tempoBpm+' BPM pulse')+'.';
+    // FIX: the sentence inserted the fallback key/tempo, e.g. "harmonic transitions in C Major and a
+    // relaxed 116 BPM pulse" for any track. Now it uses measured values or says "not measured".
+    const portrait='In this recording, '+pw(0,'vocals lift with prominent presence')+' over '+pw(3,'spacious acoustic textures')+', held by '+pw(1,detectedKey?'harmonic transitions in '+esc(detectedKey):'harmonic transitions (key not measured)')+' and '+pw(2,tempoBpm!==null?'a '+tempoBpm+' BPM pulse':'its pulse (tempo not measured)')+'.';
 
     const trows=families.map((fam,i)=>{
       const open=curFam===i;
@@ -1871,18 +1949,27 @@ canvas.pcanvas{display:block;width:100%!important;max-width:100%;box-sizing:bord
             fam.features.map(f=>
               '<div style="background:#141418;border:1px solid var(--line);border-radius:8px;padding:8px 12px">'+
                 '<div style="font-size:11px;color:var(--mute)">'+esc(f.label)+'</div>'+
-                '<div style="font-size:16px;font-weight:600;color:var(--fg);margin-top:2px">'+esc(f.fmt(f.val))+' <span style="font-size:11px;color:var(--sub);font-weight:400">(avg '+Math.round(f.avg*100)+'%)</span></div>'+
+                // FIX: avg was printed as Math.round(avg*100)+'%' of a scaled value, e.g. "76% (avg 95%)"
+                // for vocal presence. Now the same formatter is used for value and avg; null -> "—".
+                '<div style="font-size:16px;font-weight:600;color:var(--fg);margin-top:2px"'+nmTitle(f.val)+'>'+esc(f.fmt(f.val))+' <span style="font-size:11px;color:var(--sub);font-weight:400"'+nmTitle(f.avg)+'>(avg '+esc(f.fmt(f.avg))+')</span></div>'+
               '</div>'
             ).join('')+
           '</div>'+
           activeSegs.slice(0,8).map(s=>{
             const si=segs.indexOf(s);
-            const wva=vaList[si]||{valence:0,arousal:0};
-            const wKey=s.musicalDimensions?.melodyHarmony?.key||detectedKey;
-            const wBpm=Math.round(s.musicalDimensions?.rhythmGroove?.tempoBpm||tempoBpm);
+            // FIX: windows read s.musicalDimensions (never sent) and fell back to the track key/tempo and
+            // to Valence/Arousal 0. Example: every window showed "C Major · 116 BPM · Valence +0.00".
+            // Now each window shows its own measured key/tempo/VA (descriptors.dimensions) or "—".
+            const wva=vaList[si]||null;
+            const wd=winDims(s);
+            const wKey=wd?.melodyHarmony?.key||s.descriptors?.key||NM;
+            const wTempo=isNum(wd?.rhythmGroove?.tempoBpm)?wd.rhythmGroove.tempoBpm:s.descriptors?.tempoBpm;
+            const wBpm=isNum(wTempo)?Math.round(wTempo)+' BPM':NM+' BPM';
+            const sgn=v=>isNum(v)?(v>=0?'+':'')+Number(v).toFixed(2):NM;
+            const wVoc=s.descriptors?.vocal_presence;
             return '<div class="evr"><button class="cplay" style="width:32px;height:32px" data-act="play-win" data-v="'+si+'">'+svg('i-play',11)+'</button>'+
-              '<span class="x">Window '+(si+1)+' <span>— '+fmt(s.startSec)+' to '+fmt(s.endSec)+' · '+esc(wKey)+' · '+wBpm+' BPM</span></span>'+
-              '<span style="font-size:12.5px;color:var(--sub)">Valence '+(wva.valence>=0?'+':'')+Number(wva.valence).toFixed(2)+' · Arousal '+(wva.arousal>=0?'+':'')+Number(wva.arousal).toFixed(2)+' · Vocal '+Math.round((s.descriptors?.vocal_presence||0)*100)+'%</span></div>';
+              '<span class="x">Window '+(si+1)+' <span>— '+fmt(s.startSec)+' to '+fmt(s.endSec)+' · '+esc(wKey)+' · '+wBpm+'</span></span>'+
+              '<span style="font-size:12.5px;color:var(--sub)">Valence '+sgn(wva?.valence)+' · Arousal '+sgn(wva?.arousal)+' · Vocal '+(isNum(wVoc)?Math.round(wVoc*100)+'%':NM)+'</span></div>';
           }).join('')+
         '</div>';
       }
@@ -1891,7 +1978,7 @@ canvas.pcanvas{display:block;width:100%!important;max-width:100%;box-sizing:bord
           '<span class="tname">'+esc(fam.name)+'<small>'+esc(fam.desc)+'</small></span>'+
         '</button>'+
         '<div class="hear"><button class="cplay" style="width:34px;height:34px" data-act="trait" data-v="'+i+'" aria-label="Audition">'+svg('i-play',11)+'</button><span><b>'+esc(fam.raw)+'</b><small>Passage '+fmt(S.sel?.a||0)+' – '+fmt(S.sel?.b||S.dur)+'</small></span></div>'+
-        '<div class="tans"><span class="cnote">'+fam.pct+'% activation</span></div>'+
+        '<div class="tans"><span class="cnote"'+nmTitle(fam.pct)+'>'+fam.pctText+' activation</span></div>'+
         detail+
       '</div>';
     }).join('');
@@ -1921,7 +2008,7 @@ canvas.pcanvas{display:block;width:100%!important;max-width:100%;box-sizing:bord
           '<!-- Center Typography HUD -->'+
           '<div class="rc" id="rc">'+
             '<div class="rc-box">'+
-              '<span class="rn" id="rn">'+selFam.pct+'%</span>'+
+              '<span class="rn" id="rn"'+nmTitle(selFam.pct)+'>'+selFam.pctText+'</span>'+
               '<span class="rt" id="rt">'+esc(selFam.short)+'</span>'+
               '<span id="rm">'+esc(selFam.sub)+'</span>'+
             '</div>'+
@@ -1944,8 +2031,8 @@ canvas.pcanvas{display:block;width:100%!important;max-width:100%;box-sizing:bord
             instProbs.map((inst,idx)=>
               '<div class="dna-inst-row">'+
                 '<span style="color:'+(idx<2?'var(--fg)':'var(--sub)')+';font-weight:'+(idx<2?500:400)+'">'+esc(inst.label)+'</span>'+
-                '<div class="dna-inst-track"><div class="dna-inst-fill" style="width:'+Math.round(inst.val*100)+'%;background:var(--accent);opacity:'+(idx===0?1:idx===1?0.75:0.4)+'"></div></div>'+
-                '<span style="text-align:right;font-variant-numeric:tabular-nums;color:'+(idx<2?'var(--fg)':'var(--mute)')+'">'+Math.round(inst.val*100)+'%</span>'+
+                '<div class="dna-inst-track"><div class="dna-inst-fill" style="width:'+(inst.val===null?0:Math.round(inst.val*100))+'%;background:var(--accent);opacity:'+(idx===0?1:idx===1?0.75:0.4)+'"></div></div>'+
+                '<span'+nmTitle(inst.val)+' style="text-align:right;font-variant-numeric:tabular-nums;color:'+(idx<2?'var(--fg)':'var(--mute)')+'">'+pctText(inst.val)+'</span>'+
               '</div>'
             ).join('')+
           '</div>'+
@@ -1958,13 +2045,13 @@ canvas.pcanvas{display:block;width:100%!important;max-width:100%;box-sizing:bord
             '<span style="font-size:11px;color:var(--mute)">HPSS Separation</span>'+
           '</div>'+
           '<div style="height:8px;border-radius:4px;overflow:hidden;display:flex;background:#1C1C21;margin-bottom:12px">'+
-            stems.map((s,si)=>'<div style="width:'+s.pct+'%;background:var(--accent);opacity:'+(si===0?1:si===1?0.75:si===2?0.5:0.3)+'" title="'+esc(s.label)+': '+s.pct+'%"></div>').join('')+
+            stems.map((s,si)=>'<div style="width:'+(s.pct||0)+'%;background:var(--accent);opacity:'+(si===0?1:si===1?0.75:si===2?0.5:0.3)+'" title="'+esc(s.label)+': '+(s.pct===null?NM_TIP:s.pct+'%')+'"></div>').join('')+
           '</div>'+
           '<div class="dna-stem-grid">'+
             stems.map((s,si)=>
               '<div class="dna-stem-box">'+
                 '<small>'+esc(s.label)+'</small>'+
-                '<b style="color:var(--fg)">'+s.pct+'%</b>'+
+                '<b style="color:var(--fg)"'+nmTitle(s.pct)+'>'+(s.pct===null?NM:s.pct+'%')+'</b>'+
               '</div>'
             ).join('')+
           '</div>'+
@@ -1987,7 +2074,8 @@ canvas.pcanvas{display:block;width:100%!important;max-width:100%;box-sizing:bord
         const isCur=ti===curFam;
         for(let k=0;k<span;k++){
           const swell=Math.sin(Math.PI*(k+0.5)/span);
-          const len=Math.round(14+22*swell*(fam.pct/100));
+          // Tick height is drawing geometry only; an unmeasured family gets the minimum height.
+          const len=Math.round(14+22*swell*((fam.pct||0)/100));
           const col=isCur?'var(--accent)':(curFam===-1?'#b4b4b9':'var(--off)');
           const tickEl=document.createElement('div');
           tickEl.className='dna-tick';
@@ -1995,7 +2083,7 @@ canvas.pcanvas{display:block;width:100%!important;max-width:100%;box-sizing:bord
           tickEl.dataset.act='trait';
           tickEl.dataset.v=String(ti);
           tickEl.onmouseenter=()=>{
-            const rnEl=$('rn'); if(rnEl)rnEl.textContent=fam.pct+'%';
+            const rnEl=$('rn'); if(rnEl){rnEl.textContent=fam.pctText;rnEl.title=fam.pct===null?NM_TIP:'';}
             const rtEl=$('rt'); if(rtEl)rtEl.textContent=fam.short;
             const rmEl=$('rm'); if(rmEl)rmEl.textContent=fam.sub;
           };
@@ -2029,7 +2117,7 @@ canvas.pcanvas{display:block;width:100%!important;max-width:100%;box-sizing:bord
           const [x,y]=mapPt(p);
           const isSelected=S.sel&&Math.max(S.sel.a,p.startSec)<Math.min(S.sel.b,p.endSec);
           const q=(p.valence>=0&&p.arousal>=0)?'Exuberant':(p.valence<0&&p.arousal>=0)?'Turbulent':(p.valence<0&&p.arousal<0)?'Melancholic':'Calm';
-          return '<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+(isSelected?4.5:2.6)+'" fill="'+(isSelected?'#8ec5b8':'rgba(142,197,184,0.72)')+'" stroke="'+(isSelected?'#fff':'none')+'" stroke-width="1" style="cursor:pointer" data-act="play-win" data-v="'+i+'" onmouseenter="const rnEl=$(\'rn\');if(rnEl)rnEl.textContent=\''+q+'\';const rtEl=$(\'rt\');if(rtEl)rtEl.textContent=\'Valence '+(p.valence>=0?'+':'')+Number(p.valence).toFixed(2)+' · Arousal '+(p.arousal>=0?'+':'')+Number(p.arousal).toFixed(2)+'\';const rmEl=$(\'rm\');if(rmEl)rmEl.textContent=\'Window '+(i+1)+' ('+fmt(p.startSec)+'–'+fmt(p.endSec)+')\';" onmouseleave="const rnEl=$(\'rn\');if(rnEl)rnEl.textContent=\''+selFam.pct+'%\';const rtEl=$(\'rt\');if(rtEl)rtEl.textContent=\''+esc(selFam.short)+'\';const rmEl=$(\'rm\');if(rmEl)rmEl.textContent=\''+esc(selFam.sub)+'\';">'+
+          return '<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+(isSelected?4.5:2.6)+'" fill="'+(isSelected?'#8ec5b8':'rgba(142,197,184,0.72)')+'" stroke="'+(isSelected?'#fff':'none')+'" stroke-width="1" style="cursor:pointer" data-act="play-win" data-v="'+i+'" onmouseenter="const rnEl=$(\'rn\');if(rnEl)rnEl.textContent=\''+q+'\';const rtEl=$(\'rt\');if(rtEl)rtEl.textContent=\'Valence '+(p.valence>=0?'+':'')+Number(p.valence).toFixed(2)+' · Arousal '+(p.arousal>=0?'+':'')+Number(p.arousal).toFixed(2)+'\';const rmEl=$(\'rm\');if(rmEl)rmEl.textContent=\'Window '+(i+1)+' ('+fmt(p.startSec)+'–'+fmt(p.endSec)+')\';" onmouseleave="const rnEl=$(\'rn\');if(rnEl)rnEl.textContent=\''+selFam.pctText+'\';const rtEl=$(\'rt\');if(rtEl)rtEl.textContent=\''+esc(selFam.short)+'\';const rmEl=$(\'rm\');if(rmEl)rmEl.textContent=\''+esc(selFam.sub)+'\';">'+
             '<title>Window '+(i+1)+' ('+fmt(p.startSec)+'–'+fmt(p.endSec)+'): Valence '+Number(p.valence).toFixed(2)+', Arousal '+Number(p.arousal).toFixed(2)+'</title>'+
           '</circle>';
         }).join('');
@@ -2051,9 +2139,12 @@ canvas.pcanvas{display:block;width:100%!important;max-width:100%;box-sizing:bord
     const modeLabel=S.etab===0?'Multimodal Fused (89-D)':S.etab===1?'Pretrained Deep Encoder (64-D)':'Librosa DSP Vector (25-D)';
     const rawPca=S.data?.pcaByMode?.[matKey];
     const pcaPts=Array.isArray(rawPca)?rawPca:(rawPca?.points||S.data?.pcaPoints||[]);
-    const pcaVariance=Array.isArray(rawPca?.variancePct)?rawPca.variancePct:[48,26];
+    // FIX: PCA variance fell back to [48,26], so the title read "PC1 48% vs PC2 26%" when the backend
+    // sent no variance (the demo sends a plain point list). Now "—" when not sent.
+    const pcaVariance=Array.isArray(rawPca?.variancePct)?rawPca.variancePct:['—','—'];
     const simMat=S.data?.similarityMatrices?.[matKey]||[];
-    const pairSim=(simMat[S.anchorIdx]&&simMat[S.anchorIdx][compareIdx]!==undefined)?simMat[S.anchorIdx][compareIdx]:1.0;
+    // FIX: a missing similarity cell showed as 1.0000 (perfect match). Now null -> "—".
+    const pairSim=(simMat[S.anchorIdx]&&Number.isFinite(Number(simMat[S.anchorIdx][compareIdx])))?Number(simMat[S.anchorIdx][compareIdx]):null;
 
     const scored=segs.map((s,i)=>{
       const vA=anchor?.[modeKey]||anchor?.embedding;
@@ -2088,7 +2179,7 @@ canvas.pcanvas{display:block;width:100%!important;max-width:100%;box-sizing:bord
         '<div class="prow" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:24px">'+
           '<div>'+
             '<div class="prow-head">'+
-              '<div><div class="prow-title"><span>1. Pairwise Cosine Self-Similarity Matrix ('+segs.length+'×'+segs.length+')</span></div><div class="prow-sub">Click any cell (i, j) to compare &amp; audition passages · Win '+(S.anchorIdx+1)+' vs Win '+(compareIdx+1)+' = <b style="color:var(--accent)">'+pairSim.toFixed(4)+'</b></div></div>'+
+              '<div><div class="prow-title"><span>1. Pairwise Cosine Self-Similarity Matrix ('+segs.length+'×'+segs.length+')</span></div><div class="prow-sub">Click any cell (i, j) to compare &amp; audition passages · Win '+(S.anchorIdx+1)+' vs Win '+(compareIdx+1)+' = <b style="color:var(--accent)"'+(pairSim===null?' title="Not measured for this track"':'')+'>'+(pairSim===null?'—':pairSim.toFixed(4))+'</b></div></div>'+
             '</div>'+
             '<canvas id="cv-ssm" class="pcanvas" height="290"></canvas>'+
           '</div>'+
@@ -2298,15 +2389,18 @@ canvas.pcanvas{display:block;width:100%!important;max-width:100%;box-sizing:bord
       '</li>'
     ).join('');
 
+    // FIX: missing benchmark scores showed as "CCC 0.0000 · RMSE 0.0000" (`||0`). Now "—".
+    const num=v=>(v!==undefined&&v!==null&&Number.isFinite(Number(v)))?Number(v):null;
+    const f4=v=>v===null?'—':v.toFixed(4);
     const bList=[
-      ['Personalized-DMER (AAAI 2025)','Dual-scale temporal attention + listener support-set adaptation',dmer.personalized_dmer?.ccc||0,dmer.personalized_dmer?.rmse||0,true],
-      ['Population Dual-Scale Attention','Local + global temporal attention without listener adaptation',dmer.population_dual_scale_attention?.ccc||0,dmer.population_dual_scale_attention?.rmse||0,false],
-      ['Static Ridge Baseline','Frame-independent prediction without temporal context',dmer.static_ridge?.ccc||0,dmer.static_ridge?.rmse||0,false]
+      ['Personalized-DMER (AAAI 2025)','Dual-scale temporal attention + listener support-set adaptation',num(dmer.personalized_dmer?.ccc),num(dmer.personalized_dmer?.rmse),true],
+      ['Population Dual-Scale Attention','Local + global temporal attention without listener adaptation',num(dmer.population_dual_scale_attention?.ccc),num(dmer.population_dual_scale_attention?.rmse),false],
+      ['Static Ridge Baseline','Frame-independent prediction without temporal context',num(dmer.static_ridge?.ccc),num(dmer.static_ridge?.rmse),false]
     ].map(b=>{
-      const cccPct=Math.max(0,Math.min(100,Math.round(b[2]*100)));
+      const cccPct=b[2]===null?0:Math.max(0,Math.min(100,Math.round(b[2]*100)));
       return '<div class="trow'+(b[4]?' on':'')+'">'+
         '<div class="tmain"><span class="tname">'+b[0]+'<small>'+b[1]+'</small></span></div>'+
-        '<div class="hear"><span><b>CCC '+Number(b[2]).toFixed(4)+'</b><small>RMSE '+Number(b[3]).toFixed(4)+'</small></span></div>'+
+        '<div class="hear"><span'+(b[2]===null?' title="Not measured for this track"':'')+'><b>CCC '+f4(b[2])+'</b><small>RMSE '+f4(b[3])+'</small></span></div>'+
         '<div class="tans"><div class="prog'+(b[4]?' on':'')+'"><i style="width:'+cccPct+'%"></i></div></div>'+
       '</div>';
     }).join('');
@@ -2416,10 +2510,13 @@ canvas.pcanvas{display:block;width:100%!important;max-width:100%;box-sizing:bord
     if(cBench){
       const {ctx,w}=cBench;
       const b=S.data?.dmerBenchmark?.baselines||{};
+      // FIX: missing scores fell back to invented values (CCC 0.74/0.61/0.42, RMSE 0.18/0.24/0.31), so the
+      // chart showed results that were never computed. Now the row reads "CCC — · RMSE —" with no bar.
+      const num=v=>(v!==undefined&&v!==null&&Number.isFinite(Number(v)))?Number(v):null;
       const rows=[
-        ['Personalized-DMER (AAAI 2025)',b.personalized_dmer?.ccc||0.74,b.personalized_dmer?.rmse||0.18,'#8EC5B8'],
-        ['Population Dual-Scale Attn',b.population_dual_scale_attention?.ccc||0.61,b.population_dual_scale_attention?.rmse||0.24,'#829CD0'],
-        ['Static Ridge Regression',b.static_ridge?.ccc||0.42,b.static_ridge?.rmse||0.31,'#686874']
+        ['Personalized-DMER (AAAI 2025)',num(b.personalized_dmer?.ccc),num(b.personalized_dmer?.rmse),'#8EC5B8'],
+        ['Population Dual-Scale Attn',num(b.population_dual_scale_attention?.ccc),num(b.population_dual_scale_attention?.rmse),'#829CD0'],
+        ['Static Ridge Regression',num(b.static_ridge?.ccc),num(b.static_ridge?.rmse),'#686874']
       ];
       ctx.font='500 12px Inter, sans-serif';
       rows.forEach((r,idx)=>{
@@ -2427,11 +2524,11 @@ canvas.pcanvas{display:block;width:100%!important;max-width:100%;box-sizing:bord
         ctx.fillStyle='#DCDCE0';ctx.textAlign='left';
         ctx.fillText(r[0],14,y);
         ctx.fillStyle='#A1A1A6';ctx.textAlign='right';
-        ctx.fillText('CCC '+Number(r[1]).toFixed(3)+' · RMSE '+Number(r[2]).toFixed(3),w-14,y);
+        ctx.fillText('CCC '+(r[1]===null?'—':r[1].toFixed(3))+' · RMSE '+(r[2]===null?'—':r[2].toFixed(3)),w-14,y);
         ctx.fillStyle='#151518';
         ctx.fillRect(14,y+10,w-28,14);
         ctx.fillStyle=r[3];
-        ctx.fillRect(14,y+10,Math.max(8,(w-28)*Math.min(1,Number(r[1]))),14);
+        if(r[1]!==null)ctx.fillRect(14,y+10,Math.max(8,(w-28)*Math.min(1,r[1])),14);
       });
     }
   }
