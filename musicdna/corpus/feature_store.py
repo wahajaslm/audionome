@@ -31,7 +31,7 @@ from musicdna.paths import CORPUS_DIR
 # Coke Studio defaults; other corpora pass their own folders (Corpus.feature_store()).
 FEATURE_DIRECTORY = CORPUS_DIR / 'features'
 TONIC_ANNOTATIONS = CORPUS_DIR / 'tonic_annotations.json'
-JSON_ARTIFACTS = {'lyrics', 'tonic', 'vocal_gate'}
+JSON_ARTIFACTS = {'lyrics', 'tonic', 'vocal_gate', 'cqt_meta'}
 # Demucs stems kept as audio. Drums and other were added for the Eastern features: tabla, dholak and
 # darbuka land in drums; sitar, sarangi, harmonium, oud and bansuri land in other.
 STEM_ARTIFACTS = ('vocals', 'drums', 'other')
@@ -333,6 +333,33 @@ class EasternStage(FeatureStage):
         store.save(entry.video_id, 'eastern', table)
 
 
+class CqtStage(FeatureStage):
+    """Fine-pitch CQT (20-cent rows) of the mix and the three stems, one array per song, plus the
+    tonic offset that aligns it (see musicdna.features.cqt). Runs after intonation, which finds the tonic."""
+    name = 'cqt'
+    artifacts = {'cqt': ('audio', 'vocal', 'intonation'), 'cqt_meta': ('audio', 'vocal', 'intonation')}
+    parallel = True
+
+    def is_ready(self, store: FeatureStore, entry: CorpusEntry) -> bool:
+        return (bool(entry.audio_file) and all(store.has(entry.video_id, stem) for stem in STEM_ARTIFACTS)
+                and store.has(entry.video_id, 'tonic'))
+
+    def run(self, store: FeatureStore, entry: CorpusEntry) -> None:
+        from musicdna.features.cqt import song_cqt
+        rate = store.config.vocal.sample_rate
+        signals = {'mix': store.audio(entry, rate), **{stem: store.stem(entry.video_id, stem) for stem in STEM_ARTIFACTS}}
+        length = min(len(v) for v in signals.values())
+        tonic = store.load_json(entry.video_id, 'tonic')
+        # A hand-annotated tonic is trusted fully; a detected one only as far as its confidence.
+        confidence = 1.0 if tonic['used']['source'] == 'annotated' else tonic['detected'].get('confidence', 0.0)
+        stacked, meta = song_cqt({k: v[:length] for k, v in signals.items()}, rate, tonic['used'].get('hz'), confidence)
+        target = store.path(entry.video_id, 'cqt')
+        target.parent.mkdir(parents=True, exist_ok=True)
+        np.save(target, stacked)  # float16: about 12 MB per 4-minute song
+        store.record_config('cqt')
+        store.save_json(entry.video_id, 'cqt_meta', meta.to_dict())
+
+
 class LyricsStage(FeatureStage):
     """Whisper transcript of the vocal stem (needs faster-whisper)."""
     name = 'lyrics'
@@ -352,7 +379,7 @@ class LyricsStage(FeatureStage):
 
 
 STAGES: dict[str, FeatureStage] = {stage.name: stage for stage in (
-    StemStage(), DspStage(), SpatialStage(), VocalStage(), IntonationStage(), EasternStage(), ClapStage(), MertStage(),
+    StemStage(), DspStage(), SpatialStage(), VocalStage(), IntonationStage(), EasternStage(), CqtStage(), ClapStage(), MertStage(),
     LyricsStage())}
 ARTIFACT_SECTIONS: dict[str, tuple[str, ...]] = {
     artifact: sections for stage in STAGES.values() for artifact, sections in stage.artifacts.items()}
