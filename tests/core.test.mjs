@@ -242,7 +242,7 @@ test('moments: tags merge without losing earlier ones; rows keep index.html\'s f
 
 // ---------- phase 2: rules behind Library, My Moments, Discover, My Music DNA, Feature analysis ----------
 import { computeTraits, traitShare, traitLevel, levelWord, ringLayout, portraitParts, evidenceNote, withoutTrait } from '../src/core/dna.ts';
-import { suggestionFamily, whyLine, ratingRow, ratingOf, DISCOVER_TABS } from '../src/core/discover.ts';
+import { suggestionFamily, whyLine, suggestionPills, ratingRow, ratingOf, DISCOVER_TABS } from '../src/core/discover.ts';
 import { visibleWindows, slopeTag, windowSummary, dmerRows, studioUrl, liveWindow, valueAt, chordIndexAt, measuresAt, passageSummary, exactSummary } from '../src/core/diagnostics.ts';
 import { inTab, withEdits, totalSeconds, COLLECTIONS } from '../src/core/moments.ts';
 
@@ -283,7 +283,11 @@ test('discover: family from the anchoring moment, honest why line, rating id rep
   assert.equal(suggestionFamily({ matchingMoment: { trackId: 't1', startSec: 12, endSec: 18 } }, moments), 1);
   assert.equal(suggestionFamily({}, moments), -1);
   assert.equal(DISCOVER_TABS.length, 5);
-  assert.match(whyLine('First Light'), /one of your saved passages in First Light/);
+  assert.equal(whyLine('First Light', 0.8, 102), 'Close to your moment in First Light · 1:42');
+  assert.equal(whyLine(undefined, 0.3), 'A little like passages you liked');
+  assert.deepEqual(suggestionPills(['shared B Minor key', 'vocals up front', 'similar energy'], { feelings: ['Chills'], qualities: ['Vocals'] }),
+    ['Chills', 'Vocals', 'Harmony']);
+  assert.deepEqual(suggestionPills(['matching groove (103 BPM)', 'similar brightness']), ['Rhythm', 'Atmosphere']);
   const r = ratingRow({ trackId: 't2', startSec: 12, endSec: 24 }, 'like', 5);
   assert.deepEqual(r, { id: 't2:12', trackId: 't2', startSec: 12, endSec: 24, value: 'like', createdAt: 5 });
   assert.equal(ratingOf({ trackId: 't2', startSec: 12 }, [r]), 'like');

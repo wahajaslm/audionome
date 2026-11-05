@@ -16,23 +16,48 @@ export const DISCOVER_TABS = ['All suggestions', ...TRAIT_DEFINITIONS.map(d => d
  * Example: a suggestion anchored on a moment tagged ['Melody'] → 1 (Melody tab).
  */
 export function suggestionFamily(s: Pick<PreferenceSuggestion, 'matchingMoment'>, moments: Moment[]): number {
-  const mm = s.matchingMoment;
-  if (!mm) return -1;
-  const m = moments.find(x => x.trackId === mm.trackId && x.startSec <= mm.startSec + 3 && x.endSec >= mm.startSec);
+  const m = anchorMoment(s, moments);
   if (!m) return -1;
   const q = m.qualities || [];
   return TRAIT_DEFINITIONS.findIndex(d => q.some(x => d.keys.includes(x)));
 }
 
+/** The saved moment a suggestion resembles (undefined when it matched a liked suggestion instead). */
+export function anchorMoment(s: Pick<PreferenceSuggestion, 'matchingMoment'>, moments: Moment[]): Moment | undefined {
+  const mm = s.matchingMoment;
+  return mm ? moments.find(x => x.trackId === mm.trackId && x.startSec <= mm.startSec + 3 && x.endSec >= mm.startSec) : undefined;
+}
+
+const mmss = (sec: number) => Math.floor(sec / 60) + ':' + String(Math.floor(sec % 60)).padStart(2, '0');
+
 /**
- * The "why" line. Honest about what the ranker knows: similarity to your own passages.
- * Example: anchor "First Light" → "It shares musical characteristics with one of your saved
- * passages in First Light."
+ * The line under a suggestion, in plain words: how close it is and to which of your moments.
+ * PLAIN WORDS FIX - it used to read "It shares musical characteristics with one of your saved
+ * passages in …" on every row. Example: (score 0.8, 'First Light', 102) →
+ * "Close to your moment in First Light · 1:42".
  */
-export function whyLine(anchorTitle?: string): string {
-  return anchorTitle
-    ? 'It shares musical characteristics with one of your saved passages in ' + anchorTitle + '.'
-    : 'It has acoustic patterns resembling passages you have saved.';
+export function whyLine(anchorTitle?: string, score = 0.5, anchorStartSec?: number): string {
+  const how = score >= 0.7 ? 'Close to' : score >= 0.5 ? 'Like' : 'A little like';
+  if (!anchorTitle) return how + ' passages you liked';
+  return `${how} your moment in ${anchorTitle}` + (anchorStartSec !== undefined ? ' · ' + mmss(anchorStartSec) : '');
+}
+
+/** Ranker evidence → the quality words used on moments. Measures with no listener word are dropped. */
+const EVIDENCE_TO_QUALITY: [RegExp, string][] = [
+  [/vocals/, 'Vocals'], [/^shared .* key$/, 'Harmony'], [/groove|rhythmic/, 'Rhythm'],
+  [/instruments/, 'Instruments'], [/texture|brightness|tonal\/noise/, 'Atmosphere'],
+];
+
+/**
+ * Discover's pills, in the same words as My Moments: the tags of the moment it resembles, then
+ * what it shares with it, as qualities. At most 4, no repeats.
+ * PILLS FIX - pills read "Strong match", "similar tonal/noise balance": measurements, not words
+ * a listener uses. Example: anchor tagged Chills + Vocals, evidence ['shared B Minor key',
+ * 'vocals up front', 'similar energy'] → ['Chills', 'Vocals', 'Harmony'].
+ */
+export function suggestionPills(evidence: string[], anchor?: Pick<Moment, 'feelings' | 'qualities'>): string[] {
+  const shared = evidence.flatMap(e => EVIDENCE_TO_QUALITY.filter(([re]) => re.test(e)).map(([, q]) => q));
+  return [...new Set([...(anchor?.feelings || []), ...(anchor?.qualities || []), ...shared])].slice(0, 4);
 }
 
 /**

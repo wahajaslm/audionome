@@ -9,7 +9,7 @@ import { computed, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRoute, useRouter } from 'vue-router';
 import type { PreferenceSuggestion } from '../../intelligence/personalize';
-import { DISCOVER_TABS, ratingOf, suggestionFamily, whyLine } from '../../core/discover';
+import { DISCOVER_TABS, anchorMoment, ratingOf, suggestionFamily, suggestionPills, whyLine } from '../../core/discover';
 import { totalSeconds } from '../../core/moments';
 import { useIntelligenceStore } from '../../stores/intelligence';
 import { useLibraryStore } from '../../stores/library';
@@ -80,22 +80,15 @@ const emptyText = computed(() => {
 
 const title = (s: PreferenceSuggestion) => library.track(s.trackId)?.title || 'Unavailable';
 const artist = (s: PreferenceSuggestion) => library.track(s.trackId)?.artist || '';
-const why = (s: PreferenceSuggestion) => whyLine(s.matchingMoment && library.track(s.matchingMoment.trackId)?.title);
+const why = (s: PreferenceSuggestion) => whyLine(s.matchingMoment && library.track(s.matchingMoment.trackId)?.title, s.score, s.matchingMoment?.startSec);
 const answer = (s: PreferenceSuggestion) => ratingOf(s, ratings.value);
 async function rate(s: PreferenceSuggestion, value: 'like' | 'dislike') {
   if (!answered.value.some(a => same(a.s, s))) answered.value.push({ s, at: rows.value.findIndex(x => same(x, s)) });
   await intelligence.rate(s, value);
 }
 
-/**
- * Reason pills: how strong the match is, then up to 3 traits it shares with the saved passage it
- * resembles (from the ranker's evidence). Voice rule: worded as resemblance, never as a feeling.
- * Example: ['Strong match', 'shared B Minor key', 'matching groove (103 BPM)'].
- */
-function pills(s: PreferenceSuggestion): string[] {
-  const strength = s.score >= 0.7 ? 'Strong match' : s.score >= 0.5 ? 'Good match' : 'Loose match';
-  return ['Suggested', strength, ...s.evidence];
-}
+/** Pills in My Moments' words (see suggestionPills). Example: ['Chills', 'Vocals', 'Harmony']. */
+const pills = (s: PreferenceSuggestion) => suggestionPills(s.evidence, anchorMoment(s, moments.value));
 const isPlaying = (s: PreferenceSuggestion) => playback.playing && playback.trackId === s.trackId && playback.t >= s.startSec - 0.5 && playback.t <= s.endSec + 0.5;
 
 async function preview(s: PreferenceSuggestion) {
@@ -147,7 +140,7 @@ function selectTab(i: number) {
 
       <ol class="list">
         <li v-if="!rows.length" class="none body">{{ emptyText }}</li>
-        <!-- Voice rule: inferences are hedged and labelled as such, hence the "Suggested" tag. -->
+        <!-- Voice rule: inferences are hedged; the line under the title says it is a resemblance. -->
         <MomentRow
           v-for="s in rows"
           :key="s.trackId + ':' + s.startSec"
