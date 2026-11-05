@@ -52,6 +52,13 @@ class VocalConfig:
     """pYIN pitch tracking and the pitch-contour descriptors built on it."""
     sample_rate: int = 16000
     hop: int = 256                # 16 ms frames
+    # Pitch tracker. FIX: pYIN missed most singing in produced Western vocals, so vocal and intonation
+    # features existed mainly for Eastern songs and would bias any Eastern-vs-Western comparison.
+    # On 1:00-2:00 of each vocal stem, share of frames tracked (pYIN -> FCPE; stem audible):
+    # Uptown Funk 2% -> 55% (77%), Dilemma 20% -> 89% (98%), Jhol 77% -> 98% (100%).
+    # FCPE (torchfcpe, MIT) is a singing-voice pitch estimator; 'pyin' keeps the old behaviour.
+    tracker: str = 'fcpe'
+    fcpe_threshold: float = 0.006  # FCPE voicing threshold (its default)
     fmin_hz: float = 70.0
     fmax_hz: float = 1100.0
     vibrato_min_hz: float = 4.0

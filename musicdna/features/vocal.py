@@ -13,6 +13,9 @@ from scipy.signal import find_peaks
 from musicdna.config import DEFAULT, VocalConfig
 
 
+_FCPE_MODEL = None  # loaded once per process
+
+
 @dataclass
 class PitchContour:
     times: np.ndarray
@@ -121,14 +124,37 @@ class VocalPitchAnalyzer:
             vocals = librosa.resample(np.asarray(vocals, dtype=np.float32), orig_sr=sample_rate, target_sr=s.sample_rate)
             if accompaniment is not None:
                 accompaniment = librosa.resample(np.asarray(accompaniment, dtype=np.float32), orig_sr=sample_rate, target_sr=s.sample_rate)
-        f0, voiced, probability = librosa.pyin(vocals, fmin=s.fmin_hz, fmax=s.fmax_hz, sr=s.sample_rate, frame_length=1024,
-                                               hop_length=s.hop, resolution=s.pitch_resolution_cents / 100)
+        if s.tracker == 'fcpe':
+            f0, voiced, probability = self._fcpe(vocals)
+        else:
+            f0, voiced, probability = librosa.pyin(vocals, fmin=s.fmin_hz, fmax=s.fmax_hz, sr=s.sample_rate, frame_length=1024,
+                                                   hop_length=s.hop, resolution=s.pitch_resolution_cents / 100)
         keep = voiced
         self.last_gate = GateReport(int(voiced.sum()), int(voiced.sum()), {})
         if s.gate_enabled:
             keep, self.last_gate = SingingGate(s).mask(voiced, probability, vocals, accompaniment)
         semitones = np.where(keep, librosa.hz_to_midi(np.nan_to_num(f0, nan=1.0)), np.nan)
         return PitchContour.from_semitones(semitones, s)
+
+    def _fcpe(self, vocals: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """FCPE f0 on pYIN's frame grid (1 + samples // hop frames), snapped to the
+        vocal.pitch_resolution_cents grid. FCPE gives no voicing probability, so it is 1 where voiced."""
+        import torch
+        from torchfcpe import spawn_bundled_infer_model
+        s = self.settings
+        global _FCPE_MODEL
+        if _FCPE_MODEL is None:
+            _FCPE_MODEL = spawn_bundled_infer_model(device='cpu')
+        frames = 1 + len(vocals) // s.hop
+        with torch.no_grad():
+            f0 = _FCPE_MODEL.infer(torch.from_numpy(np.asarray(vocals, dtype=np.float32))[None, :, None], sr=s.sample_rate,
+                                   decoder_mode='local_argmax', threshold=s.fcpe_threshold, f0_min=s.fmin_hz, f0_max=s.fmax_hz,
+                                   interp_uv=False, output_interp_target_length=frames).squeeze().cpu().numpy().astype(np.float64)
+        voiced = f0 > 0
+        step = s.pitch_resolution_cents / 100
+        midi = np.round(librosa.hz_to_midi(np.where(voiced, f0, 1.0)) / step) * step
+        f0 = np.where(voiced, librosa.midi_to_hz(midi), np.nan)
+        return f0, voiced, voiced.astype(np.float64)
 
     def describe(self, contour: PitchContour, start_sec: float, end_sec: float) -> VocalDescriptors:
         times, semitones = contour.span(start_sec, end_sec)

@@ -16,6 +16,7 @@ transformers>=4.40
 # Research pipeline (research/pipeline.py)
 scipy>=1.11
 demucs>=4.0
+torchfcpe>=0.0.4   # vocal pitch tracker (MIT); replaces pYIN as the default
 yt-dlp>=2025.1
 # Optional lyrics stage: Whisper transcription of the vocal stem
 faster-whisper>=1.0
