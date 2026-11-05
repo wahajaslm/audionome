@@ -110,3 +110,18 @@ Sources were found by a literature search agent and are linked in the session no
   - **CLAP: drop +0.036 [+0.010, +0.061].** By region: Eastern +0.041, Western +0.017, house +0.058.
   - **Every DSP block and stereo: drop of 0.005 or less,** i.e. unused. That includes loudness, brightness and onsets, chroma, and MFCC.
   - **The model relies almost only on CLAP.** It ignores brightness, even though "brightest window" alone scores 0.615 on Eastern songs. So the 12 hand-built scalars are drowned out by CLAP's 512 dimensions. The full model should give the hand-built groups their own branch or pre-scaling, and Step 6 should test that.
+
+### CultureMERT: what it already covers (checked 2026-11-05)
+
+- **Base:** MERT-v1-95M, given continued masked pretraining on 650 hours:
+  - Hindustani: 200 h.
+  - Carnatic: 200 h.
+  - Turkish makam: 200 h.
+  - Greek Lyra: 50 h.
+  - Sources: the CompMusic corpora and Lyra. https://arxiv.org/html/2506.17818
+- **Classical only.** No Bollywood or film music, Pakistani pop, Coke Studio, Punjabi or Arabic.
+- **Gains over MERT (tagging, ROC-AUC):** Hindustani 82.4 → 88.2, Carnatic 74.9 → 79.2.
+- **Licence:** CC BY-NC 4.0, research only. https://huggingface.co/ntua-slp/CultureMERT-95M
+- **Plan:**
+  1. Test CultureMERT as-is first, as one more embedding row alongside CLAP and MERT.
+  2. Continue its pretraining on Coke Studio, film, pop, Punjabi and Arabic only if it falls short on those songs.
