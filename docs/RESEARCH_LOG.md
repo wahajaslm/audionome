@@ -125,3 +125,12 @@ Sources were found by a literature search agent and are linked in the session no
 - **Plan:**
   1. Test CultureMERT as-is first, as one more embedding row alongside CLAP and MERT.
   2. Continue its pretraining on Coke Studio, film, pop, Punjabi and Arabic only if it falls short on those songs.
+- **2026-11-05 · CLAP vs. CultureMERT (no CNN; DSP + spatial + one embedding).** Same folds, pairwise accuracy:
+  - **Overall there is no difference.** Paired CultureMERT − CLAP: all +0.001 [−0.025, +0.026], Eastern +0.004 [−0.038, +0.049]. Its classical-music pretraining (Hindustani, Carnatic, makam) does not carry over to our film, pop and fusion songs.
+  - **Subcontinent + Arabic songs (28: Bollywood, Punjabi, qawwali/Sufi, Pakistani pop, Arabic pop):** the brightness rule scores 0.666, CLAP model 0.602, CultureMERT model 0.587. The learned models lose to a one-feature rule.
+    - Pakistani pop: rule 0.68 vs. 0.49 / 0.42.
+    - Bollywood: 0.63 vs. 0.54 / 0.53.
+  - **Western and house:** the learned models beat the rule clearly. House 0.54 → 0.68 / 0.67; jazz 0.51 → 0.67 / 0.64.
+  - **K-pop scored below random for every method** (0.42–0.46). It had been grouped as "eastern". It is now its own region, `east_asian`, to match the research's Eastern scope (subcontinent, Arabic, Turkish).
+  - **Caveat:** 4–8 songs per genre, so per-genre numbers are noisy.
+  - **Reading:** general and classical-trained embeddings, averaged over 12 s, miss what drives replays in subcontinent and Arabic popular music, while simple brightness catches part of it. That is the case for the hand-built Eastern features and the fine-pitch CNN. Next: give the hand-built features their own branch and per-song scaling, so the model cannot ignore them.

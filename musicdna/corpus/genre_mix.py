@@ -63,7 +63,10 @@ GENRES: dict[str, tuple[str, list[str]]] = {
     'pakistani_pop': ('eastern', ['pakistani pop song official', 'new pakistani song', 'urdu indie song']),
     'arabic_pop':    ('eastern', ['arabic pop song official audio', 'new arabic song', 'arabic indie song']),
     'turkish_pop':   ('eastern', ['turkish pop song official audio', 'yeni türkçe pop şarkı', 'turkish indie song']),
-    'kpop':          ('eastern', ['kpop official audio', 'new kpop song', 'korean indie song']),
+    # K-pop is East Asian pop with Western production and harmony, not part of the Eastern
+    # (subcontinent, Arabic, Turkish) traditions the research is about; it was in 'eastern' until
+    # 2026-11-05 and pulled that group's scores down (pairwise accuracy ~0.45, below random).
+    'kpop':          ('east_asian', ['kpop official audio', 'new kpop song', 'korean indie song']),
     'pop':           ('western', ['pop song official audio', 'new pop song', 'indie pop song']),
     'rock':          ('western', ['rock song official audio', 'new rock song', 'indie rock song']),
     'hiphop':        ('western', ['hip hop song official audio', 'new rap song', 'underground hip hop song']),
@@ -93,7 +96,7 @@ EXCLUDED_TITLE_PATTERN = re.compile(
 class GenreMixEntry(CorpusEntry):
     """A song with its genre, region and popularity tier (measured within its genre)."""
     genre: str
-    region: str           # eastern, western, house
+    region: str           # eastern, western, house, east_asian
     tier: str             # top, middle, low, underrated
     channel: str
     view_count: int

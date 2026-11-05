@@ -22,6 +22,9 @@ HF_CLAP_MODEL_ID: str = os.getenv('MUSIC_DNA_CLAP_MODEL', 'laion/clap-htsat-unfu
 HF_CLAP_SAMPLE_RATE: int = 48000
 HF_CLAP_BATCH_SIZE: int = 8
 MERT_MODEL_ID: str = os.getenv('MUSIC_DNA_MERT_MODEL', 'm-a-p/MERT-v1-95M').strip()
+# MERT-v1-95M with continued pretraining on 650 h of Hindustani, Carnatic, Turkish makam and Greek Lyra
+# music (arXiv 2506.17818). Same architecture and input as MERT, so it loads through load_mert.
+CULTUREMERT_MODEL_ID: str = os.getenv('MUSIC_DNA_CULTUREMERT_MODEL', 'ntua-slp/CultureMERT-95M').strip()
 MERT_SAMPLE_RATE: int = 24000
 
 MODEL_LICENSE_REGISTRY: dict[str, dict[str, Any]] = {
@@ -39,6 +42,14 @@ MODEL_LICENSE_REGISTRY: dict[str, dict[str, Any]] = {
         'weights_license': 'CC BY-NC 4.0',
         'commercial_safe': False,
         'restriction_note': 'MERT code is Apache-2.0, but the published MERT-v1 weights are CC BY-NC 4.0 (non-commercial only).',
+    },
+    'culturemert': {
+        'name': 'CultureMERT-95M (MERT continued on Hindustani, Carnatic, Turkish makam, Lyra)',
+        'repo': 'https://huggingface.co/ntua-slp/CultureMERT-95M',
+        'code_license': 'Apache-2.0 (MERT code)',
+        'weights_license': 'CC BY-NC 4.0',
+        'commercial_safe': False,
+        'restriction_note': 'CultureMERT weights are CC BY-NC 4.0 (non-commercial research only).',
     },
     'muq': {
         'name': 'MuQ (Self-Supervised Music Representation Learning)',
@@ -88,7 +99,7 @@ class DeepAudioEncoder:
     def __init__(self, license_manager: ModelLicenseManager | None = None) -> None:
         self.license_manager = license_manager or ModelLicenseManager()
         self._hf_clap: tuple[Any, Any] | None = None
-        self._mert: tuple[Any, Any] | None = None
+        self._mert: dict[str, tuple[Any, Any]] = {}  # model id -> (model, processor)
 
     def get_colab_url(self) -> str:
         return os.getenv('MUSIC_DNA_COLAB_URL', '').strip().rstrip('/')
@@ -169,30 +180,32 @@ class DeepAudioEncoder:
         count = int(np.ceil(length / crop))
         return [int(round(i * (length - crop) / (count - 1))) for i in range(count)]
 
-    def load_mert(self, allow_noncommercial: bool | None = None) -> tuple[Any, Any]:
+    def load_mert(self, allow_noncommercial: bool | None = None, model_id: str = MERT_MODEL_ID,
+                  family: str = 'mert') -> tuple[Any, Any]:
         """Loads MERT once. Its weights are CC BY-NC 4.0 and its model code runs via trust_remote_code.
 
         Layer outputs are captured with forward hooks on the 12 encoder layers. FIX: MERT's remote code
         ignores output_hidden_states under transformers 5.x and returns hidden_states=None.
         Example: asking for all layers gave only last_hidden_state (1, 374, 768); the hooks give all 12.
         """
-        if self._mert is None:
-            self.license_manager.verify_license('mert', allow_noncommercial=allow_noncommercial)
+        if model_id not in self._mert:
+            self.license_manager.verify_license(family, allow_noncommercial=allow_noncommercial)
             from transformers import AutoModel, Wav2Vec2FeatureExtractor
-            with LocalModels.offline_when_downloaded(MERT_MODEL_ID) as local:
-                model = AutoModel.from_pretrained(MERT_MODEL_ID, trust_remote_code=True, local_files_only=local)
+            with LocalModels.offline_when_downloaded(model_id) as local:
+                model = AutoModel.from_pretrained(model_id, trust_remote_code=True, local_files_only=local)
                 model.eval()
-                processor = Wav2Vec2FeatureExtractor.from_pretrained(MERT_MODEL_ID, trust_remote_code=True,
+                processor = Wav2Vec2FeatureExtractor.from_pretrained(model_id, trust_remote_code=True,
                                                                      local_files_only=local)
             self._mert_layers: list[Any] = []
             for layer in model.encoder.layers:
                 layer.register_forward_hook(
                     lambda _module, _inputs, output: self._mert_layers.append(output[0] if isinstance(output, tuple) else output))
-            self._mert = (model, processor)
-        return self._mert
+            self._mert[model_id] = (model, processor)
+        return self._mert[model_id]
 
     def encode_clips_with_mert(
-        self, audio_clips: list[np.ndarray], sample_rate: int, allow_noncommercial: bool | None = None
+        self, audio_clips: list[np.ndarray], sample_rate: int, allow_noncommercial: bool | None = None,
+        model_id: str = MERT_MODEL_ID, family: str = 'mert',
     ) -> list[np.ndarray]:
         """768-D MERT embedding per clip: time-averaged hidden states, averaged over all 12 layers.
 
@@ -201,7 +214,7 @@ class DeepAudioEncoder:
         windows was 60% padding, so its embedding mostly described silence.
         """
         import torch
-        model, processor = self.load_mert(allow_noncommercial)
+        model, processor = self.load_mert(allow_noncommercial, model_id, family)
         resampled = [
             librosa.resample(np.asarray(clip, dtype=np.float32), orig_sr=sample_rate, target_sr=MERT_SAMPLE_RATE)
             for clip in audio_clips

@@ -37,14 +37,18 @@ from musicdna.paths import RESEARCH_OUTPUT_DIR
 
 FEATURE_GROUPS = ('dsp', 'spatial', 'vocal', 'intonation', 'intonation_profile', 'eastern')
 VARIANTS: dict[str, dict[str, Any]] = {
-    'full':    {'cqt': 'tonic', 'features': FEATURE_GROUPS, 'clap': True},
-    'western': {'cqt': 'western', 'features': ('dsp', 'spatial'), 'clap': True},
+    'full':    {'cqt': 'tonic', 'features': FEATURE_GROUPS, 'embedding': 'clap'},
+    'western': {'cqt': 'western', 'features': ('dsp', 'spatial'), 'embedding': 'clap'},
     # Ablations: remove one input family at a time from the full model.
-    'full_no_cnn':      {'cqt': None, 'features': FEATURE_GROUPS, 'clap': True},
-    'full_no_clap':     {'cqt': 'tonic', 'features': FEATURE_GROUPS, 'clap': False},
-    'full_no_features': {'cqt': 'tonic', 'features': (), 'clap': True},
-    # Needs only DSP, spatial and CLAP, so it runs before stems and the Eastern features exist.
-    'western_no_cnn':   {'cqt': None, 'features': ('dsp', 'spatial'), 'clap': True},
+    'full_no_cnn':      {'cqt': None, 'features': FEATURE_GROUPS, 'embedding': 'clap'},
+    'full_no_clap':     {'cqt': 'tonic', 'features': FEATURE_GROUPS, 'embedding': None},
+    'full_no_features': {'cqt': 'tonic', 'features': (), 'embedding': 'clap'},
+    # Need only DSP, spatial and one embedding, so they run before stems and the Eastern features exist.
+    # Comparing the three asks: does an encoder trained on Indian classical and Turkish makam music
+    # (CultureMERT) find replayed moments in Eastern songs better than general ones (CLAP, MERT)?
+    'western_no_cnn':             {'cqt': None, 'features': ('dsp', 'spatial'), 'embedding': 'clap'},
+    'western_no_cnn_mert':        {'cqt': None, 'features': ('dsp', 'spatial'), 'embedding': 'mert'},
+    'western_no_cnn_culturemert': {'cqt': None, 'features': ('dsp', 'spatial'), 'embedding': 'culturemert'},
 }
 CLEAR_GAP = 0.1   # residual-replay gap for a pair to count (as in notebook 02, Step 2d)
 # Input blocks for permutation importance: (feature group, its columns). DSP columns follow
@@ -55,7 +59,7 @@ IMPORTANCE_BLOCKS: dict[str, tuple[str, slice]] = {
     'DSP chroma (12 Western notes)': ('dsp', slice(5, 17)),
     'DSP timbre (MFCC)': ('dsp', slice(17, 25)),
     'stereo width': ('spatial', slice(None)),
-    'CLAP embedding': ('clap', slice(None)),
+    'embedding (CLAP / MERT / CultureMERT)': ('embedding', slice(None)),
     'vocal pitch': ('vocal', slice(None)),
     'intonation': ('intonation', slice(None)),
     'intonation profile': ('intonation_profile', slice(None)),
@@ -63,6 +67,7 @@ IMPORTANCE_BLOCKS: dict[str, tuple[str, slice]] = {
     'CQT pictures (CNN)': ('cqt', slice(None)),
 }
 IMPORTANCE_REPEATS = 5
+REGIONS = ('all', 'eastern', 'western', 'house', 'east_asian')
 
 
 @dataclass
@@ -80,7 +85,7 @@ def load_songs(variants: list[str], corpus_name: str = 'genre_mix') -> list[Song
     corpus = get_corpus(corpus_name)
     store = corpus.feature_store()
     views = {VARIANTS[v]['cqt'] for v in variants} - {None}
-    groups = {g for v in variants for g in VARIANTS[v]['features']} | ({'clap'} if any(VARIANTS[v]['clap'] for v in variants) else set())
+    groups = {g for v in variants for g in VARIANTS[v]['features']} | {VARIANTS[v]['embedding'] for v in variants if VARIANTS[v]['embedding']}
     frames = int(math.ceil(store.config.windows.window_sec * store.config.vocal.sample_rate / HOP))
     songs = []
     for entry in corpus.load().entries:
@@ -193,6 +198,10 @@ class Trainer:
         self.spec, self.variant = VARIANTS[variant], variant
         self.epochs, self.patience, self.lr, self.seed, self.device = epochs, patience, lr, seed, torch.device(device)
 
+    def groups(self) -> list[str]:
+        """Feature groups fed to the MLP, in order: the hand-built ones, then the embedding."""
+        return list(self.spec['features']) + ([self.spec['embedding']] if self.spec['embedding'] else [])
+
     def inputs(self, song: Song, mean: np.ndarray | None, std: np.ndarray | None,
                shuffle: tuple[str, slice, np.ndarray] | None = None) -> tuple[torch.Tensor | None, torch.Tensor | None]:
         """Model inputs for one song. `shuffle` = (group, columns, window order) reorders that block across
@@ -201,13 +210,13 @@ class Trainer:
         if pictures is not None and shuffle and shuffle[0] == 'cqt':
             pictures = pictures[shuffle[2]]
         cqt = torch.from_numpy(pictures.astype(np.float32)).to(self.device) if pictures is not None else None
-        groups = list(self.spec['features']) + (['clap'] if self.spec['clap'] else [])
+        groups = self.groups()
         if not groups:
             return cqt, None
         blocks = []
         for g in groups:
             block = song.features[g]
-            if shuffle and shuffle[0] == g:
+            if shuffle and (shuffle[0] == g or (shuffle[0] == 'embedding' and g == self.spec['embedding'])):
                 block = block.copy()
                 block[:, shuffle[1]] = block[shuffle[2]][:, shuffle[1]]
             blocks.append(block)
@@ -217,7 +226,7 @@ class Trainer:
     def importance(self, test: list[Song], residual: dict[str, np.ndarray]) -> dict[str, list[dict[str, Any]]]:
         """Per input block and test song: pairwise accuracy with that block shuffled (mean of repeats)."""
         rng = np.random.default_rng(self.seed + 1)
-        used = set(self.spec['features']) | ({'clap'} if self.spec['clap'] else set()) | ({'cqt'} if self.spec['cqt'] else set())
+        used = set(self.spec['features']) | ({'embedding'} if self.spec['embedding'] else set()) | ({'cqt'} if self.spec['cqt'] else set())
         out: dict[str, list[dict[str, Any]]] = {}
         with torch.no_grad():
             for name, (group, columns) in IMPORTANCE_BLOCKS.items():
@@ -242,7 +251,7 @@ class Trainer:
         val, fit = [train[i] for i in order[:n_val]], [train[i] for i in order[n_val:]]
         prior = PositionPrior().fit([s.targets for s in fit])
         residual = {s.video_id: prior.residual(s.targets).astype(np.float32) for s in train + test}
-        groups = list(self.spec['features']) + (['clap'] if self.spec['clap'] else [])
+        groups = self.groups()
         mean = std = None
         if groups:
             stacked = np.concatenate([np.concatenate([s.features[g] for g in groups], axis=1) for s in fit])
@@ -289,7 +298,7 @@ def artist_folds(songs: list[Song], k: int, seed: int = 0) -> list[list[int]]:
 def summarize(per_song: list[dict[str, Any]], seed: int = 0) -> dict[str, Any]:
     rng = np.random.default_rng(seed)
     out: dict[str, Any] = {}
-    for region in ('all', 'eastern', 'western', 'house'):
+    for region in REGIONS:
         rows = [r for r in per_song if region == 'all' or r['region'] == region]
         if not rows:
             continue
@@ -333,7 +342,7 @@ def importance_summary(per_song: list[dict[str, Any]], shuffled: dict[str, list[
     out: dict[str, Any] = {}
     for name, rows in shuffled.items():
         out[name] = {}
-        for region in ('all', 'eastern', 'western', 'house'):
+        for region in REGIONS:
             drops = np.array([intact[r['video_id']] - r['pairwise_accuracy'] for r in rows
                               if (region == 'all' or r['region'] == region)
                               and np.isfinite(r['pairwise_accuracy']) and np.isfinite(intact[r['video_id']])])
@@ -384,11 +393,11 @@ def main() -> None:
     path.write_text(json.dumps(report, indent=2) + '\n', encoding='utf8')
     for name, entry in [*[(f'baseline {k}', v) for k, v in report['baselines'].items()],
                         *[(k, v['summary']) for k, v in report['variants'].items()]]:
-        cells = '  '.join(f"{r}: {entry[r]['pairwise_accuracy']['mean']:.3f}" for r in ('all', 'eastern', 'western', 'house') if r in entry)
+        cells = '  '.join(f"{r}: {entry[r]['pairwise_accuracy']['mean']:.3f}" for r in REGIONS if r in entry)
         print(f'{name:<26} pairwise accuracy  {cells}')
     for variant, entry in report['variants'].items():
         for name, regions in entry.get('importance', {}).items():
-            cells = '  '.join(f"{r}: {regions[r]['drop']:+.3f}" for r in ('all', 'eastern', 'western', 'house') if r in regions)
+            cells = '  '.join(f"{r}: {regions[r]['drop']:+.3f}" for r in REGIONS if r in regions)
             print(f'{variant} shuffle {name:<34} accuracy drop  {cells}')
     print(f'-> {path}')
 

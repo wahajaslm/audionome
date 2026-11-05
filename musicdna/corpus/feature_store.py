@@ -273,6 +273,17 @@ class MertStage(EmbeddingStage):
         return self.encoder.encode_clips_with_mert(clips, rate, allow_noncommercial=self.allow_nc_weights)
 
 
+class CultureMertStage(EmbeddingStage):
+    """768-D CultureMERT-95M: MERT continued on Indian classical and Turkish makam music (CC BY-NC 4.0)."""
+    name = 'culturemert'
+    artifacts = {'culturemert': ('windows', 'audio')}
+
+    def encode(self, clips: list[np.ndarray], rate: int) -> list[np.ndarray]:
+        from musicdna.features.embeddings import CULTUREMERT_MODEL_ID
+        return self.encoder.encode_clips_with_mert(clips, rate, allow_noncommercial=self.allow_nc_weights,
+                                                   model_id=CULTUREMERT_MODEL_ID, family='culturemert')
+
+
 class IntonationStage(FeatureStage):
     """Tonic per song, then microtonal intonation descriptors and a tonic-relative pitch profile per window.
 
@@ -379,7 +390,7 @@ class LyricsStage(FeatureStage):
 
 
 STAGES: dict[str, FeatureStage] = {stage.name: stage for stage in (
-    StemStage(), DspStage(), SpatialStage(), VocalStage(), IntonationStage(), EasternStage(), CqtStage(), ClapStage(), MertStage(),
+    StemStage(), DspStage(), SpatialStage(), VocalStage(), IntonationStage(), EasternStage(), CqtStage(), ClapStage(), MertStage(), CultureMertStage(),
     LyricsStage())}
 ARTIFACT_SECTIONS: dict[str, tuple[str, ...]] = {
     artifact: sections for stage in STAGES.values() for artifact, sections in stage.artifacts.items()}
