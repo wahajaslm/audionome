@@ -202,3 +202,9 @@ Sources were found by a literature search agent and are linked in the session no
   - **Windows with held notes:** Eastern genres 0.56–0.89; pop 0.51, hip-hop 0.20, jazz 0.31.
   - **Consequence:** vocal and intonation features exist mainly for Eastern songs. A `full` vs. `western` gain on Eastern songs could then reflect measurement coverage, not musical content. The vocal off-grid fraction (pop 0.30 vs. Bollywood 0.07) rests on few tracked notes in the Western songs and is not trusted.
   - **Proposed plan amendment (pending user decision):** replace pYIN with a polyphonic-robust vocal pitch tracker (RMVPE or CREPE), then require comparable coverage in Western and Eastern songs before the main test.
+- **2026-11-05 · Plan amendment applied: FCPE replaces pYIN** (decided before any main-test result). Coverage gate on all 120 songs, as the share of frames with tracked singing / share of windows with held notes:
+  - Eastern 64% / 77%; pop 59% / 66%; R&B 64% / 70%.
+  - Hip-hop 56% / 36% (rap), jazz 23% / 41% (mostly instrumental), house 27% / 50%.
+  - **PASS for sung genres:** the remaining gaps follow the music, not the tracker. Under pYIN, pop sat at 2–19%.
+  - **Caveat:** the vocal off-grid fraction is higher in rock (0.31), tech house (0.30) and hip-hop (0.21) than in Eastern songs (0.088). It also captures rough or speech-like delivery, pitch-processed vocals and unreliable tonics, not only intended microtones. It stays as a feature but is not interpreted as "microtones" without further validation.
+- **Run budget:** the main-set run is exploratory and uses 1 seed (CPU shared with another project). The 5-seed rule applies to the confirmation run, which decides H1/H2.
