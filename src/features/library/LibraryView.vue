@@ -37,7 +37,6 @@ const sections = computed(() => [
   { key: 'own', title: 'Your songs (' + uploaded.value.length + ')', items: uploaded.value, empty: 'No songs yet. Choose Import audio to add an MP3, WAV, FLAC, M4A or OGG file.' },
   { key: 'demo', title: 'Built-in reference recording', items: demos.value, empty: '' },
 ]);
-const jobs = computed(() => Object.entries(analyzing.value).map(([id, step]) => ({ id, step, title: library.track(id)?.title || id })));
 
 const momentCount = (id: string) => momentsStore.moments.filter(m => m.trackId === id).length;
 const analysisOf = (id: string) => intelligence.analysisFor(id);
@@ -149,18 +148,6 @@ async function remove(id: string) {
     <p v-if="waitingForService.length" class="local label" role="status">
       Analysis paused for {{ waitingForService.length }} {{ waitingForService.length === 1 ? 'song' : 'songs' }}: waiting for the local service. It resumes by itself.
     </p>
-
-    <template v-if="jobs.length">
-      <h2 class="sh heading">Analysis in progress<template v-if="analysisQueue.length"> · {{ analysisQueue.length }} queued</template></h2>
-      <ol class="list">
-        <li v-for="j in jobs" :key="j.id" class="lrow" role="status">
-          <div class="info">
-            <div class="s item">Analysing {{ j.title }}…</div>
-            <div class="meta label">{{ j.step }}</div>
-          </div>
-        </li>
-      </ol>
-    </template>
 
     <template v-for="sec in sections" :key="sec.key">
     <h2 v-if="sec.items.length || sec.empty" class="sh heading">{{ sec.title }}</h2>
