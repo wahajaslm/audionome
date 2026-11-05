@@ -1,4 +1,7 @@
-"""FAV Corpus Methodology Integration (Lustig & Tan, 15-Second Favorite Passage Corpus).
+"""FAV Corpus Methodology Integration (Lustig & Temperley, ISMIR 2023, 15-Second Favorite Passage Corpus).
+
+FIX: this line used to credit "Lustig & Tan". The paper is by Ethan Lustig and David Temperley
+(https://archives.ismir.net/ismir2023/paper/000039.pdf), checked 2026-11-05.
 
 Implements:
 1. Canonical FAV 15-second passage schema and musical-reason taxonomy.
