@@ -89,7 +89,8 @@ async function rate(s: PreferenceSuggestion, value: 'like' | 'dislike') {
 
 /** Pills in My Moments' words (see suggestionPills). Example: ['Chills', 'Vocals', 'Harmony']. */
 const pills = (s: PreferenceSuggestion) => suggestionPills(s.evidence, anchorMoment(s, moments.value));
-const isPlaying = (s: PreferenceSuggestion) => playback.playing && playback.trackId === s.trackId && playback.t >= s.startSec - 0.5 && playback.t <= s.endSec + 0.5;
+const isHere = (s: PreferenceSuggestion) => playback.trackId === s.trackId && playback.t >= s.startSec - 0.5 && playback.t <= s.endSec + 0.5;
+const isPlaying = (s: PreferenceSuggestion) => playback.playing && isHere(s);
 
 async function preview(s: PreferenceSuggestion) {
   playback.queue = [];
@@ -151,6 +152,7 @@ function selectTab(i: number) {
           :what="why(s)"
           :tags="pills(s)"
           :playing="isPlaying(s)"
+          :current="isHere(s)"
           :song-duration="library.track(s.trackId)?.durationSec"
           :removable="false"
           @play="preview(s)"

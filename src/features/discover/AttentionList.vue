@@ -20,6 +20,9 @@ const intelligence = useIntelligenceStore();
 const library = useLibraryStore();
 const playback = usePlaybackStore();
 const { learning } = storeToRefs(useListeningStore());
+/** Same rule as MomentRow: accent while playing, accent outline while loaded and paused. */
+const isHere = (c: { trackId: string; startSec: number; endSec: number }) =>
+  playback.trackId === c.trackId && playback.t >= c.startSec - 0.5 && playback.t <= c.endSec + 0.5;
 const list = computed(() => (learning.value ? intelligence.candidates.slice(0, props.limit) : []));
 
 /** Example: confidence 'repeated interest', reasons ['returned 3 times'] → "Repeated interest · returned 3 times". */
@@ -38,8 +41,8 @@ async function listen(c: (typeof list.value)[number]) {
     <p class="label shs">Your listening suggests these. It is attention, not an emotional label. Save the ones you love.</p>
     <ol class="list">
       <li v-for="c in list" :key="c.trackId + ':' + c.startSec" class="row">
-        <button type="button" class="cp" :aria-label="'Listen to ' + (library.track(c.trackId)?.title || 'passage') + ' ' + formatTime(c.startSec)" @click="listen(c)">
-          <Icon name="play" :size="12" />
+        <button type="button" class="cp" :class="{ on: isHere(c) && playback.playing, cur: isHere(c) && !playback.playing }" :aria-label="'Listen to ' + (library.track(c.trackId)?.title || 'passage') + ' ' + formatTime(c.startSec)" @click="listen(c)">
+          <Icon :name="isHere(c) && playback.playing ? 'pause' : 'play'" :size="12" />
         </button>
         <div class="info">
           <div class="item s">{{ library.track(c.trackId)?.title || 'A song' }} · {{ formatTime(c.startSec) }}–{{ formatTime(c.endSec) }}</div>
@@ -60,6 +63,8 @@ async function listen(c: (typeof list.value)[number]) {
 .list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
 .row { display: flex; align-items: center; gap: var(--space-4); padding: 14px 0; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
 .cp { width: 40px; height: 40px; flex: none; border: 1px solid var(--line-strong); border-radius: var(--radius-pill); background: none; color: var(--ink); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.cp.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.cp.cur { border-color: var(--accent); color: var(--accent); }
 .info { flex: 1; min-width: 0; }
 .s { color: var(--ink); }
 .w { color: var(--ink-sub); margin-top: 3px; }

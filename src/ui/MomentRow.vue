@@ -2,7 +2,8 @@
 /**
  * MomentRow (design system): a saved passage in a list.
  * Props: song, artist; start / end (seconds); what (e.g. "Vocals · Melody"); note; tags;
- * fresh (shows "New"); playing (play button shows pause); songDuration (for the mini waveform);
+ * fresh (shows "New"); playing (play button shows pause, accent-filled); current (the passage loaded
+ * in the player while paused: accent outline); songDuration (for the mini waveform);
  * editable (shows Edit, for My Moments) and editing (Edit's aria-expanded); removable (shows the
  * remove cross, default true). Default slot: extra actions after the duration, e.g. Discover's
  * "Not for me" / "I like it" (they wrap to their own line below 600px).
@@ -16,8 +17,8 @@ import { formatTime } from './format';
 
 const props = withDefaults(defineProps<{
   song: string; artist?: string; start: number; end: number; what?: string; note?: string;
-  tags?: string[]; fresh?: boolean; playing?: boolean; songDuration?: number; editable?: boolean; editing?: boolean; removable?: boolean;
-}>(), { artist: '', what: '', note: '', tags: () => [], fresh: false, playing: false, songDuration: 0, editable: false, editing: false, removable: true });
+  tags?: string[]; fresh?: boolean; playing?: boolean; current?: boolean; songDuration?: number; editable?: boolean; editing?: boolean; removable?: boolean;
+}>(), { artist: '', what: '', note: '', tags: () => [], fresh: false, playing: false, current: false, songDuration: 0, editable: false, editing: false, removable: true });
 const emit = defineEmits<{ play: []; remove: []; edit: []; open: [] }>();
 
 /** Seeded bar heights (same formula as the classic list), so a row never flickers. */
@@ -34,7 +35,7 @@ const bars = computed(() => {
 
 <template>
   <li class="row">
-    <button type="button" class="cp" :aria-label="(playing ? 'Pause ' : 'Play ') + song + ' moment'" @click="emit('play')">
+    <button type="button" class="cp" :class="{ on: playing, cur: current && !playing }" :aria-label="(playing ? 'Pause ' : 'Play ') + song + ' moment'" @click="emit('play')">
       <Icon :name="playing ? 'pause' : 'play'" :size="12" />
     </button>
     <div class="mw" aria-hidden="true">
@@ -58,6 +59,10 @@ const bars = computed(() => {
 <style scoped>
 .row { display: flex; align-items: center; gap: 18px; padding: 14px 0; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
 .cp { width: 40px; height: 40px; flex: none; border: 1px solid var(--line-strong); border-radius: 50%; background: none; color: var(--ink); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+/* PLAYING IS VISIBLE - the play button turns accent while its passage plays, and keeps an
+   accent outline while it is loaded but paused, so you can see what you were playing. */
+.cp.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.cp.cur { border-color: var(--accent); color: var(--accent); }
 .mw { width: 150px; height: 30px; display: flex; align-items: center; justify-content: space-between; flex: none; }
 .mw i { display: block; width: var(--wave-bar); border-radius: var(--radius-xs); background: var(--wave-off); }
 .mw i.on { background: var(--accent); }

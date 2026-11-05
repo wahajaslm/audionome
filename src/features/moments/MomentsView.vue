@@ -66,7 +66,8 @@ function selectTab(i: number) {
   router.replace({ query: i ? { c: String(i) } : {} });
 }
 
-const isPlaying = (m: Moment) => playback.playing && playback.trackId === m.trackId && playback.t >= m.startSec - 0.5 && playback.t <= m.endSec + 0.5;
+const isHere = (m: Moment) => playback.trackId === m.trackId && playback.t >= m.startSec - 0.5 && playback.t <= m.endSec + 0.5;
+const isPlaying = (m: Moment) => playback.playing && isHere(m);
 </script>
 
 <template>
@@ -107,6 +108,7 @@ const isPlaying = (m: Moment) => playback.playing && playback.trackId === m.trac
             :note="m.note"
             :tags="[...(m.feelings || []), ...(m.qualities || [])]"
             :playing="isPlaying(m)"
+            :current="isHere(m)"
             :song-duration="library.track(m.trackId)?.durationSec"
             editable
             :editing="editing?.id === m.id"

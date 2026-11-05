@@ -167,7 +167,7 @@ async function remove(id: string) {
     <ol v-if="sec.items.length || sec.empty" class="list">
       <li v-if="!sec.items.length" class="lrow note body">{{ sec.empty }}</li>
         <li v-for="t in sec.items" :key="t.id" class="lrow" :aria-current="isCurrent(t) ? 'true' : undefined">
-          <button type="button" class="cp" :aria-label="(isCurrent(t) && playback.playing ? 'Pause ' : 'Play ') + t.title" @click="playRow(t)">
+          <button type="button" class="cp" :class="{ on: isCurrent(t) && playback.playing, cur: isCurrent(t) && !playback.playing }" :aria-label="(isCurrent(t) && playback.playing ? 'Pause ' : 'Play ') + t.title" @click="playRow(t)">
             <Icon :name="isCurrent(t) && playback.playing ? 'pause' : 'play'" :size="12" />
           </button>
           <div class="info">
@@ -251,6 +251,9 @@ h1 { margin: 0; color: var(--ink); }
   background: none; color: var(--ink);
   display: flex; align-items: center; justify-content: center; cursor: pointer;
 }
+/* Same rule as MomentRow: accent while playing, accent outline while loaded and paused. */
+.cp.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.cp.cur { border-color: var(--accent); color: var(--accent); }
 .info { flex: 1; min-width: 0; }
 .title { display: block; max-width: 100%; padding: 0; border: 0; background: none; color: var(--ink); text-align: left; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mute { color: var(--ink-mute); }
