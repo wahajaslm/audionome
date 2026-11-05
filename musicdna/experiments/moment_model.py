@@ -43,6 +43,8 @@ VARIANTS: dict[str, dict[str, Any]] = {
     'full_no_cnn':      {'cqt': None, 'features': FEATURE_GROUPS, 'clap': True},
     'full_no_clap':     {'cqt': 'tonic', 'features': FEATURE_GROUPS, 'clap': False},
     'full_no_features': {'cqt': 'tonic', 'features': (), 'clap': True},
+    # Needs only DSP, spatial and CLAP, so it runs before stems and the Eastern features exist.
+    'western_no_cnn':   {'cqt': None, 'features': ('dsp', 'spatial'), 'clap': True},
 }
 CLEAR_GAP = 0.1   # residual-replay gap for a pair to count (as in notebook 02, Step 2d)
 

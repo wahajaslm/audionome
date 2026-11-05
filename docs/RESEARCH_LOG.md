@@ -100,3 +100,9 @@ Sources were found by a literature search agent and are linked in the session no
 - Essentia and compIAM are AGPL-3.0.
 - MTG pretrained models and Saraga are non-commercial.
 - Both are fine for research. A product needs legal review.
+- **2026-11-05 · Interim model (no CNN, Western features only: DSP + spatial + CLAP).** 92 songs, 5 artist-grouped folds, pairwise accuracy on clear within-song pairs (random ≈ 0.50):
+  - **All songs:** model 0.606 [0.563, 0.647] vs. best simple rule (brightest window) 0.582.
+  - **Western:** 0.626 vs. 0.566. **House:** 0.649 vs. 0.536.
+  - **Eastern:** **0.571, below the brightness rule (0.615).**
+  - Western features help on Western and house songs but not on Eastern songs. That points the way the hypothesis predicts. It is not proof: the confidence intervals overlap, and there are only 41 Eastern songs.
+  - Top-1 hit (picking the most replayed window within ±6 s) is about 0.12–0.16 for every method, near random.
