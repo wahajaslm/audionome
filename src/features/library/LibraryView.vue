@@ -32,10 +32,8 @@ const showStream = ref(false);
 const confirmDelete = ref<string | null>(null);
 
 const uploaded = computed(() => tracks.value.filter(t => t.id !== 'original-demo'));
-const demos = computed(() => tracks.value.filter(t => t.id === 'original-demo'));
 const sections = computed(() => [
   { key: 'own', title: 'Your songs (' + uploaded.value.length + ')', items: uploaded.value, empty: 'No songs yet. Choose Import audio to add an MP3, WAV, FLAC, M4A or OGG file.' },
-  { key: 'demo', title: 'Built-in reference recording', items: demos.value, empty: '' },
 ]);
 
 const momentCount = (id: string) => momentsStore.moments.filter(m => m.trackId === id).length;
