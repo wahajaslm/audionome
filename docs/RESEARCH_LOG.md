@@ -208,3 +208,16 @@ Sources were found by a literature search agent and are linked in the session no
   - **PASS for sung genres:** the remaining gaps follow the music, not the tracker. Under pYIN, pop sat at 2–19%.
   - **Caveat:** the vocal off-grid fraction is higher in rock (0.31), tech house (0.30) and hip-hop (0.21) than in Eastern songs (0.088). It also captures rough or speech-like delivery, pitch-processed vocals and unreliable tonics, not only intended microtones. It stays as a feature but is not interpreted as "microtones" without further validation.
 - **Run budget:** the main-set run is exploratory and uses 1 seed (CPU shared with another project). The 5-seed rule applies to the confirmation run, which decides H1/H2.
+- **2026-11-06 · Main test, EXPLORATORY run on the main set** (1 seed, 5 artist-grouped folds, FCPE features; drone and instrument off-grid dropped per the gate). Pairwise accuracy:
+  - **Eastern:** `full` 0.648 [0.582, 0.711] vs. `western` 0.608.
+  - **Western:** 0.640 vs. 0.645. **House:** 0.624 vs. 0.627.
+  - Brightness rule on Eastern songs: 0.656.
+  - **H1-style paired difference, full − western, Eastern: +0.040 [+0.009, +0.074].** The interval is above 0.
+  - Western: −0.006 [−0.060, +0.047].
+  - **H2-style asymmetry (Eastern gain − Western gain): +0.046 [−0.016, +0.110].** The interval includes 0.
+  - **What carries the gain (permutation importance in `full`):**
+    - **Tonic-aligned CQT pictures: Eastern +0.053, Western −0.001.**
+    - Embedding: Eastern +0.034.
+    - Hand-built vocal, intonation and Eastern-ensemble blocks: ≤ 0.004, i.e. unused.
+    - In `western`, the semitone CQT matters in both regions: Eastern +0.045, Western +0.029.
+  - **Reading:** the fine-pitch, Sa-aligned picture is what helps on Eastern songs, and it is ignored on Western songs. That is the predicted direction. The hand-built Eastern descriptors add nothing on top. Not a confirmation: 1 seed, and a design shaped on these songs. The decision rests on the confirmation set.
