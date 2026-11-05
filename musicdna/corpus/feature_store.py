@@ -327,20 +327,25 @@ class IntonationStage(FeatureStage):
 
 class EasternStage(FeatureStage):
     """12-D ensemble descriptors per window: roughness, build-up, drone, tempo arc, percussion and
-    melodic-instrument microtones (see musicdna.features.eastern). Needs the drums and other stems."""
+    melodic-instrument microtones (see musicdna.features.eastern). Needs the drums and other stems and
+    the tonic: the drone is measured on Sa and Pa. Runs after intonation."""
     name = 'eastern'
-    artifacts = {'eastern': ('windows', 'audio', 'vocal')}
+    artifacts = {'eastern': ('windows', 'audio', 'vocal', 'intonation')}
     parallel = True
 
     def is_ready(self, store: FeatureStore, entry: CorpusEntry) -> bool:
-        return bool(entry.audio_file) and all(store.has(entry.video_id, stem) for stem in STEM_ARTIFACTS)
+        return (bool(entry.audio_file) and all(store.has(entry.video_id, stem) for stem in STEM_ARTIFACTS)
+                and store.has(entry.video_id, 'tonic'))
 
     def run(self, store: FeatureStore, entry: CorpusEntry) -> None:
+        from musicdna.features.cqt import MIN_TONIC_CONFIDENCE
         from musicdna.features.eastern import EasternFeatureExtractor
         rate = store.config.audio.analysis_sr
         stems = {stem: store.stem(entry.video_id, stem) for stem in STEM_ARTIFACTS}
-        table = EasternFeatureExtractor().song(store.audio(entry, rate), rate, stems,
-                                               store.config.vocal.sample_rate, store.windows(entry))
+        tonic = store.load_json(entry.video_id, 'tonic')
+        trusted = tonic['used']['source'] == 'annotated' or tonic['detected'].get('confidence', 0.0) >= MIN_TONIC_CONFIDENCE
+        table = EasternFeatureExtractor().song(store.audio(entry, rate), rate, stems, store.config.vocal.sample_rate,
+                                               store.windows(entry), tonic['used'].get('hz') if trusted else None)
         store.save(entry.video_id, 'eastern', table)
 
 

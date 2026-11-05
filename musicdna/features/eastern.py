@@ -7,18 +7,27 @@ This module covers the rest of the ensemble, from the mix and the Demucs drums a
                                   MIRtoolbox; Beier et al. 2022 found roughness peaks predict chills)
     energy_slope, energy_gain     build-up inside the window, and loudness change from the previous window
                                   (the FAV corpus: energy gain cited 14x more than energy loss)
-    drone_strength                how constantly one pitch class sounds through the window (tanpura, harmonium)
+    drone_strength                how constantly the tonic (Sa) or its fifth (Pa) sounds through the window
+                                  (tanpura, harmonium, sustained bass on Sa)
     tempo_bpm, tempo_change       local tempo and its change, in octaves, from the previous window
     percussion_onset_rate         drum-stem onsets per second (tabla, dholak, darbuka, riq)
     percussion_share              drums' share of stem energy
     instrument_share              the other stem's share (sitar, sarangi, harmonium, oud, bansuri, strings)
-    instrument_offgrid            share of the other stem's pitch peaks lying 30-70 cents from the nearest
-                                  Western semitone, after correcting the song's overall tuning
+    instrument_offgrid            share of the other stem's pitch energy on the song's off-grid scale
+                                  degrees: pitches it keeps returning to that sit 40-60 cents from the nearest
+                                  Western semitone (e.g. a maqam's neutral third), after the tuning correction
     instrument_solo               share of time an instrument plays while the voice is silent
     voice_instrument_alternation  switches between voice-led and instrument-led sound per minute
 
-Example: a sarangi line sliding through komal re sits ~40 cents off the equal-tempered grid, so its
-windows get a high instrument_offgrid; a piano chord progression stays near 0.
+Example: an oud playing maqam rast returns again and again to a neutral third ~350 cents above the
+tonic, so that degree is off-grid and its windows score high; a piano progression stays near 0.
+
+FIX (2026-11-05 Step 2 check): the first versions measured the wrong things. drone_strength took the most
+constant pitch class of any kind, so house synth pads scored highest (0.51 vs. Eastern songs 0.28); it
+now only counts Sa or Pa. instrument_offgrid counted every pitch peak between semitones, so detuned house
+synths scored highest (tech house 0.164, Bollywood 0.046); it now counts only stable off-grid scale
+degrees (peaks of the song's own 20-cent pitch histogram), and a detuned spread around a Western note
+has its histogram peak on the note, so it no longer counts.
 """
 from __future__ import annotations
 
@@ -59,10 +68,15 @@ class EasternFeatureExtractor:
     """One song at a time: frame-level curves first, then one row of `EASTERN_FEATURES` per window."""
 
     def song(self, mix: np.ndarray, mix_sr: int, stems: dict[str, np.ndarray], stem_sr: int,
-             windows: list[tuple[float, float]]) -> np.ndarray:
+             windows: list[tuple[float, float]], tonic_hz: float | None = None) -> np.ndarray:
+        """`tonic_hz`: the song's Sa. Without it, the strongest pitch class of the mix stands in."""
         if not windows:
             return np.zeros((0, len(EASTERN_FEATURES)))
         mix_curves = self._mix_curves(mix, mix_sr)
+        chroma_mean = mix_curves['chroma'].mean(axis=1)
+        sa = (int(round(12 * np.log2(tonic_hz / librosa.note_to_hz('C1')))) % 12
+              if tonic_hz and np.isfinite(tonic_hz) else int(np.argmax(chroma_mean)))
+        mix_curves['drone_classes'] = (sa, (sa + 7) % 12)
         stem_curves = self._stem_curves(stems, stem_sr)
         rows = [self._window(mix_curves, stem_curves, start, end) for start, end in windows]
         table = np.array(rows, dtype=np.float64)
@@ -118,8 +132,16 @@ class EasternFeatureExtractor:
         is_peak = np.zeros_like(power, dtype=bool)
         is_peak[1:-1] = (power[1:-1] > power[:-2]) & (power[1:-1] >= power[2:])
         peak_power = np.where(is_peak, power, 0.0)
-        offset = np.arange(n_bins) % (OFFGRID_BINS_PER_OCTAVE // 12)  # 0..4 -> 0, 20, 40, 60, 80 cents
-        off = peak_power[(offset == 2) | (offset == 3)].sum(axis=0)    # 40 and 60 cents: between semitones
+        # The song's scale: peaks of its pitch histogram folded into one octave (60 bins of 20 cents).
+        per_octave = OFFGRID_BINS_PER_OCTAVE
+        histogram = np.zeros(per_octave)
+        np.add.at(histogram, np.arange(n_bins) % per_octave, peak_power.sum(axis=1))
+        smooth = 0.25 * np.roll(histogram, 1) + 0.5 * histogram + 0.25 * np.roll(histogram, -1)
+        is_degree = (smooth > np.roll(smooth, 1)) & (smooth >= np.roll(smooth, -1)) & (smooth > 1.5 * np.median(smooth))
+        offset = np.arange(per_octave) % (per_octave // 12)        # 0..4 -> 0, 20, 40, 60, 80 cents above a semitone
+        off_degrees = is_degree & ((offset == 2) | (offset == 3))  # 40 or 60 cents: between semitones
+        on_off_degree = off_degrees[np.arange(n_bins) % per_octave]
+        off = peak_power[on_off_degree].sum(axis=0)
         return {'offgrid_off': off, 'offgrid_total': peak_power.sum(axis=0)}
 
     # One window -----------------------------------------------------------------------------------
@@ -135,7 +157,7 @@ class EasternFeatureExtractor:
         slope = float(np.polyfit(np.linspace(0, 1, len(log_rms)), log_rms, 1)[0]) if len(log_rms) > 2 else 0.0
         chroma = mix['chroma'][:, span]
         chroma = chroma / np.maximum(chroma.max(axis=0, keepdims=True), 1e-9)
-        drone = float(np.max(np.percentile(chroma, 10, axis=1))) if chroma.shape[1] else 0.0
+        drone = float(np.max(np.percentile(chroma[list(mix['drone_classes'])], 10, axis=1))) if chroma.shape[1] else 0.0
         env = mix['onset_env'][span]
         tempo = float(librosa.feature.tempo(onset_envelope=env, sr=mix['sr'], hop_length=MIX_HOP)[0]) if len(env) > 8 else 0.0
         r_span = self._span(start, end, mix['sr'], ROUGHNESS_HOP, len(mix['roughness']))

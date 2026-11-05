@@ -51,3 +51,21 @@ def test_build_up_has_positive_slope_and_gain():
                                            SR, [(0.0, 12.0), (12.0, 24.0)])
     assert table[0, COL['energy_slope']] > 0 and table[1, COL['energy_gain']] > 0
     assert table[0, COL['energy_gain']] == 0  # first window has no previous one
+
+
+def test_detuned_synth_is_not_offgrid():
+    # Two copies of each note, 15 cents either side of it (a "supersaw" detune): spread, but centred on the note.
+    notes = [220 * 2 ** (k / 12) for k in (0, 2, 4, 5, 7, 9, 11, 12)]
+    detuned = np.concatenate([tone(f * 2 ** (0.15 / 12), 3.0, SR) + tone(f * 2 ** (-0.15 / 12), 3.0, SR) for f in notes])
+    assert run(detuned)[:, COL['instrument_offgrid']].mean() < 0.05
+
+
+def test_drone_counts_only_sa_or_pa():
+    seconds, n = 24.0, int(24 * SR)
+    t = np.arange(int(seconds * MIX_SR)) / MIX_SR
+    held = lambda hz: (0.3 * np.sin(2 * np.pi * hz * t)).astype(np.float32)
+    stems = {s: np.zeros(n, np.float32) + 1e-4 for s in ('vocals', 'drums', 'other')}
+    windows = [(0.0, 12.0), (12.0, 24.0)]
+    on_sa = EasternFeatureExtractor().song(held(146.83), MIX_SR, stems, SR, windows, tonic_hz=146.83)    # D held, Sa = D
+    off_sa = EasternFeatureExtractor().song(held(185.0), MIX_SR, stems, SR, windows, tonic_hz=146.83)    # F# held, Sa = D
+    assert on_sa[0, COL['drone_strength']] > 0.8 > off_sa[0, COL['drone_strength']] + 0.4
