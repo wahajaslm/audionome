@@ -32,6 +32,9 @@ from musicdna.paths import CORPUS_DIR
 FEATURE_DIRECTORY = CORPUS_DIR / 'features'
 TONIC_ANNOTATIONS = CORPUS_DIR / 'tonic_annotations.json'
 JSON_ARTIFACTS = {'lyrics', 'tonic', 'vocal_gate'}
+# Demucs stems kept as audio. Drums and other were added for the Eastern features: tabla, dholak and
+# darbuka land in drums; sitar, sarangi, harmonium, oud and bansuri land in other.
+STEM_ARTIFACTS = ('vocals', 'drums', 'other')
 
 
 class FeatureStore:
@@ -49,8 +52,8 @@ class FeatureStore:
         self.grid = WindowGrid(config.windows)
 
     def path(self, video_id: str, artifact: str) -> Path:
-        if artifact == 'vocals':
-            return self.root / video_id / f'vocals_{self.config.audio.stem_model}_{self.config.vocal.sample_rate}.flac'
+        if artifact in STEM_ARTIFACTS:
+            return self.root / video_id / f'{artifact}_{self.config.audio.stem_model}_{self.config.vocal.sample_rate}.flac'
         suffix = '.json' if artifact in JSON_ARTIFACTS else '.npy'
         return self.root / video_id / f'{artifact}-{self.config.section_hash(*ARTIFACT_SECTIONS[artifact])}{suffix}'
 
@@ -75,7 +78,11 @@ class FeatureStore:
         return json.loads(self.path(video_id, artifact).read_text(encoding='utf8'))
 
     def vocals(self, video_id: str) -> np.ndarray:
-        audio, _ = sf.read(self.path(video_id, 'vocals'), dtype='float32')
+        return self.stem(video_id, 'vocals')
+
+    def stem(self, video_id: str, name: str) -> np.ndarray:
+        """A Demucs stem ('vocals', 'drums' or 'other'), mono at vocal.sample_rate."""
+        audio, _ = sf.read(self.path(video_id, name), dtype='float32')
         return audio
 
     def audio(self, entry: CorpusEntry, rate: int, mono: bool = True) -> np.ndarray:
@@ -149,9 +156,13 @@ class FeatureStage(ABC):
 
 
 class StemStage(FeatureStage):
-    """Demucs vocal stem at the pitch-tracking sample rate."""
+    """Demucs vocal, drum and other stems at the pitch-tracking sample rate (one separation, three files)."""
     name = 'stems'
-    artifacts = {'vocals': ('audio', 'vocal')}
+    artifacts = {stem: ('audio', 'vocal') for stem in STEM_ARTIFACTS}
+
+    def is_done(self, store: FeatureStore, entry: CorpusEntry) -> bool:
+        # Songs separated before drums/other were kept have only the vocal file; they are redone.
+        return all(store.has(entry.video_id, stem) for stem in STEM_ARTIFACTS)
 
     def run(self, store: FeatureStore, entry: CorpusEntry) -> None:
         import librosa
@@ -159,11 +170,12 @@ class StemStage(FeatureStage):
         rate = store.config.audio.stereo_sr
         stereo = store.audio(entry, rate, mono=False)
         # separate_demucs trims stems to len(input), so pass (samples, 2) rather than (2, samples).
-        vocals = StemSeparator().separate_demucs(stereo.T, rate, model_name=store.config.audio.stem_model)['vocals']
-        target = store.path(entry.video_id, 'vocals')
-        target.parent.mkdir(parents=True, exist_ok=True)
-        sf.write(target, librosa.resample(vocals, orig_sr=rate, target_sr=store.config.vocal.sample_rate),
-                 store.config.vocal.sample_rate)
+        stems = StemSeparator().separate_demucs(stereo.T, rate, model_name=store.config.audio.stem_model)
+        for stem in STEM_ARTIFACTS:
+            target = store.path(entry.video_id, stem)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            sf.write(target, librosa.resample(stems[stem], orig_sr=rate, target_sr=store.config.vocal.sample_rate),
+                     store.config.vocal.sample_rate)
 
 
 class DspStage(FeatureStage):
@@ -302,6 +314,25 @@ class IntonationStage(FeatureStage):
         return json.loads(path.read_text()) if path.exists() else {}
 
 
+class EasternStage(FeatureStage):
+    """12-D ensemble descriptors per window: roughness, build-up, drone, tempo arc, percussion and
+    melodic-instrument microtones (see musicdna.features.eastern). Needs the drums and other stems."""
+    name = 'eastern'
+    artifacts = {'eastern': ('windows', 'audio', 'vocal')}
+    parallel = True
+
+    def is_ready(self, store: FeatureStore, entry: CorpusEntry) -> bool:
+        return bool(entry.audio_file) and all(store.has(entry.video_id, stem) for stem in STEM_ARTIFACTS)
+
+    def run(self, store: FeatureStore, entry: CorpusEntry) -> None:
+        from musicdna.features.eastern import EasternFeatureExtractor
+        rate = store.config.audio.analysis_sr
+        stems = {stem: store.stem(entry.video_id, stem) for stem in STEM_ARTIFACTS}
+        table = EasternFeatureExtractor().song(store.audio(entry, rate), rate, stems,
+                                               store.config.vocal.sample_rate, store.windows(entry))
+        store.save(entry.video_id, 'eastern', table)
+
+
 class LyricsStage(FeatureStage):
     """Whisper transcript of the vocal stem (needs faster-whisper)."""
     name = 'lyrics'
@@ -321,7 +352,8 @@ class LyricsStage(FeatureStage):
 
 
 STAGES: dict[str, FeatureStage] = {stage.name: stage for stage in (
-    StemStage(), DspStage(), SpatialStage(), VocalStage(), IntonationStage(), ClapStage(), MertStage(), LyricsStage())}
+    StemStage(), DspStage(), SpatialStage(), VocalStage(), IntonationStage(), EasternStage(), ClapStage(), MertStage(),
+    LyricsStage())}
 ARTIFACT_SECTIONS: dict[str, tuple[str, ...]] = {
     artifact: sections for stage in STAGES.values() for artifact, sections in stage.artifacts.items()}
 DEFAULT_STAGES = ['stems', 'dsp', 'spatial', 'vocal', 'intonation', 'clap']
