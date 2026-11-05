@@ -42,3 +42,17 @@ def test_registry_gives_each_corpus_its_own_folders(tmp_path):
     entry = song('abc', 1, 0)
     entry.audio_file = 'abc.m4a'
     assert CorpusManifest.audio_path(entry, store.audio_directory) == genre.directory / 'audio' / 'abc.m4a'
+
+
+def test_replay_curve_reads_heatmap_and_survives_manifest_round_trip(tmp_path):
+    from musicdna.corpus.genre_mix import GenreMixManifest, replay_curve
+    info = {'heatmap': [{'start_time': 0.0, 'end_time': 2.774, 'value': 0.73302},
+                        {'start_time': 55.4, 'end_time': 58.17, 'value': 1.0}]}
+    assert replay_curve(info) == [[0.0, 2.77, 0.733], [55.4, 58.17, 1.0]]
+    # Videos with too few views have no graph: None, not an empty curve.
+    assert replay_curve({'heatmap': None}) is None and replay_curve({}) is None
+    entry = song('abc', 1_000_000, 10_000)
+    entry.replay_curve = replay_curve(info)
+    path = tmp_path / 'manifest.json'
+    GenreMixManifest(manifest_version=1, created_at='', selection={}, entries=[entry]).save(path)
+    assert GenreMixManifest.load(path).entries[0].replay_curve == [[0.0, 2.77, 0.733], [55.4, 58.17, 1.0]]

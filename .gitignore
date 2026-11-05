@@ -21,3 +21,4 @@ research-output/
 data/genre_mix/audio/
 data/genre_mix/features/
 data/genre_mix/likes_cache.json
+data/genre_mix/replay_cache.json

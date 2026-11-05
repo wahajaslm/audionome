@@ -12,10 +12,16 @@ measured within that genre:
 Songs under MIN_VIEWS are left out first: search results include many uploads with a few
 dozen views (auto-generated "Single 17" channels), which are noise, not low-rated music.
 
+Each song also keeps YouTube's "Most replayed" curve when the video has one: about 100 segments,
+each scaled so the most replayed one is 1.0. It is an average over all viewers, with no viewer
+identities, and is the training target for the shared moment-interest model. It is read from the
+same page lookup as the like count, so it costs no extra requests, and without sign-in cookies.
+
 Audio is research-only and never committed or redistributed (rights stay 'unconfirmed').
 Generic loading, saving, download and checksums live in `musicdna.corpus.manifest`.
 
     python -m musicdna.corpus.genre_mix select --per-tier 2
+    python -m musicdna.corpus.genre_mix replay      # curves for songs selected before replay capture
     python -m musicdna.corpus.genre_mix download
     python -m musicdna.corpus.genre_mix verify
 """
@@ -36,6 +42,9 @@ GENRE_MIX_DIR = PROJECT_ROOT / 'data' / 'genre_mix'
 MANIFEST_PATH = GENRE_MIX_DIR / 'manifest.json'
 AUDIO_DIRECTORY = GENRE_MIX_DIR / 'audio'
 LIKES_CACHE = GENRE_MIX_DIR / 'likes_cache.json'
+# video id -> replay curve, or None when the lookup found no "Most replayed" graph (too few views).
+REPLAY_CACHE = GENRE_MIX_DIR / 'replay_cache.json'
+OPENING_SEC = 15.0  # replay summaries ignore the start of a video, where every view begins
 MANIFEST_VERSION = 1
 # RATE LIMIT FIX - 4 parallel like lookups for ~60 songs per genre made YouTube answer "Sign in
 # to confirm you're not a bot" after two genres, and every later song was silently dropped
@@ -90,6 +99,8 @@ class GenreMixEntry(CorpusEntry):
     view_count: int
     like_count: int
     query: str
+    # [start_sec, end_sec, value] per segment, value 0-1 within this video; None = no graph or not looked up.
+    replay_curve: list[list[float]] | None = None
 
     @property
     def like_ratio(self) -> float:
@@ -131,6 +142,20 @@ def split_title(title: str, channel: str) -> tuple[str, str]:
         artist, song = clean.split(' - ', 1)
         return song.strip(), artist.strip()
     return clean, channel
+
+
+def replay_curve(info: dict[str, Any]) -> list[list[float]] | None:
+    """YouTube's "Most replayed" graph from a yt-dlp video lookup, or None when the video has none.
+
+    Example (Pasoori): [[0.0, 2.77, 0.733], ...], highest near 0:55 where the chorus hook comes in.
+    The high start and the slow fall are viewers arriving and dropping off (Medusa's curve is 1.0 at
+    0:00, its real peak is 0.92 at 0:57), so models must compare segments within a song and correct
+    for position, not read values as enjoyment.
+    """
+    markers = info.get('heatmap') or []
+    curve = [[round(float(m['start_time']), 2), round(float(m['end_time']), 2), round(float(m['value']), 4)]
+             for m in markers if m.get('start_time') is not None and m.get('value') is not None]
+    return curve or None
 
 
 def assign_tiers(pool: list[GenreMixEntry], per_tier: int) -> list[GenreMixEntry]:
@@ -176,6 +201,8 @@ class GenreMixCatalog:
         # Extra yt-dlp options, e.g. {'cookiesfrombrowser': ('chrome',)} (--cookies-from-browser).
         self.ydl_options = ydl_options or {}
         self.likes: dict[str, int | None] = json.loads(LIKES_CACHE.read_text()) if LIKES_CACHE.exists() else {}
+        self.replays: dict[str, list[list[float]] | None] = (
+            json.loads(REPLAY_CACHE.read_text()) if REPLAY_CACHE.exists() else {})
 
     def build_manifest(self, per_tier: int, genres: list[str] | None = None) -> GenreMixManifest:
         names = genres or list(GENRES)
@@ -192,6 +219,8 @@ class GenreMixCatalog:
                 'per_tier': per_tier, 'tiers': list(TIERS), 'genres': {n: GENRES[n][0] for n in names},
                 'ranking': 'YouTube view_count and like_count at listing time, within each genre',
                 'duration_sec': [MIN_DURATION_SEC, MAX_DURATION_SEC],
+                'replay_curve': 'YouTube "Most replayed" graph (yt-dlp heatmap), all viewers averaged, '
+                                'scaled to 1.0 at the most replayed segment of each video',
             },
             entries=entries,
         )
@@ -209,11 +238,10 @@ class GenreMixCatalog:
                 seen_titles.add(key)
                 found[video['id']] = (video, query)
         # Likes are not in search results: one lookup per new song, one at a time (RATE LIMIT FIX).
+        # The same lookup also returns the replay curve.
         for video_id in found:
             if video_id not in self.likes:
-                self.likes[video_id] = self.like_count(video_id)
-                LIKES_CACHE.parent.mkdir(parents=True, exist_ok=True)
-                LIKES_CACHE.write_text(json.dumps(self.likes))
+                self.look_up(video_id)
                 time.sleep(LOOKUP_PAUSE_SEC)
         likes = {video_id: self.likes[video_id] for video_id in found}
         entries = []
@@ -226,8 +254,18 @@ class GenreMixCatalog:
                 duration_sec=int(video['duration']), url=f'https://www.youtube.com/watch?v={video_id}',
                 genre=name, region=region, tier='', channel=str(video.get('channel') or ''),
                 view_count=int(video.get('view_count') or 0), like_count=int(likes[video_id]), query=query,
+                replay_curve=self.replays.get(video_id),
             ))
         return entries
+
+    def add_replay_curves(self, manifest: GenreMixManifest) -> None:
+        """Fills `replay_curve` for entries selected before replay capture, one lookup at a time."""
+        for entry in manifest.entries:
+            assert isinstance(entry, GenreMixEntry)
+            if entry.video_id not in self.replays:
+                self.look_up(entry.video_id)
+                time.sleep(LOOKUP_PAUSE_SEC)
+            entry.replay_curve = self.replays.get(entry.video_id)
 
     def search(self, query: str) -> list[dict[str, Any]]:
         import yt_dlp
@@ -236,18 +274,22 @@ class GenreMixCatalog:
             info = client.extract_info(f'ytsearch{SEARCH_RESULTS_PER_QUERY}:{query}', download=False)
         return [e for e in info.get('entries') or [] if e and e.get('id')]
 
-    def like_count(self, video_id: str) -> int | None:
-        """Like count, or None when the video is gone (private, removed, region-blocked)."""
+    def look_up(self, video_id: str) -> None:
+        """Caches the like count (None when the video is gone: private, removed, region-blocked)
+        and the replay curve (None when YouTube shows no graph) from one page lookup."""
         import yt_dlp
         try:
             options = {'quiet': True, 'no_warnings': True, 'skip_download': True, **self.ydl_options}
             with yt_dlp.YoutubeDL(options) as client:
                 info = client.extract_info(f'https://www.youtube.com/watch?v={video_id}', download=False)
-            return int(info.get('like_count') or 0)
+            self.likes[video_id], self.replays[video_id] = int(info.get('like_count') or 0), replay_curve(info)
         except Exception as error:
             if 'not a bot' in str(error) or 'Sign in to confirm' in str(error):
                 raise YouTubeBlocked(str(error)) from error
-            return None
+            self.likes[video_id], self.replays[video_id] = None, None
+        LIKES_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        LIKES_CACHE.write_text(json.dumps(self.likes))
+        REPLAY_CACHE.write_text(json.dumps(self.replays))
 
 
 def main() -> None:
@@ -256,6 +298,8 @@ def main() -> None:
     select_parser = commands.add_parser('select', help='Build the manifest from YouTube search results')
     select_parser.add_argument('--per-tier', type=int, default=2)
     select_parser.add_argument('--genres', nargs='*', choices=list(GENRES), help='Default: all genres')
+    # No --cookies-from-browser here: replay curves are public, so no account is ever linked to them.
+    commands.add_parser('replay', help='Add "Most replayed" curves to manifest entries that lack them')
     download_parser = commands.add_parser('download', help='Fetch audio for every manifest entry')
     for sub in (select_parser, download_parser):
         sub.add_argument('--cookies-from-browser', metavar='BROWSER',
@@ -276,6 +320,26 @@ def main() -> None:
             assert isinstance(e, GenreMixEntry)
             print(f'{e.region:<8} {e.label}  {e.view_count:>13,} views  {e.like_ratio:6.2%} likes')
         print(f'{len(manifest.entries)} songs -> {MANIFEST_PATH}')
+    elif arguments.command == 'replay':
+        manifest = GenreMixManifest.load()
+        try:
+            GenreMixCatalog().add_replay_curves(manifest)
+        except YouTubeBlocked:
+            raise SystemExit(f'YouTube is blocking requests ("not a bot"). Curves so far are saved in {REPLAY_CACHE}. '
+                             'Wait a few hours and re-run.')
+        manifest.save()
+        with_curve = 0
+        for e in manifest.entries:
+            assert isinstance(e, GenreMixEntry)
+            if e.replay_curve:
+                with_curve += 1
+                # Skip the opening: everyone starts the video there (Medusa: 1.0 at 0:00, real peak 0:57).
+                after_opening = [s for s in e.replay_curve if s[0] >= OPENING_SEC] or e.replay_curve
+                peak = max(after_opening, key=lambda segment: segment[2])
+                print(f'{e.label}  peak {int(peak[0]) // 60}:{int(peak[0]) % 60:02d} ({peak[2]:.2f})')
+            else:
+                print(f'{e.label}  no replay graph')
+        print(f'{with_curve}/{len(manifest.entries)} songs have a replay curve -> {MANIFEST_PATH}')
     elif arguments.command == 'download':
         manifest = GenreMixManifest.load()
         failures = manifest.download(ydl_options=ydl_options)
