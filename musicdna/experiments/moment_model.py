@@ -333,26 +333,98 @@ def summarize(per_song: list[dict[str, Any]], seed: int = 0) -> dict[str, Any]:
 
 
 def evaluate(variant: str, songs: list[Song], folds: int, epochs: int, device: str,
-             with_importance: bool = False) -> dict[str, Any]:
-    per_song, shuffled, started = [], {}, time.time()
-    for f, test_idx in enumerate(artist_folds(songs, folds)):
-        held_out = set(test_idx)
-        test = [songs[i] for i in test_idx]
-        train = [s for i, s in enumerate(songs) if i not in held_out]
-        trainer = Trainer(variant, epochs=epochs, device=device)
-        scores, residual = trainer.fit_predict(train, test)
-        for s in test:
-            per_song.append({'video_id': s.video_id, 'region': s.region, 'genre': s.genre,
+             with_importance: bool = False, seeds: int = 1) -> dict[str, Any]:
+    """Artist-grouped folds; each fold trained once per seed. Per-song metrics are averaged over seeds,
+    and `per_seed` keeps each seed's summary so the spread from training randomness is visible.
+    The folds themselves stay fixed (seed 0), so seeds only change the model's initialisation and order."""
+    by_seed: list[list[dict[str, Any]]] = []
+    shuffled: dict[str, list[dict[str, Any]]] = {}
+    started = time.time()
+    for seed in range(seeds):
+        rows: list[dict[str, Any]] = []
+        for f, test_idx in enumerate(artist_folds(songs, folds)):
+            held_out = set(test_idx)
+            test = [songs[i] for i in test_idx]
+            train = [s for i, s in enumerate(songs) if i not in held_out]
+            trainer = Trainer(variant, epochs=epochs, device=device, seed=seed)
+            scores, residual = trainer.fit_predict(train, test)
+            for s in test:
+                rows.append({'video_id': s.video_id, 'region': s.region, 'genre': s.genre,
                              **song_metrics(scores[s.video_id], residual[s.video_id])})
-        if with_importance:
-            for name, rows in trainer.importance(test, residual).items():
-                shuffled.setdefault(name, []).extend(rows)
-        print(f'  {variant} fold {f + 1}/{folds} done ({time.time() - started:.0f} s)', flush=True)
+            if with_importance and seed == 0:
+                for name, shuffled_rows in trainer.importance(test, residual).items():
+                    shuffled.setdefault(name, []).extend(shuffled_rows)
+            print(f'  {variant} seed {seed + 1}/{seeds} fold {f + 1}/{folds} done ({time.time() - started:.0f} s)', flush=True)
+        by_seed.append(rows)
+    per_song = []
+    for first in by_seed[0]:
+        same = [next(r for r in rows if r['video_id'] == first['video_id']) for rows in by_seed]
+        per_song.append({**{k: first[k] for k in ('video_id', 'region', 'genre')},
+                         **{m: float(np.nanmean([r[m] for r in same])) for m in ('pairwise_accuracy', 'spearman', 'top1_within_1')}})
     report = {'variant': variant, 'spec': {k: (list(v) if isinstance(v, tuple) else v) for k, v in VARIANTS[variant].items()},
-              'summary': summarize(per_song), 'per_song': per_song}
+              'summary': summarize(per_song), 'per_seed': [summarize(rows) for rows in by_seed], 'per_song': per_song}
     if with_importance:
-        report['importance'] = importance_summary(per_song, shuffled)
+        report['importance'] = importance_summary(by_seed[0], shuffled)
     return report
+
+
+def evaluate_holdout(variant: str, train: list[Song], test: list[Song], epochs: int, device: str,
+                     seeds: int = 1) -> dict[str, Any]:
+    """Train on every song of one corpus, score once on another (the confirmation set). Per-song metrics
+    are averaged over seeds; nothing from the test songs is used for training, scaling or early stopping."""
+    by_seed = []
+    for seed in range(seeds):
+        scores, residual = Trainer(variant, epochs=epochs, device=device, seed=seed).fit_predict(train, test)
+        by_seed.append({s.video_id: song_metrics(scores[s.video_id], residual[s.video_id]) for s in test})
+        print(f'  {variant} seed {seed + 1}/{seeds} done', flush=True)
+    per_song = [{'video_id': s.video_id, 'region': s.region, 'genre': s.genre,
+                 **{m: float(np.nanmean([run[s.video_id][m] for run in by_seed])) for m in ('pairwise_accuracy', 'spearman', 'top1_within_1')}}
+                for s in test]
+    return {'variant': variant, 'spec': {k: (list(v) if isinstance(v, tuple) else v) for k, v in VARIANTS[variant].items()},
+            'summary': summarize(per_song), 'per_song': per_song}
+
+
+def comparisons(variants: dict[str, dict[str, Any]], seed: int = 0) -> dict[str, Any]:
+    """Paired difference in pairwise accuracy for every pair of variants, per region, over the same songs,
+    with a bootstrap interval over songs. Example: 'full - western' eastern +0.04 [+0.01, +0.07]."""
+    rng = np.random.default_rng(seed)
+    out: dict[str, Any] = {}
+    names = list(variants)
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            left = {r['video_id']: r for r in variants[a]['per_song']}
+            right = {r['video_id']: r for r in variants[b]['per_song']}
+            out[f'{a} - {b}'] = {}
+            for region in REGIONS:
+                d = np.array([left[v]['pairwise_accuracy'] - right[v]['pairwise_accuracy'] for v in left
+                              if v in right and (region == 'all' or left[v]['region'] == region)
+                              and np.isfinite(left[v]['pairwise_accuracy']) and np.isfinite(right[v]['pairwise_accuracy'])])
+                if len(d):
+                    boots = [np.mean(rng.choice(d, len(d))) for _ in range(4000)]
+                    out[f'{a} - {b}'][region] = {'diff': float(d.mean()), 'ci95': [float(x) for x in np.percentile(boots, [2.5, 97.5])],
+                                                 'songs': int(len(d))}
+    return out
+
+
+def run_metadata(corpus_name: str, arguments: argparse.Namespace) -> dict[str, Any]:
+    """What produced this report: code version, data version, settings and software."""
+    import hashlib
+    import subprocess
+    import sys
+    from musicdna.config import DEFAULT
+    from musicdna.paths import PROJECT_ROOT
+    git = lambda *args: subprocess.run(['git', *args], cwd=PROJECT_ROOT, capture_output=True, text=True).stdout.strip()
+    corpus = get_corpus(corpus_name)
+    return {
+        'created_at': time.strftime('%Y-%m-%dT%H:%M:%S%z'),
+        'git_commit': git('rev-parse', 'HEAD'),
+        'git_dirty': bool(git('status', '--porcelain', '--untracked-files=no')),
+        'corpus': corpus_name,
+        'manifest_sha256': hashlib.sha256(corpus.manifest_path.read_bytes()).hexdigest(),
+        'config_hash': DEFAULT.section_hash('windows', 'audio', 'vocal', 'intonation'),
+        'arguments': {k: v for k, v in vars(arguments).items()},
+        'python': sys.version.split()[0], 'torch': torch.__version__, 'numpy': np.__version__,
+    }
 
 
 def importance_summary(per_song: list[dict[str, Any]], shuffled: dict[str, list[dict[str, Any]]],
@@ -392,6 +464,18 @@ def baselines(songs: list[Song], folds: int) -> dict[str, Any]:
     return {name: summarize(r) for name, r in rows.items()}
 
 
+def holdout_baselines(train: list[Song], test: list[Song]) -> dict[str, Any]:
+    """The untrained rules on the confirmation songs, with the position prior fitted on the training corpus."""
+    prior = PositionPrior().fit([s.targets for s in train])
+    rules = {'loudest': 0, 'brightest': 1, 'busiest (onsets)': 2}
+    rng = np.random.default_rng(0)
+    out = {}
+    for name, column in rules.items():
+        out[name] = summarize([{'region': s.region, **song_metrics(s.features['dsp'][:, column], prior.residual(s.targets))} for s in test])
+    out['random'] = summarize([{'region': s.region, **song_metrics(rng.random(len(s.targets.index)), prior.residual(s.targets))} for s in test])
+    return out
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description='Train and evaluate the moment model variants')
     parser.add_argument('--variants', nargs='+', choices=list(VARIANTS), default=['full', 'western'])
@@ -399,24 +483,46 @@ def main() -> None:
     parser.add_argument('--epochs', type=int, default=40)
     parser.add_argument('--device', default='auto', help="auto = cuda, else Apple GPU (mps), else cpu")
     parser.add_argument('--importance', action='store_true', help='Also shuffle each input block and report the accuracy drop')
+    parser.add_argument('--seeds', type=int, default=1, help='Train each fold this many times (seeds 0..n-1)')
+    parser.add_argument('--corpus', default='genre_mix', help='Corpus to train on (and to cross-validate on without --test-corpus)')
+    parser.add_argument('--test-corpus', help='Train on all of --corpus, score once on this corpus (genre_mix_confirm)')
     arguments = parser.parse_args()
     if arguments.device == 'auto':
         # MPS needs PyTorch <= 2.5 on macOS 14: newer builds crash on this OS (see notebooks/03_colab_gpu.ipynb).
         arguments.device = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
     print(f'device: {arguments.device}', flush=True)
-    songs = load_songs(arguments.variants)
+    songs = load_songs(arguments.variants, arguments.corpus)
     print(f'{len(songs)} songs ({sum(len(s.targets.index) for s in songs)} windows)', flush=True)
-    report: dict[str, Any] = {'songs': len(songs), 'baselines': baselines(songs, arguments.folds), 'variants': {}}
-    for variant in arguments.variants:
-        report['variants'][variant] = evaluate(variant, songs, arguments.folds, arguments.epochs, arguments.device,
-                                               with_importance=arguments.importance)
-    RESEARCH_OUTPUT_DIR.mkdir(exist_ok=True)
-    path = RESEARCH_OUTPUT_DIR / 'moment_model_report.json'
-    path.write_text(json.dumps(report, indent=2) + '\n', encoding='utf8')
+    report: dict[str, Any] = {'run': run_metadata(arguments.corpus, arguments), 'songs': len(songs), 'variants': {}}
+    if arguments.test_corpus:
+        test = load_songs(arguments.variants, arguments.test_corpus)
+        print(f'confirmation: train on {len(songs)} {arguments.corpus} songs, test on {len(test)} {arguments.test_corpus} songs', flush=True)
+        report['test_corpus'], report['test_songs'] = arguments.test_corpus, len(test)
+        report['baselines'] = holdout_baselines(songs, test)
+        for variant in arguments.variants:
+            report['variants'][variant] = evaluate_holdout(variant, songs, test, arguments.epochs, arguments.device, arguments.seeds)
+    else:
+        report['baselines'] = baselines(songs, arguments.folds)
+        for variant in arguments.variants:
+            report['variants'][variant] = evaluate(variant, songs, arguments.folds, arguments.epochs, arguments.device,
+                                                   with_importance=arguments.importance, seeds=arguments.seeds)
+    report['comparisons'] = comparisons(report['variants'])
+    # One file per run (never overwritten), plus moment_model_report.json as the latest.
+    runs = RESEARCH_OUTPUT_DIR / 'runs'
+    runs.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime('%Y%m%d-%H%M%S')
+    tested = f'_on_{arguments.test_corpus}' if arguments.test_corpus else ''
+    path = runs / f"{stamp}_{arguments.corpus}{tested}_{'+'.join(arguments.variants)}.json"
+    for target in (path, RESEARCH_OUTPUT_DIR / 'moment_model_report.json'):
+        target.write_text(json.dumps(report, indent=2, default=str) + '\n', encoding='utf8')
     for name, entry in [*[(f'baseline {k}', v) for k, v in report['baselines'].items()],
                         *[(k, v['summary']) for k, v in report['variants'].items()]]:
         cells = '  '.join(f"{r}: {entry[r]['pairwise_accuracy']['mean']:.3f}" for r in REGIONS if r in entry)
         print(f'{name:<26} pairwise accuracy  {cells}')
+    for pair, regions in report['comparisons'].items():
+        cells = '  '.join(f"{r}: {regions[r]['diff']:+.3f} [{regions[r]['ci95'][0]:+.3f}, {regions[r]['ci95'][1]:+.3f}]"
+                          for r in ('eastern', 'western') if r in regions)
+        print(f'{pair:<40} paired difference  {cells}')
     for variant, entry in report['variants'].items():
         for name, regions in entry.get('importance', {}).items():
             cells = '  '.join(f"{r}: {regions[r]['drop']:+.3f}" for r in REGIONS if r in regions)

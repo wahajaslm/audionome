@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from musicdna.config import DEFAULT, Config
 from musicdna.corpus.coke_studio import CokeStudioManifest
-from musicdna.corpus.genre_mix import GENRE_MIX_DIR, GenreMixManifest
+from musicdna.corpus.genre_mix import GENRE_MIX_CONFIRM_DIR, GENRE_MIX_DIR, GenreMixManifest
 from musicdna.corpus.manifest import CorpusManifest
 from musicdna.paths import CORPUS_DIR
 
@@ -61,6 +61,8 @@ class Corpus:
 CORPORA: dict[str, Corpus] = {c.name: c for c in (
     Corpus('coke_studio', CORPUS_DIR, CokeStudioManifest, 'musicdna.corpus.coke_studio'),
     Corpus('genre_mix', GENRE_MIX_DIR, GenreMixManifest, 'musicdna.corpus.genre_mix'),
+    # Fresh songs for the one-time confirmation test: `python -m musicdna.corpus.genre_mix --confirm ...`.
+    Corpus('genre_mix_confirm', GENRE_MIX_CONFIRM_DIR, GenreMixManifest, 'musicdna.corpus.genre_mix'),
 )}
 DEFAULT_CORPUS = 'coke_studio'
 

@@ -56,3 +56,18 @@ def test_replay_curve_reads_heatmap_and_survives_manifest_round_trip(tmp_path):
     path = tmp_path / 'manifest.json'
     GenreMixManifest(manifest_version=1, created_at='', selection={}, entries=[entry]).save(path)
     assert GenreMixManifest.load(path).entries[0].replay_curve == [[0.0, 2.77, 0.733], [55.4, 58.17, 1.0]]
+
+
+def test_confirmation_set_never_reuses_a_main_set_song(monkeypatch):
+    from musicdna.corpus.genre_mix import GenreMixCatalog, GenreMixManifest, title_key
+    assert title_key('Pasoori (Official Video)') == title_key('PASOORI | Official video') == 'pasoori'
+    used = song('a', 9_000_000, 90_000)
+    used.title = 'Pasoori (Official Video)'
+    reupload = song('b', 8_000_000, 80_000)
+    reupload.title = 'PASOORI | Official video'   # same song, other upload: excluded by title
+    fresh = song('c', 7_000_000, 70_000)
+    catalog = GenreMixCatalog.__new__(GenreMixCatalog)
+    monkeypatch.setattr(catalog, 'genre_pool', lambda name: [used, reupload, fresh], raising=False)
+    main = GenreMixManifest(manifest_version=1, created_at='', selection={}, entries=[used])
+    chosen = catalog.build_manifest(per_tier=1, genres=['pop'], exclude=main)
+    assert [e.video_id for e in chosen.entries] == ['c']

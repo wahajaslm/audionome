@@ -55,3 +55,13 @@ def test_shuffling_the_planted_block_hurts_most():
     drops = importance_summary(per_song, trainer.importance(songs[18:], residual))
     # The replay signal was planted in the eastern block, so shuffling it costs the most.
     assert max(drops, key=lambda name: drops[name]['all']['drop']) == 'eastern ensemble'
+
+
+def test_paired_comparison_reports_difference_per_region():
+    from musicdna.experiments.moment_model import comparisons
+    a = {'per_song': [{'video_id': 'x', 'region': 'eastern', 'pairwise_accuracy': 0.7},
+                      {'video_id': 'y', 'region': 'eastern', 'pairwise_accuracy': 0.6}]}
+    b = {'per_song': [{'video_id': 'x', 'region': 'eastern', 'pairwise_accuracy': 0.6},
+                      {'video_id': 'y', 'region': 'eastern', 'pairwise_accuracy': 0.6}]}
+    out = comparisons({'full': a, 'western': b})
+    assert abs(out['full - western']['eastern']['diff'] - 0.05) < 1e-9 and out['full - western']['eastern']['songs'] == 2

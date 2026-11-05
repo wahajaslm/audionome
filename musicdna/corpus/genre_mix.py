@@ -24,6 +24,12 @@ Generic loading, saving, download and checksums live in `musicdna.corpus.manifes
     python -m musicdna.corpus.genre_mix replay      # curves for songs selected before replay capture
     python -m musicdna.corpus.genre_mix download
     python -m musicdna.corpus.genre_mix verify
+    python -m musicdna.corpus.genre_mix --confirm select --per-tier 2   # fresh confirmation set (see below)
+
+Confirmation set (--confirm): the same genres, minus K-pop, but no song from the main manifest (by video id
+or by title), in data/genre_mix_confirm/. Every design choice so far was made while looking at results on
+the main set, so the claim is only confirmed on songs that played no part in those choices. It is scored
+once, with the analysis fixed in advance (docs/RESEARCH_LOG.md, "Main test plan").
 """
 from __future__ import annotations
 import argparse
@@ -39,6 +45,8 @@ from musicdna.corpus.manifest import CorpusEntry, CorpusManifest
 from musicdna.paths import PROJECT_ROOT
 
 GENRE_MIX_DIR = PROJECT_ROOT / 'data' / 'genre_mix'
+GENRE_MIX_CONFIRM_DIR = PROJECT_ROOT / 'data' / 'genre_mix_confirm'
+CONFIRM_SKIPPED_GENRES = ('kpop',)  # outside the Eastern scope; scored below random in the main set
 MANIFEST_PATH = GENRE_MIX_DIR / 'manifest.json'
 AUDIO_DIRECTORY = GENRE_MIX_DIR / 'audio'
 LIKES_CACHE = GENRE_MIX_DIR / 'likes_cache.json'
@@ -193,6 +201,14 @@ def assign_tiers(pool: list[GenreMixEntry], per_tier: int) -> list[GenreMixEntry
     return sorted(picked, key=lambda e: TIERS.index(e.tier))
 
 
+def title_key(title: str) -> str:
+    """Title reduced to its words, so two uploads of one song match. Example: 'Pasoori (Official Video)'
+    and 'PASOORI | Official video' -> 'pasoori'."""
+    clean = re.sub(r'[\(\[][^)\]]*[\)\]]', ' ', title.lower())
+    clean = re.sub(r'\b(official|video|audio|lyrics?|hd|4k|full|song|music)\b', ' ', clean)
+    return re.sub(r'\W+', ' ', clean).strip()
+
+
 class YouTubeBlocked(RuntimeError):
     """YouTube asked to sign in ("not a bot"): stop instead of dropping every song."""
 
@@ -207,11 +223,15 @@ class GenreMixCatalog:
         self.replays: dict[str, list[list[float]] | None] = (
             json.loads(REPLAY_CACHE.read_text()) if REPLAY_CACHE.exists() else {})
 
-    def build_manifest(self, per_tier: int, genres: list[str] | None = None) -> GenreMixManifest:
+    def build_manifest(self, per_tier: int, genres: list[str] | None = None,
+                       exclude: GenreMixManifest | None = None) -> GenreMixManifest:
+        """`exclude`: songs already used elsewhere (the main set, for --confirm) are never chosen again."""
         names = genres or list(GENRES)
+        used_ids = {e.video_id for e in exclude.entries} if exclude else set()
+        used_titles = {title_key(e.title) for e in exclude.entries} if exclude else set()
         entries: list[GenreMixEntry] = []
         for name in names:
-            pool = self.genre_pool(name)
+            pool = [e for e in self.genre_pool(name) if e.video_id not in used_ids and title_key(e.title) not in used_titles]
             chosen = assign_tiers(pool, per_tier)
             print(f'{name}: {len(pool)} songs found, {len(chosen)} chosen', flush=True)
             entries += chosen
@@ -297,6 +317,7 @@ class GenreMixCatalog:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description='Genre mix research corpus (Eastern, Western, house)')
+    parser.add_argument('--confirm', action='store_true', help=f'Work on the confirmation set in {GENRE_MIX_CONFIRM_DIR}')
     commands = parser.add_subparsers(dest='command', required=True)
     select_parser = commands.add_parser('select', help='Build the manifest from YouTube search results')
     select_parser.add_argument('--per-tier', type=int, default=2)
@@ -312,25 +333,32 @@ def main() -> None:
 
     browser = getattr(arguments, 'cookies_from_browser', None)
     ydl_options = {'cookiesfrombrowser': (browser,)} if browser else {}
+    folder = GENRE_MIX_CONFIRM_DIR if arguments.confirm else GENRE_MIX_DIR
+    manifest_path, audio_directory = folder / 'manifest.json', folder / 'audio'
     if arguments.command == 'select':
         try:
-            manifest = GenreMixCatalog(ydl_options).build_manifest(arguments.per_tier, arguments.genres)
+            catalog = GenreMixCatalog(ydl_options)
+            if arguments.confirm:
+                genres = [g for g in (arguments.genres or GENRES) if g not in CONFIRM_SKIPPED_GENRES]
+                manifest = catalog.build_manifest(arguments.per_tier, genres, exclude=GenreMixManifest.load())
+            else:
+                manifest = catalog.build_manifest(arguments.per_tier, arguments.genres)
         except YouTubeBlocked:
             raise SystemExit('YouTube is blocking requests ("not a bot"). Lookups done so far are saved in '
                              f'{LIKES_CACHE}. Wait a few hours, or re-run with --cookies-from-browser chrome.')
-        manifest.save()
+        manifest.save(manifest_path)
         for e in manifest.entries:
             assert isinstance(e, GenreMixEntry)
             print(f'{e.region:<8} {e.label}  {e.view_count:>13,} views  {e.like_ratio:6.2%} likes')
-        print(f'{len(manifest.entries)} songs -> {MANIFEST_PATH}')
+        print(f'{len(manifest.entries)} songs -> {manifest_path}')
     elif arguments.command == 'replay':
-        manifest = GenreMixManifest.load()
+        manifest = GenreMixManifest.load(manifest_path)
         try:
             GenreMixCatalog().add_replay_curves(manifest)
         except YouTubeBlocked:
             raise SystemExit(f'YouTube is blocking requests ("not a bot"). Curves so far are saved in {REPLAY_CACHE}. '
                              'Wait a few hours and re-run.')
-        manifest.save()
+        manifest.save(manifest_path)
         with_curve = 0
         for e in manifest.entries:
             assert isinstance(e, GenreMixEntry)
@@ -342,14 +370,14 @@ def main() -> None:
                 print(f'{e.label}  peak {int(peak[0]) // 60}:{int(peak[0]) % 60:02d} ({peak[2]:.2f})')
             else:
                 print(f'{e.label}  no replay graph')
-        print(f'{with_curve}/{len(manifest.entries)} songs have a replay curve -> {MANIFEST_PATH}')
+        print(f'{with_curve}/{len(manifest.entries)} songs have a replay curve -> {manifest_path}')
     elif arguments.command == 'download':
-        manifest = GenreMixManifest.load()
-        failures = manifest.download(ydl_options=ydl_options)
-        manifest.save()
+        manifest = GenreMixManifest.load(manifest_path)
+        failures = manifest.download(audio_directory, ydl_options=ydl_options)
+        manifest.save(manifest_path)
         print('\n'.join(failures) or 'All downloads complete.')
     else:
-        problems = GenreMixManifest.load().verify()
+        problems = GenreMixManifest.load(manifest_path).verify(audio_directory)
         print('\n'.join(problems) or 'All files present and checksums match.')
         raise SystemExit(1 if problems else 0)
 

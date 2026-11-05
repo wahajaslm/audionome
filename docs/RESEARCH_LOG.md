@@ -32,6 +32,47 @@ Research only: YouTube replay data is not cleared for a product model.
   - Low R² means the feature adds information the embedding lacks.
 - **Why MERT may differ:** it was pretrained partly to reconstruct a CQT, a fine-pitch spectrogram. It is research-only (CC BY-NC weights), so it needs a MERT pass over the corpus.
 
+### Main test plan (fixed 2026-11-05, before the main test was run)
+
+Everything below is fixed before `full` or `western` is run with the Eastern features. Nothing here changes after seeing results.
+
+**Hypotheses**
+- **H1 (Eastern gain):** on Eastern songs, `full` scores higher than `western`.
+  - Eastern songs: Bollywood, Punjabi, qawwali/Sufi, Pakistani pop, Arabic pop, Turkish pop.
+  - `full` = tonic-aligned 20-cent CQT + DSP + spatial + vocal + intonation + intonation profile + Eastern ensemble + CLAP.
+  - `western` = semitone CQT + DSP + spatial + CLAP.
+- **H2 (asymmetry):** the gain (`full` − `western`) on Eastern songs is larger than on Western songs (pop, rock, hip-hop, jazz, R&B).
+- House is reported but not part of H2. East Asian (K-pop) is excluded.
+
+**Metric**
+- Song-averaged pairwise accuracy on clear within-song pairs (residual-replay gap > 0.1).
+- The position prior is fitted on training songs only.
+- Each song's score is averaged over 5 seeds (0–4).
+
+**Fixed settings**
+- `moment_model.py` as of this entry: epochs 30, patience 6, lr 3e-4, width 128, branch dropout 0.25.
+- Windows 12 s, hop 6 s.
+- CLEAR_GAP 0.1.
+
+**Where it is decided**
+- **Main set (92 songs):** 5 artist-grouped folds. This is *exploratory*, because the design was shaped on these songs.
+- **Confirmation set (`genre_mix_confirm`):** fresh songs, none from the main set. Train on all main-set songs, score **once** on the confirmation songs: `--corpus genre_mix --test-corpus genre_mix_confirm --seeds 5`.
+
+**Decision rule (confirmation set only)**
+- H1 is supported if the 95% bootstrap interval (over songs) of the paired difference `full` − `western` on Eastern songs lies above 0.
+- H2 is supported if the 95% bootstrap interval of (Eastern difference − Western difference) lies above 0.
+- Otherwise the result is "not supported". It is reported either way.
+
+**Feature gate**
+- Before the main run, the fixed `drone_strength` and `instrument_offgrid` must pass the Step 2 region check: higher medians in Eastern than in house songs.
+- That check uses only feature distributions, not replay results.
+- If either fails, it is dropped from `full`, and the drop is logged before the main run.
+
+**Secondary (exploratory, no decision attached)**
+- CultureMERT and MERT as the embedding.
+- Ablations: no CNN, no hand-built features, no embedding.
+- Permutation importance and per-genre results.
+
 ### Literature check (2026-11-05, every citation opened and checked)
 
 **Already done, not ours to claim:**
