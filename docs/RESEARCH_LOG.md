@@ -194,3 +194,11 @@ Sources were found by a literature search agent and are linked in the session no
     - Western −0.023 [−0.055, +0.007].
   - **Reading:** the asymmetry the hypothesis predicts. The encoder adapted to Indian classical and makam music helps on Eastern songs and costs a little on Western ones. Both intervals just touch 0, so this is suggestive, not established. Every model is still at or below the brightness rule on Eastern songs.
   - **Note:** with the old single-branch model, CultureMERT showed no gain (Eastern +0.004). So the per-song scaling fix was needed to see it.
+- **2026-11-05 · Feature gate (from the main test plan): FAILED for both fixed features. Both are dropped from `full`.** Region medians:
+  - **drone_strength:** Eastern 0.234, house 0.425. House tracks hold a synth note on their home note, which the measure reads as a drone on Sa.
+  - **instrument_offgrid:** 0.000 in every region. Stable off-grid scale degrees were found in 1 of 48 Eastern songs. These recordings' instruments are 12-TET; their microtones live in the voice.
+- **2026-11-05 · New validity problem, found before the main test: vocal pitch coverage differs by region.**
+  - **pYIN voiced frames:** Bollywood 59–60%, qawwali 78%, Uptown Funk 4%, Waka Waka 19%, Dilemma 15%.
+  - **Windows with held notes:** Eastern genres 0.56–0.89; pop 0.51, hip-hop 0.20, jazz 0.31.
+  - **Consequence:** vocal and intonation features exist mainly for Eastern songs. A `full` vs. `western` gain on Eastern songs could then reflect measurement coverage, not musical content. The vocal off-grid fraction (pop 0.30 vs. Bollywood 0.07) rests on few tracked notes in the Western songs and is not trusted.
+  - **Proposed plan amendment (pending user decision):** replace pYIN with a polyphonic-robust vocal pitch tracker (RMVPE or CREPE), then require comparable coverage in Western and Eastern songs before the main test.
