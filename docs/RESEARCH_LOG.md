@@ -60,3 +60,4 @@ Research only: YouTube replay data is not cleared for a product model.
 ### Steps
 
 - **2026-11-05 · Step 1 Data · PASS.** 120 songs in 15 genres; 92 have a "Most replayed" curve (weakest genre: Arabic pop, 4/8). Low-view tiers often lack curves (low 18/30, underrated 16/30). 62% of peaks fall in the first 40% of a song, so Step 2 must separate real musical peaks from viewers dropping off over time.
+- **2026-11-05 · Step 2 Explore · WEAK PASS.** 91 songs, 4,166 windows (12 s, 6 s hop). Position alone explains a median 70% of within-song replay variation: replay rises, peaks at 30-50% of the song, then falls, in every region. After removing position, simple sound features line up only weakly: brightness ρ = +0.14 [+0.03, +0.21], onset activity +0.12, loudness +0.09 (CI touches 0). Eastern songs show the clearest link (brightness +0.17 [+0.08, +0.42]); house shows none. In 47% of clear pairs the more replayed window is the quieter one, so loudness alone cannot win.
