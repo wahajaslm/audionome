@@ -106,3 +106,7 @@ Sources were found by a literature search agent and are linked in the session no
   - **Eastern:** **0.571, below the brightness rule (0.615).**
   - Western features help on Western and house songs but not on Eastern songs. That points the way the hypothesis predicts. It is not proof: the confidence intervals overlap, and there are only 41 Eastern songs.
   - Top-1 hit (picking the most replayed window within ±6 s) is about 0.12–0.16 for every method, near random.
+- **2026-11-05 · What the interim model relied on (permutation importance).** Each block's values were shuffled across a song's windows (5 repeats per song), and the drop in pairwise accuracy was measured:
+  - **CLAP: drop +0.036 [+0.010, +0.061].** By region: Eastern +0.041, Western +0.017, house +0.058.
+  - **Every DSP block and stereo: drop of 0.005 or less,** i.e. unused. That includes loudness, brightness and onsets, chroma, and MFCC.
+  - **The model relies almost only on CLAP.** It ignores brightness, even though "brightest window" alone scores 0.615 on Eastern songs. So the 12 hand-built scalars are drowned out by CLAP's 512 dimensions. The full model should give the hand-built groups their own branch or pre-scaling, and Step 6 should test that.

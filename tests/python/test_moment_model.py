@@ -42,3 +42,16 @@ def test_summary_reports_regions_with_intervals():
             for r, a in (('eastern', 0.7), ('eastern', 0.8), ('western', 0.6))]
     out = summarize(rows)
     assert out['all']['songs'] == 3 and out['eastern']['pairwise_accuracy']['mean'] == 0.75
+
+
+def test_shuffling_the_planted_block_hurts_most():
+    from musicdna.experiments.moment_model import importance_summary
+    rng = np.random.default_rng(1)
+    songs = [synthetic_song(i, rng) for i in range(24)]
+    trainer = Trainer('full_no_cnn', epochs=15, patience=15)
+    scores, residual = trainer.fit_predict(songs[:18], songs[18:])
+    per_song = [{'video_id': s.video_id, 'region': s.region,
+                 **song_metrics(scores[s.video_id], residual[s.video_id])} for s in songs[18:]]
+    drops = importance_summary(per_song, trainer.importance(songs[18:], residual))
+    # The replay signal was planted in the eastern block, so shuffling it costs the most.
+    assert max(drops, key=lambda name: drops[name]['all']['drop']) == 'eastern ensemble'

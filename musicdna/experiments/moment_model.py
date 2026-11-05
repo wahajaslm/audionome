@@ -47,6 +47,22 @@ VARIANTS: dict[str, dict[str, Any]] = {
     'western_no_cnn':   {'cqt': None, 'features': ('dsp', 'spatial'), 'clap': True},
 }
 CLEAR_GAP = 0.1   # residual-replay gap for a pair to count (as in notebook 02, Step 2d)
+# Input blocks for permutation importance: (feature group, its columns). DSP columns follow
+# AcousticFeatureExtractor's vector: 0 loudness, 1 brightness, 2 onset activity, 3 flatness, 4 zero-crossing
+# rate, 5-16 chroma (C..B), 17-24 MFCC. 'cqt' shuffles the CNN's pictures instead.
+IMPORTANCE_BLOCKS: dict[str, tuple[str, slice]] = {
+    'DSP loudness, brightness, onsets': ('dsp', slice(0, 5)),
+    'DSP chroma (12 Western notes)': ('dsp', slice(5, 17)),
+    'DSP timbre (MFCC)': ('dsp', slice(17, 25)),
+    'stereo width': ('spatial', slice(None)),
+    'CLAP embedding': ('clap', slice(None)),
+    'vocal pitch': ('vocal', slice(None)),
+    'intonation': ('intonation', slice(None)),
+    'intonation profile': ('intonation_profile', slice(None)),
+    'eastern ensemble': ('eastern', slice(None)),
+    'CQT pictures (CNN)': ('cqt', slice(None)),
+}
+IMPORTANCE_REPEATS = 5
 
 
 @dataclass
@@ -177,13 +193,44 @@ class Trainer:
         self.spec, self.variant = VARIANTS[variant], variant
         self.epochs, self.patience, self.lr, self.seed, self.device = epochs, patience, lr, seed, torch.device(device)
 
-    def inputs(self, song: Song, mean: np.ndarray | None, std: np.ndarray | None) -> tuple[torch.Tensor | None, torch.Tensor | None]:
-        cqt = torch.from_numpy(song.cqt[self.spec['cqt']].astype(np.float32)).to(self.device) if self.spec['cqt'] else None
+    def inputs(self, song: Song, mean: np.ndarray | None, std: np.ndarray | None,
+               shuffle: tuple[str, slice, np.ndarray] | None = None) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        """Model inputs for one song. `shuffle` = (group, columns, window order) reorders that block across
+        the song's windows, which breaks its link to replay while keeping the song's own values."""
+        pictures = song.cqt[self.spec['cqt']] if self.spec['cqt'] else None
+        if pictures is not None and shuffle and shuffle[0] == 'cqt':
+            pictures = pictures[shuffle[2]]
+        cqt = torch.from_numpy(pictures.astype(np.float32)).to(self.device) if pictures is not None else None
         groups = list(self.spec['features']) + (['clap'] if self.spec['clap'] else [])
         if not groups:
             return cqt, None
-        x = np.concatenate([song.features[g] for g in groups], axis=1)
+        blocks = []
+        for g in groups:
+            block = song.features[g]
+            if shuffle and shuffle[0] == g:
+                block = block.copy()
+                block[:, shuffle[1]] = block[shuffle[2]][:, shuffle[1]]
+            blocks.append(block)
+        x = np.concatenate(blocks, axis=1)
         return cqt, torch.from_numpy((x - mean) / std).float().to(self.device)
+
+    def importance(self, test: list[Song], residual: dict[str, np.ndarray]) -> dict[str, list[dict[str, Any]]]:
+        """Per input block and test song: pairwise accuracy with that block shuffled (mean of repeats)."""
+        rng = np.random.default_rng(self.seed + 1)
+        used = set(self.spec['features']) | ({'clap'} if self.spec['clap'] else set()) | ({'cqt'} if self.spec['cqt'] else set())
+        out: dict[str, list[dict[str, Any]]] = {}
+        with torch.no_grad():
+            for name, (group, columns) in IMPORTANCE_BLOCKS.items():
+                if group not in used:
+                    continue
+                rows = []
+                for s in test:
+                    accuracies = [song_metrics(self.model(*self.inputs(s, self.mean, self.std,
+                                                                       (group, columns, rng.permutation(len(residual[s.video_id]))))).cpu().numpy(),
+                                               residual[s.video_id])['pairwise_accuracy'] for _ in range(IMPORTANCE_REPEATS)]
+                    rows.append({'video_id': s.video_id, 'region': s.region, 'pairwise_accuracy': float(np.nanmean(accuracies))})
+                out[name] = rows
+        return out
 
     def fit_predict(self, train: list[Song], test: list[Song]) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
         """Scores and residual targets per test song. The position prior and feature scaling come from the
@@ -225,6 +272,7 @@ class Trainer:
                     break
         model.load_state_dict(best_state)
         model.eval()
+        self.model, self.mean, self.std = model, mean, std  # kept for importance()
         with torch.no_grad():
             scores = {s.video_id: model(*self.inputs(s, mean, std)).cpu().numpy() for s in test}
         return scores, {s.video_id: residual[s.video_id] for s in test}
@@ -253,19 +301,46 @@ def summarize(per_song: list[dict[str, Any]], seed: int = 0) -> dict[str, Any]:
     return out
 
 
-def evaluate(variant: str, songs: list[Song], folds: int, epochs: int, device: str) -> dict[str, Any]:
-    per_song, started = [], time.time()
+def evaluate(variant: str, songs: list[Song], folds: int, epochs: int, device: str,
+             with_importance: bool = False) -> dict[str, Any]:
+    per_song, shuffled, started = [], {}, time.time()
     for f, test_idx in enumerate(artist_folds(songs, folds)):
         held_out = set(test_idx)
         test = [songs[i] for i in test_idx]
         train = [s for i, s in enumerate(songs) if i not in held_out]
-        scores, residual = Trainer(variant, epochs=epochs, device=device).fit_predict(train, test)
+        trainer = Trainer(variant, epochs=epochs, device=device)
+        scores, residual = trainer.fit_predict(train, test)
         for s in test:
             per_song.append({'video_id': s.video_id, 'region': s.region, 'genre': s.genre,
                              **song_metrics(scores[s.video_id], residual[s.video_id])})
+        if with_importance:
+            for name, rows in trainer.importance(test, residual).items():
+                shuffled.setdefault(name, []).extend(rows)
         print(f'  {variant} fold {f + 1}/{folds} done ({time.time() - started:.0f} s)', flush=True)
-    return {'variant': variant, 'spec': {k: (list(v) if isinstance(v, tuple) else v) for k, v in VARIANTS[variant].items()},
-            'summary': summarize(per_song), 'per_song': per_song}
+    report = {'variant': variant, 'spec': {k: (list(v) if isinstance(v, tuple) else v) for k, v in VARIANTS[variant].items()},
+              'summary': summarize(per_song), 'per_song': per_song}
+    if with_importance:
+        report['importance'] = importance_summary(per_song, shuffled)
+    return report
+
+
+def importance_summary(per_song: list[dict[str, Any]], shuffled: dict[str, list[dict[str, Any]]],
+                       seed: int = 0) -> dict[str, Any]:
+    """Accuracy drop when each block is shuffled, per region, with a bootstrap interval over songs.
+    Example: intact 0.63, CLAP shuffled 0.55 -> drop 0.08: the model leaned on CLAP."""
+    rng = np.random.default_rng(seed)
+    intact = {r['video_id']: r['pairwise_accuracy'] for r in per_song}
+    out: dict[str, Any] = {}
+    for name, rows in shuffled.items():
+        out[name] = {}
+        for region in ('all', 'eastern', 'western', 'house'):
+            drops = np.array([intact[r['video_id']] - r['pairwise_accuracy'] for r in rows
+                              if (region == 'all' or r['region'] == region)
+                              and np.isfinite(r['pairwise_accuracy']) and np.isfinite(intact[r['video_id']])])
+            if len(drops):
+                boots = [np.mean(rng.choice(drops, len(drops))) for _ in range(2000)]
+                out[name][region] = {'drop': float(drops.mean()), 'ci95': [float(x) for x in np.percentile(boots, [2.5, 97.5])]}
+    return out
 
 
 def baselines(songs: list[Song], folds: int) -> dict[str, Any]:
@@ -292,6 +367,7 @@ def main() -> None:
     parser.add_argument('--folds', type=int, default=5)
     parser.add_argument('--epochs', type=int, default=40)
     parser.add_argument('--device', default='auto', help="auto = cuda, else Apple GPU (mps), else cpu")
+    parser.add_argument('--importance', action='store_true', help='Also shuffle each input block and report the accuracy drop')
     arguments = parser.parse_args()
     if arguments.device == 'auto':
         # MPS needs PyTorch <= 2.5 on macOS 14: newer builds crash on this OS (see notebooks/03_colab_gpu.ipynb).
@@ -301,7 +377,8 @@ def main() -> None:
     print(f'{len(songs)} songs ({sum(len(s.targets.index) for s in songs)} windows)', flush=True)
     report: dict[str, Any] = {'songs': len(songs), 'baselines': baselines(songs, arguments.folds), 'variants': {}}
     for variant in arguments.variants:
-        report['variants'][variant] = evaluate(variant, songs, arguments.folds, arguments.epochs, arguments.device)
+        report['variants'][variant] = evaluate(variant, songs, arguments.folds, arguments.epochs, arguments.device,
+                                               with_importance=arguments.importance)
     RESEARCH_OUTPUT_DIR.mkdir(exist_ok=True)
     path = RESEARCH_OUTPUT_DIR / 'moment_model_report.json'
     path.write_text(json.dumps(report, indent=2) + '\n', encoding='utf8')
@@ -309,6 +386,10 @@ def main() -> None:
                         *[(k, v['summary']) for k, v in report['variants'].items()]]:
         cells = '  '.join(f"{r}: {entry[r]['pairwise_accuracy']['mean']:.3f}" for r in ('all', 'eastern', 'western', 'house') if r in entry)
         print(f'{name:<26} pairwise accuracy  {cells}')
+    for variant, entry in report['variants'].items():
+        for name, regions in entry.get('importance', {}).items():
+            cells = '  '.join(f"{r}: {regions[r]['drop']:+.3f}" for r in ('all', 'eastern', 'western', 'house') if r in regions)
+            print(f'{variant} shuffle {name:<34} accuracy drop  {cells}')
     print(f'-> {path}')
 
 
