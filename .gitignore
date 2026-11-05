@@ -5,6 +5,7 @@ dist/
 !.env.example
 *.log
 .venv/
+.venv-mps/
 __pycache__/
 *.pyc
 *.png

@@ -289,8 +289,12 @@ def main() -> None:
     parser.add_argument('--variants', nargs='+', choices=list(VARIANTS), default=['full', 'western'])
     parser.add_argument('--folds', type=int, default=5)
     parser.add_argument('--epochs', type=int, default=40)
-    parser.add_argument('--device', default='cpu')
+    parser.add_argument('--device', default='auto', help="auto = cuda, else Apple GPU (mps), else cpu")
     arguments = parser.parse_args()
+    if arguments.device == 'auto':
+        # MPS needs PyTorch <= 2.5 on macOS 14: newer builds crash on this OS (see notebooks/03_colab_gpu.ipynb).
+        arguments.device = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
+    print(f'device: {arguments.device}', flush=True)
     songs = load_songs(arguments.variants)
     print(f'{len(songs)} songs ({sum(len(s.targets.index) for s in songs)} windows)', flush=True)
     report: dict[str, Any] = {'songs': len(songs), 'baselines': baselines(songs, arguments.folds), 'variants': {}}
