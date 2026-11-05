@@ -143,16 +143,29 @@ class WindowCNN(nn.Module):
 
 
 class MomentModel(nn.Module):
-    def __init__(self, cnn_channels: int | None, feature_dims: int, width: int = 128) -> None:
+    """Three separate branches (CNN on pictures, MLP on hand-built features, MLP on the embedding), fused
+    per window, then a transformer across the song's windows.
+
+    FIX: one MLP over all features let CLAP's 512 numbers drown out the 32 hand-built ones; shuffling every
+    hand-built block cost < 0.005 accuracy while "brightest window" alone scored 0.615 on Eastern songs.
+    Each family now has its own branch, and in training the CNN and embedding branches are each switched
+    off for a whole song with probability `branch_dropout` (modality dropout), so the model must also
+    learn from the hand-built branch. Example: with 0.25, about one song in four trains without CLAP.
+    """
+
+    def __init__(self, cnn_channels: int | None, hand_dims: int, embedding_dims: int, width: int = 128,
+                 branch_dropout: float = 0.25) -> None:
         super().__init__()
+        branch = lambda dims: nn.Sequential(nn.Linear(dims, width), nn.GELU(), nn.Dropout(0.2), nn.Linear(width, width))
         self.cnn = WindowCNN(cnn_channels) if cnn_channels else None
-        self.mlp = nn.Sequential(nn.Linear(feature_dims, width), nn.GELU(), nn.Dropout(0.2), nn.Linear(width, width)) if feature_dims else None
-        parts = (width if self.cnn else 0) + (width if self.mlp else 0)
+        self.hand = branch(hand_dims) if hand_dims else None
+        self.embedding = branch(embedding_dims) if embedding_dims else None
+        parts = sum(width for b in (self.cnn, self.hand, self.embedding) if b is not None)
         self.fuse = nn.Sequential(nn.LayerNorm(parts), nn.Linear(parts, width))
         layer = nn.TransformerEncoderLayer(width, nhead=4, dim_feedforward=2 * width, dropout=0.1, batch_first=True)
         self.sequence = nn.TransformerEncoder(layer, num_layers=2)
         self.head = nn.Linear(width, 1)
-        self.width = width
+        self.width, self.branch_dropout = width, branch_dropout
 
     def positional(self, n: int) -> torch.Tensor:
         position = torch.arange(n).unsqueeze(1)
@@ -161,12 +174,16 @@ class MomentModel(nn.Module):
         table[:, 0::2], table[:, 1::2] = torch.sin(position * rate), torch.cos(position * rate)
         return table
 
-    def forward(self, cqt: torch.Tensor | None, features: torch.Tensor | None) -> torch.Tensor:
-        parts = []
-        if self.cnn is not None:
-            parts.append(self.cnn(cqt))
-        if self.mlp is not None:
-            parts.append(self.mlp(features))
+    def forward(self, cqt: torch.Tensor | None, hand: torch.Tensor | None, embedding: torch.Tensor | None) -> torch.Tensor:
+        parts, droppable = [], []
+        for net, x, can_drop in ((self.cnn, cqt, True), (self.hand, hand, False), (self.embedding, embedding, True)):
+            if net is None:
+                continue
+            out = net(x)
+            # Never drop every branch: the hand-built one (or the only one present) always stays.
+            if self.training and can_drop and (self.hand is not None) and torch.rand(()) < self.branch_dropout:
+                out = torch.zeros_like(out)
+            parts.append(out)
         tokens = self.fuse(torch.cat(parts, dim=-1))
         tokens = tokens + self.positional(len(tokens)).to(tokens.device)
         return self.head(self.sequence(tokens.unsqueeze(0))).squeeze(0).squeeze(-1)
@@ -198,30 +215,35 @@ class Trainer:
         self.spec, self.variant = VARIANTS[variant], variant
         self.epochs, self.patience, self.lr, self.seed, self.device = epochs, patience, lr, seed, torch.device(device)
 
-    def groups(self) -> list[str]:
-        """Feature groups fed to the MLP, in order: the hand-built ones, then the embedding."""
-        return list(self.spec['features']) + ([self.spec['embedding']] if self.spec['embedding'] else [])
+    def inputs(self, song: Song, scaling: tuple[np.ndarray, np.ndarray] | None,
+               shuffle: tuple[str, slice, np.ndarray] | None = None) -> tuple[torch.Tensor | None, ...]:
+        """(cqt, hand-built, embedding) tensors for one song. `shuffle` = (group, columns, window order)
+        reorders that block across the song's windows, which breaks its link to replay.
 
-    def inputs(self, song: Song, mean: np.ndarray | None, std: np.ndarray | None,
-               shuffle: tuple[str, slice, np.ndarray] | None = None) -> tuple[torch.Tensor | None, torch.Tensor | None]:
-        """Model inputs for one song. `shuffle` = (group, columns, window order) reorders that block across
-        the song's windows, which breaks its link to replay while keeping the song's own values."""
+        Hand-built features are scaled within the song (z-score over its own windows): the model ranks
+        windows inside one song, and across-song scaling made a song's small brightness changes look like
+        noise. Example: brightness 0.30-0.34 in a quiet ballad becomes -1.2 .. +1.5 instead of ~0.
+        The embedding keeps one scaling fitted on the training songs (`scaling`).
+        """
+        def shuffled(group: str, block: np.ndarray) -> np.ndarray:
+            if shuffle and (shuffle[0] == group or (shuffle[0] == 'embedding' and group == self.spec['embedding'])):
+                block = block.copy()
+                block[:, shuffle[1]] = block[shuffle[2]][:, shuffle[1]]
+            return block
+
+        tensor = lambda a: torch.from_numpy(np.asarray(a, dtype=np.float32)).to(self.device)
         pictures = song.cqt[self.spec['cqt']] if self.spec['cqt'] else None
         if pictures is not None and shuffle and shuffle[0] == 'cqt':
             pictures = pictures[shuffle[2]]
-        cqt = torch.from_numpy(pictures.astype(np.float32)).to(self.device) if pictures is not None else None
-        groups = self.groups()
-        if not groups:
-            return cqt, None
-        blocks = []
-        for g in groups:
-            block = song.features[g]
-            if shuffle and (shuffle[0] == g or (shuffle[0] == 'embedding' and g == self.spec['embedding'])):
-                block = block.copy()
-                block[:, shuffle[1]] = block[shuffle[2]][:, shuffle[1]]
-            blocks.append(block)
-        x = np.concatenate(blocks, axis=1)
-        return cqt, torch.from_numpy((x - mean) / std).float().to(self.device)
+        hand = None
+        if self.spec['features']:
+            x = np.concatenate([shuffled(g, song.features[g]) for g in self.spec['features']], axis=1)
+            hand = tensor((x - x.mean(axis=0)) / (x.std(axis=0) + 1e-6))
+        embedding = None
+        if self.spec['embedding']:
+            mean, std = scaling
+            embedding = tensor((shuffled(self.spec['embedding'], song.features[self.spec['embedding']]) - mean) / std)
+        return (tensor(pictures) if pictures is not None else None), hand, embedding
 
     def importance(self, test: list[Song], residual: dict[str, np.ndarray]) -> dict[str, list[dict[str, Any]]]:
         """Per input block and test song: pairwise accuracy with that block shuffled (mean of repeats)."""
@@ -234,7 +256,7 @@ class Trainer:
                     continue
                 rows = []
                 for s in test:
-                    accuracies = [song_metrics(self.model(*self.inputs(s, self.mean, self.std,
+                    accuracies = [song_metrics(self.model(*self.inputs(s, self.scaling,
                                                                        (group, columns, rng.permutation(len(residual[s.video_id]))))).cpu().numpy(),
                                                residual[s.video_id])['pairwise_accuracy'] for _ in range(IMPORTANCE_REPEATS)]
                     rows.append({'video_id': s.video_id, 'region': s.region, 'pairwise_accuracy': float(np.nanmean(accuracies))})
@@ -251,27 +273,27 @@ class Trainer:
         val, fit = [train[i] for i in order[:n_val]], [train[i] for i in order[n_val:]]
         prior = PositionPrior().fit([s.targets for s in fit])
         residual = {s.video_id: prior.residual(s.targets).astype(np.float32) for s in train + test}
-        groups = self.groups()
-        mean = std = None
-        if groups:
-            stacked = np.concatenate([np.concatenate([s.features[g] for g in groups], axis=1) for s in fit])
-            mean, std = stacked.mean(axis=0), stacked.std(axis=0) + 1e-6
+        scaling = None
+        if self.spec['embedding']:
+            stacked = np.concatenate([s.features[self.spec['embedding']] for s in fit])
+            scaling = (stacked.mean(axis=0), stacked.std(axis=0) + 1e-6)
         channels = fit[0].cqt[self.spec['cqt']].shape[1] if self.spec['cqt'] else None
-        dims = int(mean.shape[0]) if mean is not None else 0
-        model = MomentModel(channels, dims).to(self.device)
+        hand_dims = sum(fit[0].features[g].shape[1] for g in self.spec['features'])
+        embedding_dims = fit[0].features[self.spec['embedding']].shape[1] if self.spec['embedding'] else 0
+        model = MomentModel(channels, hand_dims, embedding_dims).to(self.device)
         optimizer = torch.optim.AdamW(model.parameters(), lr=self.lr, weight_decay=1e-2)
         best, best_state, waited = float('inf'), None, 0
         for _ in range(self.epochs):
             model.train()
             for i in rng.permutation(len(fit)):
                 song = fit[i]
-                loss = pairwise_loss(model(*self.inputs(song, mean, std)), torch.from_numpy(residual[song.video_id]).to(self.device))
+                loss = pairwise_loss(model(*self.inputs(song, scaling)), torch.from_numpy(residual[song.video_id]).to(self.device))
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
             model.eval()
             with torch.no_grad():
-                val_loss = float(np.mean([pairwise_loss(model(*self.inputs(s, mean, std)),
+                val_loss = float(np.mean([pairwise_loss(model(*self.inputs(s, scaling)),
                                                         torch.from_numpy(residual[s.video_id]).to(self.device)).item() for s in val]))
             if val_loss < best - 1e-4:
                 best, best_state, waited = val_loss, {k: v.detach().clone() for k, v in model.state_dict().items()}, 0
@@ -281,9 +303,9 @@ class Trainer:
                     break
         model.load_state_dict(best_state)
         model.eval()
-        self.model, self.mean, self.std = model, mean, std  # kept for importance()
+        self.model, self.scaling = model, scaling  # kept for importance()
         with torch.no_grad():
-            scores = {s.video_id: model(*self.inputs(s, mean, std)).cpu().numpy() for s in test}
+            scores = {s.video_id: model(*self.inputs(s, scaling)).cpu().numpy() for s in test}
         return scores, {s.video_id: residual[s.video_id] for s in test}
 
 

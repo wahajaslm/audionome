@@ -21,8 +21,8 @@ def synthetic_song(i, rng, windows=20):
 
 
 def test_shapes_and_loss():
-    model = MomentModel(cnn_channels=4, feature_dims=10)
-    scores = model(torch.rand(15, 4, 360, 32), torch.rand(15, 10))  # real windows have 94 frames
+    model = MomentModel(cnn_channels=4, hand_dims=10, embedding_dims=16)
+    scores = model(torch.rand(15, 4, 360, 32), torch.rand(15, 10), torch.rand(15, 16))  # real windows have 94 frames
     assert scores.shape == (15,)
     loss = pairwise_loss(scores, torch.linspace(0, 1, 15))
     loss.backward()

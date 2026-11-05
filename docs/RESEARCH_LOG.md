@@ -134,3 +134,7 @@ Sources were found by a literature search agent and are linked in the session no
   - **K-pop scored below random for every method** (0.42–0.46). It had been grouped as "eastern". It is now its own region, `east_asian`, to match the research's Eastern scope (subcontinent, Arabic, Turkish).
   - **Caveat:** 4–8 songs per genre, so per-genre numbers are noisy.
   - **Reading:** general and classical-trained embeddings, averaged over 12 s, miss what drives replays in subcontinent and Arabic popular music, while simple brightness catches part of it. That is the case for the hand-built Eastern features and the fine-pitch CNN. Next: give the hand-built features their own branch and per-song scaling, so the model cannot ignore them.
+- **2026-11-05 · Fix: separate branches + per-song scaling + modality dropout (CLAP, no CNN).** Same folds. "Eastern" now excludes K-pop; the old run recomputed the same way gives Eastern 0.597.
+  - **Overall:** 0.606 → **0.619**. **Western:** 0.626 → **0.657**. **Eastern:** 0.597 → **0.606**, still below the brightness rule (0.656).
+  - **The model now uses the hand-built features.** Shuffling loudness, brightness and onsets costs +0.025 on Eastern songs (was +0.005), and MFCC +0.014. CLAP still matters most on Eastern songs (+0.032).
+  - **K-pop (8 songs) is below random for every method,** around 0.40–0.45. Its replay peaks may follow visuals or choreography, not sound.
