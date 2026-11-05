@@ -24,6 +24,14 @@ Research only: YouTube replay data is not cleared for a product model.
 - **Needs:** stems (about 10 GB free disk). Instrument pitch needs the "other" stem, since Demucs puts sitar, oud and similar instruments there, plus a check that pitch tracking works on it.
 - **Corpus gaps:** a Coke Studio group, subcontinent classical, Arabic classical. Studio recordings only, no live uploads.
 
+### Do CLAP or MERT already capture it? (planned 2026-11-05)
+
+- **Test 1, in Steps 4-5:** on Eastern songs, compare CLAP alone vs. CLAP + Eastern features, and MERT alone vs. MERT + Eastern features. If adding the features gives no gain, the embedding already captures them.
+- **Test 2, in Step 2, a linear probe:** predict each Eastern feature (instrument_offgrid, drone_strength, glides, percussion onset rate) from CLAP numbers alone, then from MERT numbers alone, on held-out songs.
+  - High R² means the embedding already encodes that feature.
+  - Low R² means the feature adds information the embedding lacks.
+- **Why MERT may differ:** it was pretrained partly to reconstruct a CQT, a fine-pitch spectrogram. It is research-only (CC BY-NC weights), so it needs a MERT pass over the corpus.
+
 ### Literature check (2026-11-05, every citation opened and checked)
 
 **Already done, not ours to claim:**
@@ -61,3 +69,34 @@ Research only: YouTube replay data is not cleared for a product model.
 
 - **2026-11-05 · Step 1 Data · PASS.** 120 songs in 15 genres; 92 have a "Most replayed" curve (weakest genre: Arabic pop, 4/8). Low-view tiers often lack curves (low 18/30, underrated 16/30). 62% of peaks fall in the first 40% of a song, so Step 2 must separate real musical peaks from viewers dropping off over time.
 - **2026-11-05 · Step 2 Explore · WEAK PASS.** 91 songs, 4,166 windows (12 s, 6 s hop). Position alone explains a median 70% of within-song replay variation: replay rises, peaks at 30-50% of the song, then falls, in every region. After removing position, simple sound features line up only weakly: brightness ρ = +0.14 [+0.03, +0.21], onset activity +0.12, loudness +0.09 (CI touches 0). Eastern songs show the clearest link (brightness +0.17 [+0.08, +0.42]); house shows none. In 47% of clear pairs the more replayed window is the quieter one, so loudness alone cannot win.
+
+### Eastern feature survey (2026-11-05)
+
+Sources were found by a literature search agent and are linked in the session notes. Items dated 2026 (MaqamNet, the Saba/ney study) were not checked by hand.
+
+**Already covered:**
+- Tonic, tonic-relative pitch profile (24 bins), held-note offsets, glides, vibrato and ornament counts.
+- Roughness, build-up, drone, tempo, drum and other stem activity, instrument off-grid energy, solo time, voice-instrument alternation.
+
+**Top 10 to add, ranked by value and feasibility:**
+1. Nyas / landmark notes: long, stable phrase-ending notes. From the existing pitch contour. (Gulati et al., ICMC-SMC 2014)
+2. Phrase recurrence: repeats of the tonic-relative contour, which act as hooks. (Gulati et al., ICASSP 2016)
+3. Sam arrival: distance to the cycle downbeat, plus tihai and cadence landings. (Srinivasamurthy, ISMIR 2017)
+4. Svara peak shape: width and skew per note, not just the offset. (Koduri et al., ISMIR 2012, JNMR 2014)
+5. Ornament types: kan, murki, andolan and meend, instead of plain counts. (arXiv 2505.04419; ROD dataset)
+6. Rhythmic density jumps and laya changes: rhythmogram novelty. (Vinutha et al., ISMIR 2016; Clayton, MTO 2020)
+7. Heterophony: lag and pitch correlation between the voice and the other-stem melody (sarangi, harmonium, violin shadowing the singer). (Plaja-Roglans et al., TISMIR 2023)
+8. Tabla stroke mix: damped vs. resonant, bass vs. treble, on the drum stem. (Rohit et al., TISMIR 2023)
+9. Maqam and jins fit per window, plus modulation events, on a 53-TET grid. (Bozkurt, JNMR 2008; MaqamNet)
+10. Unmetered-to-metered boundary: alap to gat, taqsim to usul, from pulse clarity. (Rao et al., TISMIR 2021)
+
+**Gaps found in the literature:**
+- No darbuka/riq stroke recognition.
+- Weak Indian instrument recognition.
+- No taqsim vs. metered detection.
+- No study links any of these features to replays or chills at the moment level.
+
+**Licences:**
+- Essentia and compIAM are AGPL-3.0.
+- MTG pretrained models and Saraga are non-commercial.
+- Both are fine for research. A product needs legal review.
