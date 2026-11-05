@@ -16,6 +16,8 @@ export interface PreferenceSuggestion {
 export interface PreferenceSummary {
   modelId:string; positives:number; negatives:number; observedReturns:number;
   status:'untrained'|'early'|'developing';
+  /** How this listener's taste model weighs the two feature families (multimodal analyses only). */
+  familyShare?:{clap:number;dsp:number};
 }
 export interface PreferenceEvaluation {modelId:string; comparedPairs:number; testedTracks:number; baselineAccuracy:number; personalAccuracy:number; note:string}
 export interface AttentionCandidate {
@@ -27,7 +29,9 @@ export interface AttentionCandidate {
 }
 
 type Passage={trackId:string;startSec:number;endSec:number};
-type Example=Passage & {value:1|-1;weight:number;vector:number[];segment:AudioSegment};
+/** `blocks`: one vector per feature family, [CLAP, DSP] for multimodal analyses, else [embedding]. */
+type Encoded={vector:number[];blocks:number[][]};
+type Example=Passage & Encoded & {value:1|-1;weight:number;segment:AudioSegment};
 const clamp=(v:number,a:number,b:number)=>Math.max(a,Math.min(v,b));
 const spanOverlap=(a:Passage,b:Passage)=>Math.max(0,Math.min(a.endSec,b.endSec)-Math.max(a.startSec,b.startSec));
 export function cosineSimilarity(a:number[],b:number[]):number {
@@ -36,21 +40,31 @@ export function cosineSimilarity(a:number[],b:number[]):number {
   for(let i=0;i<a.length;i++) {dot+=a[i]*b[i];aa+=a[i]*a[i];bb+=b[i]*b[i];}
   return aa>0&&bb>0 ? clamp(dot/Math.sqrt(aa*bb),-1,1):0;
 }
-function vectorFor(analysis:TrackAnalysis,passage:Passage):{vector:number[];segment:AudioSegment}|null {
+/** A window's feature families. LEARNED WEIGHTING FIX - multimodal windows were compared only through
+ * the fused embedding, fixed at 70% CLAP / 30% DSP (FusionEngine.fuse deep_weight=0.7), so a listener
+ * whose saves share energy and brightness could never count DSP for more than 30%. Each family is now
+ * compared on its own and the taste model weighs them per listener.
+ * Example: saves that all sit in loud, bright build-ups get a large weight on DSP similarity. */
+export function blocksOf(segment:AudioSegment):number[][] {
+  return segment.deepEmbedding?.length&&segment.dspEmbedding?.length ? [segment.deepEmbedding,segment.dspEmbedding] : [segment.embedding];
+}
+function vectorFor(analysis:TrackAnalysis,passage:Passage):(Encoded&{segment:AudioSegment})|null {
   const segments=analysis.segments.filter(s=>spanOverlap({...s,trackId:passage.trackId},passage)>0);
   if(!segments.length)return null;
-  const dims=segments[0].embedding.length;
-  if(!dims)return null;
-  const value=Array<number>(dims).fill(0);let weight=0;
+  const layout=[segments[0].embedding,...blocksOf(segments[0])].map(v=>v.length);
+  if(!layout[0])return null;
+  const sums=layout.map(n=>Array<number>(n).fill(0));let weight=0;
   for(const section of segments){
-    if(section.embedding.length!==dims)continue;
+    const parts=[section.embedding,...blocksOf(section)];
+    if(parts.length!==layout.length||parts.some((v,i)=>v.length!==layout[i]))continue;
     const seconds=spanOverlap({...section,trackId:passage.trackId},passage);
     if(seconds<=0)continue;
     weight+=seconds;
-    section.embedding.forEach((v,i)=>{value[i]+=v*seconds;});
+    parts.forEach((v,b)=>v.forEach((x,i)=>{sums[b][i]+=x*seconds;}));
   }
   if(!weight)return null;
-  return {vector:value.map(v=>v/weight),segment:segments[0]};
+  const [vector,...blocks]=sums.map(v=>v.map(x=>x/weight));
+  return {vector,blocks,segment:segments[0]};
 }
 function examplesFor(analyses:TrackAnalysis[], moments:Moment[], ratings:MomentRating[],modelId:string,omitTrack?:string):Example[] {
   const byTrack=new Map(analyses.filter(a=>a.modelId===modelId).map(a=>[a.trackId,a]));
@@ -73,7 +87,7 @@ const PRIOR_VARIANCE=4;
 const BACKGROUND_WEIGHT_RATIO=0.25;
 const MAX_BACKGROUND=40;
 const sigmoid=(z:number)=>1/(1+Math.exp(-z));
-type Anchor={vector:number[];value:1|-1;weight:number};
+type Anchor=Encoded & {value:1|-1;weight:number};
 interface TasteModel {examples:Example[];anchors:Example[];weights:number[];covariance:number[][]}
 
 /** Solves A x = b for a small symmetric positive-definite matrix (Gauss-Jordan with partial pivoting). */
@@ -94,19 +108,20 @@ function solve(a:number[][],b:number[][]):number[][] {
   }
   return A.map(row=>row.slice(n));
 }
-function features(vector:number[],anchors:Example[]):number[] {
-  return [1,...anchors.map(a=>cosineSimilarity(vector,a.vector))];
+/** Bias, then similarity to every labeled example in each feature family: 1 + families x examples numbers. */
+function features(item:Encoded,anchors:Example[]):number[] {
+  return [1,...item.blocks.flatMap((block,b)=>anchors.map(a=>cosineSimilarity(block,a.blocks[b]??[])))];
 }
 /** Fits the MAP weights and Laplace covariance. Background windows are evenly spaced unlabeled segments. */
-function fitTasteModel(examples:Example[],background:number[][]):TasteModel {
+function fitTasteModel(examples:Example[],background:Encoded[]):TasteModel {
   const anchors=examples;
   const positiveWeight=examples.filter(e=>e.value===1).reduce((sum,e)=>sum+e.weight,0);
   const step=Math.max(1,Math.ceil(background.length/MAX_BACKGROUND));
   const sampled=background.filter((_,i)=>i%step===0);
   const backgroundWeight=sampled.length?BACKGROUND_WEIGHT_RATIO*positiveWeight/sampled.length:0;
-  const rows:Anchor[]=[...examples,...sampled.map(vector=>({vector,value:-1 as const,weight:backgroundWeight}))];
-  const X=rows.map(r=>features(r.vector,anchors)),y=rows.map(r=>r.value===1?1:0),c=rows.map(r=>r.weight);
-  const d=anchors.length+1;
+  const rows:Anchor[]=[...examples,...sampled.map(e=>({...e,value:-1 as const,weight:backgroundWeight}))];
+  const X=rows.map(r=>features(r,anchors)),y=rows.map(r=>r.value===1?1:0),c=rows.map(r=>r.weight);
+  const d=X[0].length;
   let w=Array<number>(d).fill(0);
   let hessian:number[][]=[];
   for(let iter=0;iter<25;iter++){
@@ -127,20 +142,29 @@ function fitTasteModel(examples:Example[],background:number[][]):TasteModel {
   return {examples,anchors,weights:w,covariance:solve(hessian,identity)};
 }
 /** MacKay probit approximation to the posterior predictive; uncertainty is the logit's posterior std. */
-function score(vector:number[],model:TasteModel):{personal:number;uncertainty:number;baseline:number;match:Example|null} {
+function score(item:Encoded,model:TasteModel):{personal:number;uncertainty:number;baseline:number;match:Example|null} {
   const positive=model.examples.filter(e=>e.value===1);
   if(!positive.length)return {personal:0,uncertainty:1,baseline:0,match:null};
   let match=positive[0];let maxPos=-Infinity;
-  for(const e of positive){const s=cosineSimilarity(vector,e.vector);if(s>maxPos){maxPos=s;match=e;}}
-  const x=features(vector,model.anchors);
+  for(const e of positive){const s=cosineSimilarity(item.vector,e.vector);if(s>maxPos){maxPos=s;match=e;}}
+  const x=features(item,model.anchors);
   const mean=x.reduce((sum,v,i)=>sum+v*model.weights[i],0);
   const variance=Math.max(0,x.reduce((sum,xi,i)=>sum+xi*x.reduce((inner,xj,j)=>inner+model.covariance[i][j]*xj,0),0));
   return {personal:sigmoid(mean/Math.sqrt(1+Math.PI*variance/8)),uncertainty:Math.sqrt(variance),baseline:maxPos,match};
 }
-function backgroundFor(analyses:TrackAnalysis[],modelId:string,labeled:Passage[]):number[][] {
+function backgroundFor(analyses:TrackAnalysis[],modelId:string,labeled:Passage[]):Encoded[] {
   return analyses.filter(a=>a.modelId===modelId).flatMap(a=>a.segments
     .filter(s=>!labeled.some(l=>l.trackId===a.trackId&&spanOverlap(l,{...s,trackId:a.trackId})>0))
-    .map(s=>s.embedding));
+    .map(s=>({vector:s.embedding,blocks:blocksOf(s)})));
+}
+
+/** Share of the learned weight on each feature family, e.g. {clap:0.38, dsp:0.62}; null for one family. */
+function learnedFamilyShare(model:TasteModel):{clap:number;dsp:number}|null {
+  const n=model.anchors.length;
+  if(!n||model.weights.length!==1+2*n)return null;
+  const mass=(b:number)=>model.weights.slice(1+b*n,1+(b+1)*n).reduce((sum,w)=>sum+Math.abs(w),0);
+  const total=mass(0)+mass(1)||1;
+  return {clap:mass(0)/total,dsp:mass(1)/total};
 }
 /**
  * Up to 3 plain reasons a window resembles the saved passage it matched (Discover's pills).
@@ -188,7 +212,7 @@ export function personalRecommendations(analyses:TrackAnalysis[], moments:Moment
       const p={trackId:analysis.trackId,startSec:segment.startSec,endSec:segment.endSec};
       // Don't recommend labeled windows or their substantial overlaps again.
       if(blocked.some(b=>b.trackId===p.trackId&&spanOverlap(b,p) >= Math.min(4,(p.endSec-p.startSec)*0.35)))continue;
-      const s=score(segment.embedding,model);
+      const s=score({vector:segment.embedding,blocks:blocksOf(segment)},model);
       all.push({...p,modelId,score:s.personal,uncertainty:s.uncertainty,baselineScore:s.baseline,positiveExamples:pos.length,
         negativeExamples:neg.length,confidence:pos.length>=5&&neg.length>=2?'developing':'experimental',
         evidence:s.match?featureEvidence(segment,s.match.segment):[],
@@ -210,8 +234,9 @@ export function preferenceSummaries(analyses:TrackAnalysis[], moments:Moment[],r
   return [...new Set(analyses.map(a=>a.modelId))].map(modelId=>{
     const examples=examplesFor(analyses,moments,ratings,modelId);
     const positives=examples.filter(x=>x.value===1).length,negatives=examples.filter(x=>x.value===-1).length;
+    const share=positives?learnedFamilyShare(fitTasteModel(examples,backgroundFor(analyses,modelId,[...moments,...ratings]))):null;
     return {modelId,positives,negatives,observedReturns:attentionCandidates(events,1).length,
-      status:!positives?'untrained':positives>=5&&negatives>=2?'developing':'early'};
+      status:!positives?'untrained':positives>=5&&negatives>=2?'developing':'early',...(share?{familyShare:share}:{})};
   });
 }
 /** Candidate detector: captures 8 passive listening behaviors, reconstructing coverage and returns.
@@ -369,7 +394,7 @@ export function evaluatePreferences(analyses:TrackAnalysis[],moments:Moment[],ra
       for(const p of positives)for(const n of negatives){
         const a=vectorFor(target,p),b=vectorFor(target,n);
         if(!a||!b)continue;
-        const ps=score(a.vector,model),ns=score(b.vector,model);
+        const ps=score(a,model),ns=score(b,model);
         pairs++;
         personalWins+=ps.personal>ns.personal?1:ps.personal===ns.personal?.5:0;
         baselineWins+=ps.baseline>ns.baseline?1:ps.baseline===ns.baseline?.5:0;

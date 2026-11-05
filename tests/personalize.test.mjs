@@ -116,3 +116,17 @@ test('Bayesian taste model returns probabilities whose uncertainty shrinks with 
  assert.ok(pick(many,0).score>pick(many,12).score);
  assert.ok(pick(many,0).uncertainty<pick(few,0).uncertainty);
 });
+
+test('taste model learns per listener how much DSP vs CLAP similarity counts',()=>{
+ // Liked windows share one DSP pattern but have unrelated CLAP vectors; disliked ones the reverse.
+ let seed=7;const rand=()=>((seed=(seed*16807)%2147483647)/2147483647)-0.5;
+ const clap=()=>Array.from({length:8},rand), unit=v=>{const n=Math.hypot(...v)||1;return v.map(x=>x/n);};
+ const likedDsp=unit([1,0.8,0,0]), otherDsp=()=>unit([rand(),rand(),1,1]);
+ const fused=(deep,dsp)=>({...sec(0,[...deep,...dsp]),deepEmbedding:unit(deep),dspEmbedding:dsp});
+ const tracks=Array.from({length:6},(_,i)=>analysis(`t${i}`,[
+   {...fused(clap(),likedDsp),startSec:0,endSec:12},{...fused(clap(),otherDsp()),startSec:12,endSec:24}],'multimodal-v1'));
+ const m=tracks.map(t=>moment(t.trackId,0)), r=tracks.map(t=>rating(t.trackId,12,'dislike'));
+ const [summary]=preferenceSummaries(tracks,m,r,[]);
+ assert.ok(summary.familyShare, 'multimodal analyses report a learned family share');
+ assert.ok(summary.familyShare.dsp>summary.familyShare.clap, JSON.stringify(summary.familyShare));
+});
