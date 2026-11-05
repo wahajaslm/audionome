@@ -138,3 +138,9 @@ Sources were found by a literature search agent and are linked in the session no
   - **Overall:** 0.606 → **0.619**. **Western:** 0.626 → **0.657**. **Eastern:** 0.597 → **0.606**, still below the brightness rule (0.656).
   - **The model now uses the hand-built features.** Shuffling loudness, brightness and onsets costs +0.025 on Eastern songs (was +0.005), and MFCC +0.014. CLAP still matters most on Eastern songs (+0.032).
   - **K-pop (8 songs) is below random for every method,** around 0.40–0.45. Its replay peaks may follow visuals or choreography, not sound.
+- **2026-11-05 · Step 2 check of the Eastern ensemble features: PARTLY FAILED.** Medians of the 120 songs' per-song medians, by region and genre:
+  - **instrument_offgrid is highest in tech house** (0.164), with Bollywood at 0.046 and Pakistani pop at 0.048. **drone_strength is highest in house** (0.507 vs. Eastern 0.281). So these two catch detuned synths and sustained pads, not raga or maqam practice. Modern film and pop instrumentation is mostly tuned to 12-TET (keyboards, pitch correction); its microtones sit mainly in the voice.
+  - **Sensible:** percussion share (house 0.83), instrument solo time (house 0.37 vs. under 0.10 elsewhere), tempo, build-up and roughness.
+  - **Decision:** these two are not used in the hypothesis test until fixed.
+    - Microtones: measure them on the voice relative to Sa (intonation stage). For instruments, require stable off-grid scale degrees rather than detuned spread.
+    - Drone: require the sustained pitch class to be Sa or Pa.
