@@ -144,3 +144,12 @@ Sources were found by a literature search agent and are linked in the session no
   - **Decision:** these two are not used in the hypothesis test until fixed.
     - Microtones: measure them on the voice relative to Sa (intonation stage). For instruments, require stable off-grid scale degrees rather than detuned spread.
     - Drone: require the sustained pitch class to be Sa or Pa.
+- **2026-11-05 · CLAP vs. MERT vs. CultureMERT with the fixed model** (separate branches, per-song scaling; no CNN; DSP + spatial + one embedding). Pairwise accuracy:
+  - **Eastern** (34 songs): CLAP 0.606, MERT 0.624, **CultureMERT 0.639**. Brightness rule 0.656.
+  - **Western** (31): **CLAP 0.657**, MERT 0.651, CultureMERT 0.634.
+  - **House** (19): 0.645 / 0.635 / 0.658.
+  - **Paired difference, CultureMERT − CLAP:**
+    - Eastern +0.033 [−0.005, +0.070].
+    - Western −0.023 [−0.055, +0.007].
+  - **Reading:** the asymmetry the hypothesis predicts. The encoder adapted to Indian classical and makam music helps on Eastern songs and costs a little on Western ones. Both intervals just touch 0, so this is suggestive, not established. Every model is still at or below the brightness rule on Eastern songs.
+  - **Note:** with the old single-branch model, CultureMERT showed no gain (Eastern +0.004). So the per-song scaling fix was needed to see it.
