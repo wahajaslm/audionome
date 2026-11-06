@@ -3,9 +3,10 @@ import { computed, reactive, ref, toRefs } from 'vue';
 import type { NativeAudioEngine } from '../core/audioEngine';
 import { fullMixUrl, resolveTrackSource, stemUrl, type PlayableTrack } from '../core/library';
 import {
-  contains, defaultLoopRange, enforceMinimumSelection, quickSaveRange, rangeAround,
-  RegionController, seekTarget, type Range, type RegionState,
+  beatGrid, contains, defaultLoopRange, enforceMinimumSelection, quickSaveRange, rangeAround,
+  RegionController, seekTarget, snapRange, type Range, type RegionState,
 } from '../core/playback';
+import { normalizationGainDb } from '../core/audioGraph';
 import { putSetting, getSetting } from '../core/repository';
 import { useLibraryStore } from './library';
 import { useListeningStore } from './listening';
@@ -13,6 +14,7 @@ import { useMomentFlowStore } from './momentFlow';
 import { useMomentsStore } from './moments';
 import { useIntelligenceStore } from './intelligence';
 import { useUiStore } from './ui';
+import { useTimelineStore } from './timeline';
 
 /** A passage queued by "Play all" in My Moments. */
 export interface QueuedRange extends Range { trackId: string }
@@ -37,6 +39,12 @@ export const usePlaybackStore = defineStore('playback', () => {
   const loading = ref(false);
   const volume = ref(0.62);
   const activeStem = ref('all');
+  /** Playback speed, pitch kept. Back to 1 for each new song. */
+  const rate = ref(1);
+  /** Settings: play every song at the same loudness. */
+  const normalize = ref(true);
+  /** Settings: selection edges move to the beat. */
+  const snapToBeat = ref(true);
   const queue = ref<QueuedRange[]>([]);
 
   let engineRef: NativeAudioEngine | null = null;
@@ -82,6 +90,56 @@ export const usePlaybackStore = defineStore('playback', () => {
     const v = await getSetting<number>('volume');
     if (typeof v === 'number') volume.value = v;
     engineRef?.setVolume(volume.value);
+    const n = await getSetting<boolean>('normalizeLoudness');
+    if (typeof n === 'boolean') normalize.value = n;
+    const snap = await getSetting<boolean>('snapToBeat');
+    if (typeof snap === 'boolean') snapToBeat.value = snap;
+    applyLoudness(0);
+  }
+
+  /**
+   * Sets the loudness gain for the loaded song. 0 s ramp when a song loads (before sound),
+   * a slow ramp when the first measurement arrives during playback.
+   * Example: a −9 LUFS master loads → −8 dB from its first sample.
+   */
+  function applyLoudness(rampSec: number): void {
+    const t = currentTrack.value;
+    engineRef?.setNormalization(normalize.value && t ? normalizationGainDb({ lufs: t.loudnessLufs, peakDb: t.peakDb }) : 0, rampSec);
+  }
+
+  /** The timeline store measured a song: level it now if it is the one playing. */
+  function onLoudnessMeasured(id: string): void {
+    if (id === trackId.value) applyLoudness(2);
+  }
+
+  async function setNormalize(on: boolean): Promise<void> {
+    normalize.value = on;
+    applyLoudness(0.3);
+    await putSetting('normalizeLoudness', on);
+  }
+
+  async function setSnapToBeat(on: boolean): Promise<void> {
+    snapToBeat.value = on;
+    await putSetting('snapToBeat', on);
+  }
+
+  /**
+   * Speed for practising a passage: same key, slower. Cycles 1 → 0.9 → 0.75 → 0.5 → 1.
+   * Example: looping a fast taan at 0.75× → each note is audible, still in the singer's key.
+   */
+  const RATES = [1, 0.9, 0.75, 0.5];
+  function setRate(r: number): void {
+    rate.value = r;
+    engineRef?.setRate(r);
+  }
+  function cycleRate(): void {
+    const i = RATES.indexOf(rate.value);
+    setRate(RATES[(i + 1) % RATES.length]);
+  }
+
+  /** The selection on the beat (when the setting is on and the song has beats). */
+  function snapped(r: Range): Range {
+    return snapToBeat.value ? snapRange(r, beatGrid(useTimelineStore().timeline), duration.value) : r;
   }
 
   /**
@@ -104,6 +162,7 @@ export const usePlaybackStore = defineStore('playback', () => {
     trackId.value = t.id; duration.value = t.durationSec || 32; region.sel = null;
     flow.resetForTrack();
     activeStem.value = 'all';
+    if (rate.value !== 1) setRate(1);
     region.loop = false; playing.value = false; region.t = seconds;
     useIntelligenceStore().recomputeInterest();
     try { if (e.isPlaying()) e.pause(); } catch { /* ignore */ }
@@ -111,6 +170,8 @@ export const usePlaybackStore = defineStore('playback', () => {
     const src = await resolveTrackSource(t);
     if (seq !== loadSeq) { if (src.objectUrl) URL.revokeObjectURL(src.objectUrl); return; }
     objectUrl = src.objectUrl;
+    // Level set before the first sample plays (known songs); new songs are levelled once measured.
+    applyLoudness(0);
     try {
       await e.load(src.srcUrl, seconds, src.fallbackUrl);
       if (seq !== loadSeq) return;
@@ -277,7 +338,7 @@ export const usePlaybackStore = defineStore('playback', () => {
    */
   function commitSelection(): void {
     if (!engineRef || !region.sel) return;
-    region.sel = enforceMinimumSelection(region.sel, duration.value);
+    region.sel = snapped(enforceMinimumSelection(region.sel, duration.value));
     region.previewEnd = null;
   }
 
@@ -298,14 +359,15 @@ export const usePlaybackStore = defineStore('playback', () => {
   /** Edge drag released: widen to the minimum length. */
   function endResize(): void {
     if (!region.sel) return;
-    region.sel = enforceMinimumSelection(region.sel, duration.value);
+    region.sel = snapped(enforceMinimumSelection(region.sel, duration.value));
     if (region.previewEnd !== null) region.previewEnd = region.sel.b;
+    if (region.loop && !contains(region.sel, region.t)) { region.t = region.sel.a; engineRef?.setTime(region.sel.a); }
   }
 
   /** Waveform Enter: select ±10 s around the playhead (only when nothing is selected). */
   function selectAroundPlayhead(): void {
     if (region.sel) return;
-    region.sel = rangeAround(region.t, duration.value);
+    region.sel = snapped(rangeAround(region.t, duration.value));
   }
 
   function clearSelection(): void {
@@ -318,7 +380,7 @@ export const usePlaybackStore = defineStore('playback', () => {
   function toggleLoop(): void {
     const e = engineRef;
     if (!e) return;
-    if (!region.sel) region.sel = defaultLoopRange(region.t, duration.value);
+    if (!region.sel) region.sel = snapped(defaultLoopRange(region.t, duration.value));
     region.loop = !region.loop; region.loops = 0;
     // NO AUTO-PLAY FIX - switching the loop on no longer starts playback. Paused: the playhead
     // moves to the loop start, so Play starts the loop. Playing: it jumps to the loop start.
@@ -336,7 +398,7 @@ export const usePlaybackStore = defineStore('playback', () => {
   /** Heart in the playback bar: select the last 20 s (the caller then saves it). */
   function selectLast20s(): boolean {
     if (region.t < 2) { useUiStore().notify('Listen a little before saving a moment.'); return false; }
-    region.sel = quickSaveRange(region.t);
+    region.sel = snapped(quickSaveRange(region.t));
     return true;
   }
 
@@ -406,6 +468,7 @@ export const usePlaybackStore = defineStore('playback', () => {
 
   return {
     ...toRefs(region), trackId, duration, playing, loading, volume, activeStem, queue, currentTrack,
+    rate, normalize, snapToBeat, setRate, cycleRate, setNormalize, setSnapToBeat, onLoudnessMeasured,
     engine, attachEngine, onDuration, onFrame, checkRegionEnd, loadSettings,
     selectTrack, changeTrack, openRange, playQueue, playNext, togglePlay, playSelection, seekBy, stepBy,
     clickSeek, beginSelection, updateSelection, commitSelection, resizeSelection, endResize, selectAroundPlayhead, clearSelection,

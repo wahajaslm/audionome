@@ -4,7 +4,9 @@ import { NativeAudioEngine } from '../src/core/audioEngine.ts';
 import { ListeningLog, readMediaTime } from '../src/core/listening.ts';
 import {
   RegionController, enforceMinimumSelection, rangeAround, defaultLoopRange, previewStart, seekTarget, quickSaveRange,
+  beatGrid, beatLength, snapTime, snapRange,
 } from '../src/core/playback.ts';
+import { measureLoudness, normalizationGainDb, MAX_BOOST_DB } from '../src/core/audioGraph.ts';
 import { toDbMoment, withTags, collectionsOf, newMoment, savedRanges } from '../src/core/moments.ts';
 import { barAt, beatInBar, blockIndexAt, chordChart, chordSheet, noteName, passageEvidence, passageMoments, rankIn } from '../src/core/timeline.ts';
 import { bandForHz, computeSpectrum, computeView, fft, hzToMel, melFilters, melToHz, SPEC_SR } from '../src/core/spectrum.ts';
@@ -93,6 +95,95 @@ test('engine: AbortError from play() is ignored', async () => {
   const engine = new NativeAudioEngine({}, el);
   el.playResult = Object.assign(new Error('aborted'), { name: 'AbortError' });
   await engine.play();
+});
+
+test('engine: with a graph, volume and loudness go to the graph and the element stays at 1 (WEB AUDIO FIX)', async () => {
+  const el = new FakeMedia();
+  const calls = [];
+  const graph = {
+    resume: () => calls.push('resume'), close: () => calls.push('close'),
+    setVolume: v => calls.push(['vol', v]), setNormalization: (db, ramp) => calls.push(['norm', db, ramp]),
+  };
+  const engine = new NativeAudioEngine({ createGraph: () => graph }, el);
+  engine.setVolume(0.5);
+  engine.setNormalization(-6);
+  assert.ok(Math.abs(el.volume - 0.5 * 10 ** (-6 / 20)) < 1e-9, 'before the first play there is no graph: both fold into el.volume');
+  await engine.play();
+  assert.equal(el.volume, 1, 'graph built on play; the element plays at full level');
+  assert.deepEqual(calls.slice(0, 3), [['vol', 0.5], ['norm', -6, 0], 'resume']);
+  engine.setNormalization(-2, 2);
+  assert.deepEqual(calls.at(-1), ['norm', -2, 2]);
+});
+
+test('engine: without a graph a loudness lift cannot raise el.volume above the slider', () => {
+  const el = new FakeMedia();
+  const engine = new NativeAudioEngine({}, el);
+  engine.setVolume(0.8);
+  engine.setNormalization(+6);
+  assert.equal(el.volume, 0.8);
+});
+
+test('engine: speed keeps the pitch and survives a new source (defaultPlaybackRate)', () => {
+  const el = new FakeMedia();
+  const engine = new NativeAudioEngine({}, el);
+  engine.setRate(0.75);
+  assert.equal(el.playbackRate, 0.75);
+  assert.equal(el.defaultPlaybackRate, 0.75);
+  assert.equal(el.preservesPitch, true);
+  engine.setRate(9);
+  assert.equal(engine.getRate(), 2, 'clamped');
+});
+
+test('loudness: a full-scale 1 kHz sine reads about -3 LUFS; silence is -Infinity', () => {
+  const sr = 22050, n = sr * 5;
+  const sine = new Float32Array(n).map((_, i) => Math.sin(2 * Math.PI * 1000 * i / sr));
+  const l = measureLoudness(sine, sr);
+  assert.ok(Math.abs(l.lufs - -3.01) < 0.2, 'got ' + l.lufs);
+  assert.ok(Math.abs(l.peakDb) < 0.01);
+  const half = measureLoudness(sine.map(v => v * 0.5), sr);
+  assert.ok(Math.abs((l.lufs - half.lufs) - 6.02) < 0.05, 'half amplitude is 6 dB quieter');
+  assert.equal(measureLoudness(new Float32Array(n), sr).lufs, -Infinity);
+});
+
+test('loudness: quiet passages are gated out, so a song with a silent intro is not over-lifted', () => {
+  const sr = 22050;
+  const tone = Array.from({ length: sr * 4 }, (_, i) => 0.5 * Math.sin(2 * Math.PI * 1000 * i / sr));
+  const withIntro = new Float32Array([...new Array(sr * 8).fill(0), ...tone]);
+  const only = measureLoudness(new Float32Array(tone), sr).lufs;
+  assert.ok(Math.abs(measureLoudness(withIntro, sr).lufs - only) < 0.3);
+});
+
+test('normalization gain: cuts loud masters, caps lifts by MAX_BOOST_DB and the peak ceiling', () => {
+  assert.equal(normalizationGainDb({ lufs: -9, peakDb: 0 }), -8);
+  assert.equal(normalizationGainDb({ lufs: -40, peakDb: -20 }), MAX_BOOST_DB);
+  assert.equal(normalizationGainDb({ lufs: -22, peakDb: -3 }), 2, 'peak -3 dBFS leaves 2 dB to the -1 ceiling');
+  assert.equal(normalizationGainDb({ lufs: -Infinity, peakDb: -Infinity }), 0, 'silence: no gain');
+  assert.equal(normalizationGainDb(undefined), 0, 'not measured yet: no gain');
+});
+
+// 120 bpm: a beat every 0.5 s, a bar (downbeat) every 2 s, a part starting at 9.0 s.
+const grid120 = beatGrid({
+  beats: Array.from({ length: 80 }, (_, i) => i * 0.5),
+  downbeats: Array.from({ length: 20 }, (_, i) => i * 2),
+  sections: [{ a: 0 }, { a: 9 }],
+});
+
+test('beat snap: edges go to the downbeat when close, else to the nearest beat (BEAT SNAP FIX)', () => {
+  assert.equal(beatLength(grid120.beats), 0.5);
+  assert.equal(snapTime(10.3, grid120), 10, 'within 3/4 beat of a downbeat');
+  assert.equal(snapTime(11.2, grid120), 11, 'nearest beat');
+  assert.equal(snapTime(9.2, grid120), 9, 'part start counts as strong');
+  assert.deepEqual(snapRange({ a: 10.3, b: 17.8 }, grid120, 40), { a: 10, b: 18 }, 'a clean 4-bar loop');
+});
+
+test('beat snap: no beats or a range that would collapse is left unchanged', () => {
+  assert.deepEqual(snapRange({ a: 10.3, b: 17.8 }, null, 40), { a: 10.3, b: 17.8 });
+  assert.equal(beatGrid({ beats: [1, 2] }), null, 'too few beats');
+  assert.deepEqual(snapRange({ a: 10.1, b: 10.3 }, grid120, 40), { a: 10.1, b: 10.3 }, 'both edges would land on 10.0');
+});
+
+test('beat snap: Shift+arrow (1 s) still moves an edge that sits on a downbeat', () => {
+  assert.deepEqual(snapRange({ a: 10, b: 17 }, grid120, 40), { a: 10, b: 17 }, 'one beat short of the downbeat stays');
 });
 
 test('readMediaTime uses the element clock unless a seek is pending (SYNC FIX 7)', () => {

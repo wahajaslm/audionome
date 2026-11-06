@@ -4,6 +4,7 @@ import { fetchTimeline, hasFull, hasQuick, startTimeline, type Timeline } from '
 import { SPEC_SR, type Spectrum, type SpectrumKind, type SpectrumView } from '../core/spectrum';
 import { getSetting, putSetting } from '../core/repository';
 import { fallbackUrl } from '../core/library';
+import { measureLoudness } from '../core/audioGraph';
 import { useLibraryStore } from './library';
 import { usePlaybackStore } from './playback';
 
@@ -158,6 +159,13 @@ export const useTimelineStore = defineStore('timeline', () => {
       for (let c = 0; c < buf.numberOfChannels; c++) {
         const ch = buf.getChannelData(c);
         for (let i = 0; i < mono.length; i++) mono[i] += ch[i] / buf.numberOfChannels;
+      }
+      // LOUDNESS - measured once per song from the same decoded samples, before they go to the
+      // worker (the transfer empties this array). About 30 ms for a 4-minute song.
+      if (t.loudnessLufs === undefined) {
+        const l = measureLoudness(mono, SPEC_SR);
+        useLibraryStore().setLoudness(id, l.lufs, l.peakDb);
+        usePlaybackStore().onLoudnessMeasured(id);
       }
       const result = await askWorker('mel', mono) as Spectrum;
       if (mySeq !== seq) return;

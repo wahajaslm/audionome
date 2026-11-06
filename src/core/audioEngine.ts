@@ -7,6 +7,8 @@
  * same fixes, moved here so the Vue player and the classic page cannot drift apart.
  */
 
+import { dbToGain, type AudioGraphLike } from './audioGraph.ts';
+
 export type EngineEvent = 'timeupdate' | 'play' | 'pause' | 'finish' | 'playing' | 'waiting';
 type Listener = (value?: number) => void;
 
@@ -14,7 +16,8 @@ type Listener = (value?: number) => void;
 export type MediaElementLike = Pick<HTMLMediaElement,
   'addEventListener' | 'removeEventListener' | 'play' | 'pause' | 'load' |
   'paused' | 'ended' | 'seeking' | 'currentTime' | 'duration' | 'readyState' |
-  'src' | 'error' | 'volume' | 'preload'>;
+  'src' | 'error' | 'volume' | 'preload'> &
+  Partial<Pick<HTMLMediaElement, 'crossOrigin' | 'playbackRate' | 'defaultPlaybackRate' | 'preservesPitch'>>;
 
 export interface AudioEngineHooks {
   /** Called when the media reports a real duration (seconds). */
@@ -23,6 +26,11 @@ export interface AudioEngineHooks {
   resumePosition?(): number;
   /** Whether playback should continue after switching to the fallback URL. */
   wantsPlayback?(): boolean;
+  /**
+   * Builds the Web Audio graph on the first play (browsers only start audio inside a click).
+   * Omitted in tests and old browsers: the element then plays directly.
+   */
+  createGraph?(el: MediaElementLike): AudioGraphLike | null;
 }
 
 export class NativeAudioEngine {
@@ -33,6 +41,11 @@ export class NativeAudioEngine {
   private pendingTime: number | null = null;
   private currentFallbackUrl: string | null = null;
   private usedFallback = false;
+  private graph: AudioGraphLike | null = null;
+  private graphTried = false;
+  private volume = 1;
+  private normDb = 0;
+  private rate = 1;
 
   private readonly hooks: AudioEngineHooks;
 
@@ -47,6 +60,10 @@ export class NativeAudioEngine {
     }
     const el = this.el;
     el.preload = 'auto';
+    // WEB AUDIO FIX - the graph reads the samples, which browsers allow for other origins only
+    // with CORS. Without this, a service URL would play as silence through the graph.
+    // The local service sends CORS headers; a link without them fails and the fallback plays.
+    if ('crossOrigin' in el) el.crossOrigin = 'anonymous';
     el.addEventListener('loadedmetadata', () => {
       if (el.duration && Number.isFinite(el.duration) && el.duration > 0) this.hooks.onDuration?.(el.duration);
       if (this.pendingTime !== null) {
@@ -118,6 +135,10 @@ export class NativeAudioEngine {
 
   async play(): Promise<void> {
     const el = this.el;
+    // Inside the click that started playback: build the graph once and start its clock.
+    // Not awaited, so el.play() below still runs inside the click (Safari is strict here).
+    this.ensureGraph();
+    this.graph?.resume();
     try {
       return await el.play();
     } catch (err) {
@@ -155,7 +176,58 @@ export class NativeAudioEngine {
     return (d && Number.isFinite(d)) ? d : 0;
   }
 
-  setVolume(v: number): void { this.el.volume = Math.max(0, Math.min(1, Number(v) || 0)); }
+  private ensureGraph(): void {
+    if (this.graphTried || !this.hooks.createGraph) return;
+    this.graphTried = true;
+    try { this.graph = this.hooks.createGraph(this.el); } catch (err) { console.warn('Web Audio notice:', err); this.graph = null; }
+    this.applyLevel(0);
+  }
+
+  /**
+   * With the graph: volume and loudness are two gain stages, the element stays at 1.
+   * Without it: both fold into el.volume, so loudness can only turn songs down (volume ≤ 1).
+   */
+  private applyLevel(rampSec: number): void {
+    if (this.graph) {
+      this.el.volume = 1;
+      this.graph.setVolume(this.volume);
+      this.graph.setNormalization(this.normDb, rampSec);
+    } else {
+      this.el.volume = Math.max(0, Math.min(1, this.volume * Math.min(1, dbToGain(this.normDb))));
+    }
+  }
+
+  setVolume(v: number): void {
+    this.volume = Math.max(0, Math.min(1, Number(v) || 0));
+    if (this.graph) this.graph.setVolume(this.volume); else this.applyLevel(0);
+  }
+
+  /**
+   * Loudness gain for the loaded song (dB, 0 = as mastered), eased over `rampSec`.
+   * Example: setNormalization(-8, 0) before play → a loud master starts 8 dB down, no jump.
+   */
+  setNormalization(db: number, rampSec = 0): void {
+    this.normDb = Number.isFinite(db) ? db : 0;
+    this.applyLevel(rampSec);
+  }
+
+  /**
+   * Playback speed with the pitch kept (practice a passage slower in the same key).
+   * Set on defaultPlaybackRate too: loading a new source resets playbackRate to it, so the
+   * speed survives a stem switch.
+   * Example: setRate(0.75) on a 12 s loop → each cycle takes 16 s, notes stay in key.
+   */
+  setRate(r: number): void {
+    const rate = Math.max(0.25, Math.min(2, Number(r) || 1));
+    this.rate = rate;
+    this.el.preservesPitch = true;
+    this.el.defaultPlaybackRate = rate;
+    this.el.playbackRate = rate;
+  }
+  getRate(): number { return this.rate; }
+
+  /** Releases the audio device (hot-reload teardown). */
+  closeGraph(): void { this.graph?.close(); this.graph = null; }
 
   on(ev: EngineEvent, fn: Listener): void { this.listeners[ev]?.push(fn); }
 

@@ -28,8 +28,8 @@ export function useMediaSession(): void {
   }, { immediate: true });
   watch(() => playback.playing, p => { ms.playbackState = p ? 'playing' : 'paused'; }, { immediate: true });
   // The OS scrubber: updated on every second boundary, not every frame.
-  watch(() => [Math.floor(playback.t), playback.duration] as const, ([pos, dur]) => {
+  watch(() => [Math.floor(playback.t), playback.duration, playback.rate] as const, ([pos, dur, rate]) => {
     if (!(dur > 0)) return;
-    try { ms.setPositionState({ duration: dur, position: Math.min(pos, dur), playbackRate: 1 }); } catch { /* invalid state */ }
+    try { ms.setPositionState({ duration: dur, position: Math.min(pos, dur), playbackRate: rate }); } catch { /* invalid state */ }
   });
 }

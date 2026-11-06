@@ -4,8 +4,9 @@
  * player's Spotify-style bar).
  * Left: track (opens Now playing) + ♡ save the last 20 s. Centre: prev · play · next · loop over
  * a scrubber with times. Right: mute + volume. Below 820px: compact, above the tab bar.
- * Props: title, artist; currentTime, duration (seconds); playing; loop (pressed); volume (0–1).
- * Emits: open, save-last, prev, toggle-play, next, loop, volume(v 0–1),
+ * Props: title, artist; currentTime, duration (seconds); playing; loop (pressed); volume (0–1);
+ *        rate (speed, 1 = normal).
+ * Emits: open, save-last, prev, toggle-play, next, loop, rate (next speed), volume(v 0–1),
  *        scrub-start, scrub(sec), scrub-end(sec), step(±5 s). The consumer logs the seek (SYNC FIX 8).
  */
 import { computed, ref } from 'vue';
@@ -14,9 +15,10 @@ import { formatTime } from './format';
 
 const props = defineProps<{
   title: string; artist: string; currentTime: number; duration: number; playing: boolean; loop: boolean; volume: number;
+  rate: number;
 }>();
 const emit = defineEmits<{
-  open: []; 'save-last': []; prev: []; 'toggle-play': []; next: []; loop: []; volume: [v: number];
+  open: []; 'save-last': []; prev: []; 'toggle-play': []; next: []; loop: []; rate: []; volume: [v: number];
   'scrub-start': []; scrub: [sec: number]; 'scrub-end': [sec: number]; step: [delta: number];
 }>();
 
@@ -61,6 +63,14 @@ function toggleMute() {
         <button type="button" class="play" :aria-label="playing ? 'Pause' : 'Play'" @click="emit('toggle-play')"><Icon :name="playing ? 'pause' : 'play'" :size="18" /></button>
         <button type="button" class="ib" aria-label="Forward 15 seconds" title="Forward 15 s" @click="emit('next')"><Icon name="next" :size="18" /></button>
         <button type="button" class="ib" :aria-pressed="loop" aria-label="Loop selection" title="Loop selection" @click="emit('loop')"><Icon name="loop" :size="18" /></button>
+        <button
+          type="button"
+          class="ib rate"
+          :class="{ slow: rate !== 1 }"
+          :aria-label="'Speed ' + rate + '×. Pitch stays the same'"
+          title="Practice speed (pitch stays the same)"
+          @click="emit('rate')"
+        >{{ rate }}×</button>
       </div>
       <div class="timeline">
         <span class="time">{{ formatTime(currentTime) }}</span>
@@ -154,6 +164,9 @@ function toggleMute() {
 }
 .ib:hover { color: #fff; }
 .ib[aria-pressed='true'] { color: #1db954; }
+/* Speed: text, not an icon; green while slowed so a slowed song is never a surprise. */
+.rate { width: 40px; border-radius: 4px; font: 600 11px var(--font-sans); font-variant-numeric: tabular-nums; }
+.rate.slow { color: #1db954; }
 .ib[aria-pressed='true']::after {
   content: ''; position: absolute; bottom: 2px; width: 4px; height: 4px; border-radius: 50%; background: #1db954;
 }

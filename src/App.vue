@@ -61,6 +61,8 @@ function onToastAction(): void {
       :playing="playback.playing"
       :loop="playback.loop && !!playback.sel"
       :volume="playback.volume"
+      :rate="playback.rate"
+      @rate="playback.cycleRate()"
       @open="router.push('/')"
       @save-last="flow.quickSave()"
       @prev="playback.seekBy(-15)"

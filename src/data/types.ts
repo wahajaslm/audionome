@@ -16,6 +16,10 @@ export interface Track {
   // and a re-encoded copy titled 'Garaj Baras' would match by name but not by audio. Unset for older imports.
   sha256?: string;
   artwork?: string;
+  // Integrated loudness of the mono mix (LUFS) and sample peak (dBFS), measured once in the
+  // browser (core/audioGraph.ts). The player uses them to play every song at the same level.
+  loudnessLufs?: number;
+  peakDb?: number;
 }
 export interface Moment {
   id: string;

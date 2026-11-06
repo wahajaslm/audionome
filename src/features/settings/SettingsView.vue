@@ -24,6 +24,7 @@ const playback = usePlaybackStore();
 const router = useRouter();
 const { learning } = storeToRefs(listening);
 const { autoAnalyze } = storeToRefs(library);
+const { normalize, snapToBeat } = storeToRefs(playback);
 const { events } = storeToRefs(useIntelligenceStore());
 const eventsCount = computed(() => events.value.length);
 /** Clearing history asks once, in place (no browser dialog). */
@@ -84,6 +85,20 @@ async function resetAll() {
           />
           <span class="label pct">{{ volumePct }}%</span>
         </div>
+      </li>
+      <li class="row">
+        <div class="info">
+          <div class="item s" id="set-normalize">Even out loudness</div>
+          <div class="label meta">Each song is measured once on this device and played at the same loudness, so a loud master does not jump out after a quiet one. Quiet songs are lifted at most 6 dB.</div>
+        </div>
+        <Switch :checked="normalize" :label="normalize ? 'On' : 'Off'" aria-describedby="set-normalize" @change="playback.setNormalize" />
+      </li>
+      <li class="row">
+        <div class="info">
+          <div class="item s" id="set-snap">Snap selections to the beat</div>
+          <div class="label meta">When you mark a passage, its start and end move to the nearest beat (the first beat of a bar when close), so loops repeat in time. Needs the song's beats from analysis.</div>
+        </div>
+        <Switch :checked="snapToBeat" :label="snapToBeat ? 'On' : 'Off'" aria-describedby="set-snap" @change="playback.setSnapToBeat" />
       </li>
       <li class="row">
         <div class="info">

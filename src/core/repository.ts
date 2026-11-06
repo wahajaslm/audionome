@@ -70,6 +70,7 @@ export const loadPassages = (): Promise<PassageAnalysis[]> => db.passages.toArra
 export const putPassage = (p: PassageAnalysis) => db.passages.put(p);
 export const putAnalysis = (a: TrackAnalysis) => db.analyses.put(a);
 export const updateTrackDuration = (id: string, durationSec: number) => db.tracks.update(id, { durationSec }).catch(() => { });
+export const updateTrackLoudness = (id: string, loudnessLufs: number, peakDb: number) => db.tracks.update(id, { loudnessLufs, peakDb }).catch(() => { });
 
 /** Event sink for ListeningLog. */
 export const eventSink = { add: (e: ListeningEvent) => db.events.add(e) };

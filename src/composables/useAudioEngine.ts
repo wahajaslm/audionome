@@ -1,5 +1,6 @@
 import { markRaw } from 'vue';
 import { NativeAudioEngine } from '../core/audioEngine';
+import { createAudioGraph } from '../core/audioGraph';
 import { usePlaybackStore } from '../stores/playback';
 import { useListeningStore } from '../stores/listening';
 import { useMediaClock } from './useMediaClock';
@@ -40,6 +41,7 @@ export function useAudioEngine(): NativeAudioEngine {
     onDuration: d => playback.onDuration(d),
     resumePosition: () => playback.t,
     wantsPlayback: () => playback.playing,
+    createGraph: el => createAudioGraph(el as HTMLMediaElement),
   }));
   instance = engine;
   playback.attachEngine(engine);
@@ -79,6 +81,7 @@ export function useAudioEngine(): NativeAudioEngine {
     el.removeAttribute('src');
     el.load();
     el.remove();
+    engine.closeGraph();
     tabs?.close();
     stopStudioListen();
   };

@@ -48,6 +48,65 @@ export function quickSaveRange(t: number): Range {
   return { a: Math.max(0, t - 20), b: t };
 }
 
+/**
+ * The song's rhythm, in seconds, from the analysis timeline. `strong` = downbeats and the
+ * starts of song parts (verse, chorus …); `beats` = every beat. Both sorted.
+ */
+export interface BeatGrid { beats: number[]; strong: number[] }
+
+/** Builds the grid from timeline fields; null when the song has no beats yet. */
+export function beatGrid(tl: { beats?: number[]; downbeats?: number[]; sections?: { a: number }[] } | null | undefined): BeatGrid | null {
+  const beats = tl?.beats ?? [];
+  if (beats.length < 4) return null;
+  const strong = [...(tl?.downbeats ?? []), ...(tl?.sections ?? []).map(p => p.a)].sort((x, y) => x - y);
+  return { beats, strong };
+}
+
+/** Median gap between beats (seconds): one beat at the song's tempo. */
+export function beatLength(beats: number[]): number {
+  const gaps = beats.slice(1).map((b, i) => b - beats[i]).filter(g => g > 0).sort((x, y) => x - y);
+  return gaps.length ? gaps[gaps.length >> 1] : 0;
+}
+
+/** The grid point closest to t (binary search), or null for an empty list. */
+function nearestIn(sorted: number[], t: number): number | null {
+  if (!sorted.length) return null;
+  let lo = 0, hi = sorted.length - 1;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (sorted[mid] < t) lo = mid + 1; else hi = mid; }
+  const after = sorted[lo], before = lo > 0 ? sorted[lo - 1] : after;
+  return Math.abs(after - t) < Math.abs(before - t) ? after : before;
+}
+
+/**
+ * One edge to the beat: a downbeat or part start within ¾ of a beat wins (a loop then
+ * starts on "one"), else the nearest beat within half a beat, else unchanged.
+ * Example (120 bpm, beat 0.5 s, downbeat at 10.0): 10.3 → 10.0; 11.2 → beat 11.0.
+ */
+export function snapTime(t: number, grid: BeatGrid, beatSec = beatLength(grid.beats)): number {
+  if (!(beatSec > 0)) return t;
+  const strong = nearestIn(grid.strong, t);
+  if (strong !== null && Math.abs(strong - t) <= 0.75 * beatSec) return strong;
+  const beat = nearestIn(grid.beats, t);
+  if (beat !== null && Math.abs(beat - t) <= 0.5 * beatSec) return beat;
+  return t;
+}
+
+/**
+ * BEAT SNAP FIX - selections used to start and end wherever the pointer let go, usually
+ * between beats, so a loop jumped back mid-beat and stumbled every cycle.
+ * Now both edges move to the beat (downbeats first), so a loop repeats in time.
+ * Example (120 bpm, downbeats every 2 s from 0): drag 10.3–17.8 → 10.0–18.0, a 4-bar loop.
+ * A range that would shrink below one beat is left as it was.
+ */
+export function snapRange(sel: Range, grid: BeatGrid | null, durationSec: number): Range {
+  if (!grid) return { ...sel };
+  const beatSec = beatLength(grid.beats);
+  if (!(beatSec > 0)) return { ...sel };
+  const a = clamp(snapTime(sel.a, grid, beatSec), 0, durationSec);
+  const b = clamp(snapTime(sel.b, grid, beatSec), 0, durationSec);
+  return b - a >= beatSec * 0.99 ? { a, b } : { ...sel };
+}
+
 export const overlaps = (x: Range, y: Range) => Math.max(x.a, y.a) < Math.min(x.b, y.b);
 export const contains = (r: Range, t: number) => t >= r.a && t <= r.b;
 

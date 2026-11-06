@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, reactive, ref, shallowRef } from 'vue';
 import type { Track } from '../data/types';
-import { deleteTrackEverywhere, forgetDeleted, getSetting, importAudioFiles, loadTracks, putAnalysis, putSetting, putTrack, syncFromAnalysisService, updateTrackDuration } from '../core/repository';
+import { deleteTrackEverywhere, forgetDeleted, getSetting, importAudioFiles, loadTracks, putAnalysis, putSetting, putTrack, syncFromAnalysisService, updateTrackDuration, updateTrackLoudness } from '../core/repository';
 import { intelligenceHealth, uploadAudioToCache } from '../intelligence/client';
 import { fetchTimelineStatuses, startTimeline, type TimelineJobStatus } from '../core/timeline';
 import { useMomentsStore } from './moments';
@@ -59,6 +59,16 @@ export const useLibraryStore = defineStore('library', () => {
     t.durationSec = durationSec;
     tracks.value = [...tracks.value];
     updateTrackDuration(id, durationSec);
+  }
+
+  /** Stores a song's measured loudness (once per song; the player levels songs with it). */
+  function setLoudness(id: string, lufs: number, peakDb: number): void {
+    const t = track(id);
+    if (!t) return;
+    t.loudnessLufs = lufs; t.peakDb = peakDb;
+    tracks.value = [...tracks.value];
+    // -Infinity (silence) is stored as is (IndexedDB keeps it), so the song is not measured again.
+    updateTrackLoudness(id, lufs, peakDb);
   }
 
   /** Settings switch. Turning it on also analyses what is still unanalysed (classic behaviour). */
@@ -415,7 +425,7 @@ export const useLibraryStore = defineStore('library', () => {
   return {
     tracks, analyzing, autoAnalyze, rightsAsk, isResolvingStream, isStreamingAnalysis, streamProgress,
     analysisQueue, waitingForService, analysisFailed, isFullyAnalysed, timelineStatus, watchTimelineStatus,
-    track, load, loadSettings, correctDuration, setAutoAnalyze, analyze, analyzeAll, autoAnalyzeLibrary, upsert, openStream,
+    track, load, loadSettings, correctDuration, setLoudness, setAutoAnalyze, analyze, analyzeAll, autoAnalyzeLibrary, upsert, openStream,
     openLink, queueAnalysis, importFiles, deleteTrack,
   };
 });
