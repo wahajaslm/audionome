@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { computed, reactive, ref, toRefs } from 'vue';
+import { computed, reactive, ref, toRefs, watch } from 'vue';
 import type { NativeAudioEngine } from '../core/audioEngine';
 import { fullMixUrl, resolveTrackSource, stemUrl, type PlayableTrack } from '../core/library';
 import {
@@ -7,6 +7,7 @@ import {
   RegionController, seekTarget, snapRange, type Range, type RegionState,
 } from '../core/playback';
 import { normalizationGainDb } from '../core/audioGraph';
+import { practicingNow } from '../core/practice';
 import { putSetting, getSetting } from '../core/repository';
 import { useLibraryStore } from './library';
 import { useListeningStore } from './listening';
@@ -45,6 +46,16 @@ export const usePlaybackStore = defineStore('playback', () => {
   const normalize = ref(true);
   /** Settings: selection edges move to the beat. */
   const snapToBeat = ref(true);
+  /** Practising now (slowed down, or a long loop): events are tagged so taste ignores them. */
+  const practicing = computed(() => practicingNow({ rate: rate.value, loop: region.loop, loops: region.loops }));
+  // Said once per song, the first time practice starts, so the listener knows why their
+  // loops do not show up as "moments you return to".
+  let practiceToldFor: string | null = null;
+  watch(practicing, on => {
+    if (!on || practiceToldFor === trackId.value) return;
+    practiceToldFor = trackId.value;
+    useUiStore().notify('Practice mode: these loops will not change your taste profile.', 'See Practising', '/moments?c=4');
+  });
   const queue = ref<QueuedRange[]>([]);
 
   let engineRef: NativeAudioEngine | null = null;
@@ -303,7 +314,7 @@ export const usePlaybackStore = defineStore('playback', () => {
     if (!e) return;
     const flow = useMomentFlowStore();
     const from = region.t;
-    if (target < region.t - 3) useIntelligenceStore().rewoundTo(target);
+    if (target < region.t - 3 && !practicing.value) useIntelligenceStore().rewoundTo(target);
     // KEEPS PLAYING FIX - clicks on the waveform only move the playhead; they never set an end.
     if (region.sel && contains(region.sel, target)) { region.t = target; region.previewEnd = null; }
     else {
@@ -468,7 +479,7 @@ export const usePlaybackStore = defineStore('playback', () => {
 
   return {
     ...toRefs(region), trackId, duration, playing, loading, volume, activeStem, queue, currentTrack,
-    rate, normalize, snapToBeat, setRate, cycleRate, setNormalize, setSnapToBeat, onLoudnessMeasured,
+    rate, normalize, snapToBeat, practicing, setRate, cycleRate, setNormalize, setSnapToBeat, onLoudnessMeasured,
     engine, attachEngine, onDuration, onFrame, checkRegionEnd, loadSettings,
     selectTrack, changeTrack, openRange, playQueue, playNext, togglePlay, playSelection, seekBy, stepBy,
     clickSeek, beginSelection, updateSelection, commitSelection, resizeSelection, endResize, selectAroundPlayhead, clearSelection,

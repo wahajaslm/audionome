@@ -13,6 +13,8 @@ import math
 from typing import Any
 import numpy as np
 
+from musicdna.preference.signals import listening_only
+
 # Mapping of player feeling tags into Russell's Circumplex Valence-Arousal coordinates [-1, +1]
 FEELING_VA_MAP: dict[str, tuple[float, float]] = {
     '♡ Love': (0.85, 0.45),
@@ -191,7 +193,8 @@ class ActiveLearningEngine:
 
         # Behavioral attention bonus
         attention_bonuses: dict[str, float] = {}
-        for event in (listening_events or []):
+        # Practice (slowed playback, long loops) is not attention to taste: see signals.listening_only.
+        for event in listening_only(listening_events or []):
             if event.get('origin') == 'user' and event.get('kind') in ('seek', 'loop_enabled'):
                 target_position = event.get('toSec') if event.get('kind') == 'seek' else event.get('momentStartSec', 0)
                 if target_position is not None:

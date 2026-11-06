@@ -96,3 +96,21 @@ def test_safari_clock_is_shifted_onto_the_corpus_timeline() -> None:
     chrome = {**safari, 'tracks': [{**safari['tracks'][0], 'durationSec': 466.02449}]}  # float noise, no shift
     assert {p.time_shift_sec for p in builder.build_pairs(chrome, {}, {'abc': 'v1'}, {'v1': 466.0245})} == {0.0}
     assert builder.player_offset({'durationSec': 180}, 466.0245) == 0.0  # import fallback duration: not measured
+
+
+def test_practice_loops_and_slowed_events_are_not_evidence() -> None:
+    """PRACTICE FIX: same rule as src/core/practice.ts. A 3-cycle loop counts; a 6-cycle loop
+    or a slowed one does not, from its loop_enabled on."""
+    from musicdna.preference.signals import PRACTICE_MIN_CYCLES, listening_only
+
+    def episode(at: int, cycles: int, session: str, **extra: object) -> list[dict]:
+        base = {'trackId': 'a', 'sessionId': session, 'momentStartSec': 70.0, 'momentEndSec': 78.0}
+        return ([{**base, 'kind': 'loop_enabled', 'origin': 'user', 'at': at, **extra}]
+                + [{**base, 'kind': 'loop_cycle', 'origin': 'player', 'at': at + 1 + i, **extra} for i in range(cycles)]
+                + [{**base, 'kind': 'loop_disabled', 'origin': 'user', 'at': at + cycles + 1}])
+
+    short, long = episode(100, 3, 'S1'), episode(200, PRACTICE_MIN_CYCLES, 'S1')
+    slowed = episode(300, 1, 'S2', mode='practice', rate=0.75)
+    dismiss = {'trackId': 'a', 'sessionId': 'S2', 'kind': 'dismiss_candidate', 'origin': 'user', 'at': 400, 'mode': 'practice'}
+    kept = listening_only([*short, *long, *slowed, dismiss])
+    assert kept == [*short, dismiss]

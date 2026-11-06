@@ -1,4 +1,5 @@
 import type {AudioSegment, ListeningEvent, Moment, MomentRating, TrackAnalysis, BehavioralFeatures, AttentionConfidence} from '../data/types';
+import {splitPractice} from '../core/practice.ts';
 
 /** Personal preference model v2: Bayesian logistic regression over similarities to labeled passages.
  * Features are cosine similarities to each liked/disliked example (a kernel model), fitted by
@@ -267,6 +268,8 @@ export function attentionCandidates(events:ListeningEvent[], minSignals=2):Atten
     }
   }
 
+  // PRACTICE FIX - drill (slowed playback, long loops) is not taste; see core/practice.ts.
+  const listening = splitPractice(events).listening;
   const map = new Map<string, Bin>();
   const getBin = (trackId: string, startSec: number): Bin => {
     const key = `${trackId}:${startSec}`;
@@ -292,7 +295,7 @@ export function attentionCandidates(events:ListeningEvent[], minSignals=2):Atten
     return item;
   };
 
-  for (const e of [...events].sort((a,b)=>a.at-b.at)) {
+  for (const e of [...listening].sort((a,b)=>a.at-b.at)) {
     if (e.kind === 'seek' && e.origin === 'user' && e.fromSec !== undefined && e.toSec !== undefined) {
       if (e.fromSec - e.toSec >= 4) {
         // Rewind to passage

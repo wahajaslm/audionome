@@ -12,6 +12,7 @@ import { useListeningStore } from './listening';
 import { useUiStore } from './ui';
 import { useTimelineStore } from './timeline';
 import { passageEvidence } from '../core/timeline';
+import { practicePassages } from '../core/practice';
 
 /** Analyses, ratings, the event history and the attention hints computed from them. */
 export const useIntelligenceStore = defineStore('intelligence', () => {
@@ -19,6 +20,8 @@ export const useIntelligenceStore = defineStore('intelligence', () => {
   const ratings = shallowRef<MomentRating[]>([]);
   const events = shallowRef<ListeningEvent[]>([]);
   const candidates = shallowRef<AttentionCandidate[]>([]);
+  /** Passages the listener practises (My Moments → Practising), most recent first. */
+  const practice = computed(() => practicePassages(events.value));
   /** Interest on the loaded track. Rewinds add to it straight away (noteRewind). */
   const interest = ref<InterestRange[]>([]);
 
@@ -92,7 +95,7 @@ export const useIntelligenceStore = defineStore('intelligence', () => {
   }
 
   return {
-    analyses, ratings, events, candidates, interest, currentAnalysis, analysisFor, suggestions, insight, evaluations,
+    analyses, ratings, events, candidates, practice, interest, currentAnalysis, analysisFor, suggestions, insight, evaluations,
     refresh, rate, recomputeInterest, rewoundTo, questionFor, dismissCandidate, confirmCandidate,
   };
 });

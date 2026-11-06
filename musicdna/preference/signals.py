@@ -3,7 +3,8 @@
 Used by preference pairs (`implicit_pairs`), the behaviour aggregator and insight synthesizer
 (`evaluation`) through `ListeningEvidenceCollector`. Windows come from `WindowGrid`; rules and
 weights from `SignalConfig`. Only user actions count as evidence; automatic loop repeats are recorded but are
-never preference on their own.
+never preference on their own. Practice (slowed playback, long-running loops) is not evidence at all:
+see `listening_only`, the same rule as the player's src/core/practice.ts.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
@@ -67,6 +68,70 @@ class WindowEvidence:
                 - signals.weight_left_early * self.left_early)
 
 
+# A favourite chorus is looped a few times; drill runs longer. Same value as src/core/practice.ts.
+PRACTICE_MIN_CYCLES = 6
+
+
+def listening_only(events: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Events without practice, mirroring the player's `splitPractice`.
+
+    PRACTICE FIX - drilling a passage (slowed down, or looping it 6+ times) used to count as
+    taste. Example: one loop of 1:10-1:18 for 20 cycles at 0.75x -> before: 1 loop start and
+    20 loop cycles of evidence on that window; now: none of those events are evidence.
+
+    A loop episode runs from a user's loop_enabled to loop_disabled, track_change or the next
+    loop_enabled in the same session and track; its loop cycles and the listen spans inside the
+    loop belong to it. The whole episode is practice when it reached PRACTICE_MIN_CYCLES cycles
+    or any of its events was logged with mode 'practice'. Other events are practice only when
+    tagged so. A dismiss_candidate is the listener's answer, never practice.
+    """
+    ordered = sorted(events, key=lambda e: e.get('at', 0))
+    open_eps: dict[tuple[str, str], dict[str, Any]] = {}
+    episodes: list[dict[str, Any]] = []
+    in_episode: set[int] = set()
+
+    def close(key: tuple[str, str]) -> None:
+        if key in open_eps:
+            episodes.append(open_eps.pop(key))
+
+    def near(x: Any, y: float) -> bool:
+        return x is not None and abs(float(x) - y) < 0.5
+
+    for e in ordered:
+        key = (str(e.get('sessionId', 'default')), str(e.get('trackId', '')))
+        ep = open_eps.get(key)
+        kind = e.get('kind')
+        if (kind == 'loop_enabled' and e.get('origin', 'user') == 'user'
+                and e.get('momentStartSec') is not None and e.get('momentEndSec') is not None):
+            close(key)
+            ep = {'a': float(e['momentStartSec']), 'b': float(e['momentEndSec']), 'cycles': 0, 'events': [e]}
+            open_eps[key] = ep
+            in_episode.add(id(e))
+        elif ep is None:
+            continue
+        elif kind == 'loop_cycle' and near(e.get('momentStartSec'), ep['a']):
+            ep['cycles'] += 1
+            ep['events'].append(e)
+            in_episode.add(id(e))
+        elif (kind == 'listen_span' and e.get('fromSec') is not None and e.get('toSec') is not None
+              and float(e['fromSec']) >= ep['a'] - 0.5 and float(e['toSec']) <= ep['b'] + 0.5):
+            ep['events'].append(e)
+            in_episode.add(id(e))
+        elif kind in ('loop_disabled', 'track_change'):
+            if kind == 'loop_disabled':
+                ep['events'].append(e)
+                in_episode.add(id(e))
+            close(key)
+    for key in list(open_eps):
+        close(key)
+
+    practice = {id(e) for ep in episodes
+                if ep['cycles'] >= PRACTICE_MIN_CYCLES or any(x.get('mode') == 'practice' for x in ep['events'])
+                for e in ep['events']}
+    return [e for e in ordered if e.get('kind') == 'dismiss_candidate'
+            or (id(e) not in practice and (id(e) in in_episode or e.get('mode') != 'practice'))]
+
+
 class ListeningEvidenceCollector:
     """Turns events, saved moments and ratings into `WindowEvidence` on the shared grid."""
 
@@ -106,7 +171,7 @@ class ListeningEvidenceCollector:
                 else:
                     window.disliked = True
         loop_sessions: set[tuple[str, str]] = set()
-        for event in sorted(events, key=lambda e: e.get('at', 0)):
+        for event in listening_only(events):
             windows = by_track.get(event.get('trackId', ''))
             if windows:
                 self._apply_event(event, windows, loop_sessions)

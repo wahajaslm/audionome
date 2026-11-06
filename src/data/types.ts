@@ -52,6 +52,11 @@ export interface ListeningEvent {
   volume?: number;
   candidateId?: string;
   origin: 'user' | 'player';
+  // Logged while practising (slowed down, or a long-running loop): kept out of taste signals
+  // (core/practice.ts). Absent = normal listening, which is also what older rows mean.
+  mode?: 'practice';
+  /** Playback speed when not 1×. */
+  rate?: number;
 }
 export interface BehavioralFeatures {
   manualRewinds: number;

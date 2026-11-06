@@ -3,6 +3,8 @@
  * My Moments (port of index.html's renderMoments() and its 'playall', 'playm', 'open-moment',
  * 'tab', 'coll', 'delmoment' actions), plus editing a moment's tags and note in place.
  * Collections are automatic, from what you said: Chills, Nostalgia ("home"), Melody.
+ * The last tab, Practising, is not saved moments: it lists passages you drilled (slowed down
+ * or looped many times), which are kept out of your taste profile (core/practice.ts).
  */
 import { computed, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
@@ -13,6 +15,8 @@ import { useLibraryStore } from '../../stores/library';
 import { useMomentsStore } from '../../stores/moments';
 import { usePlaybackStore } from '../../stores/playback';
 import { useUiStore } from '../../stores/ui';
+import { useIntelligenceStore } from '../../stores/intelligence';
+import { PRACTICE_MIN_CYCLES, type PracticePassage } from '../../core/practice';
 import MomentRow from '../../ui/MomentRow.vue';
 import DescribeStrip from '../../ui/DescribeStrip.vue';
 import Button from '../../ui/Button.vue';
@@ -31,8 +35,25 @@ const { moments } = storeToRefs(momentsStore);
 /** Tab 0 = all; 1–3 = collections. The sidebar's collection links set ?c=1..3. */
 const tab = ref(Number(route.query.c) || 0);
 watch(() => route.query.c, c => { tab.value = Number(c) || 0; });
-const tabs = ['All moments', ...COLLECTIONS];
-const list = computed(() => moments.value.filter(m => inTab(m, tab.value)));
+const PRACTICE_TAB = COLLECTIONS.length + 1;
+const tabs = ['All moments', ...COLLECTIONS, 'Practising'];
+const list = computed(() => tab.value === PRACTICE_TAB ? [] : moments.value.filter(m => inTab(m, tab.value)));
+const practice = computed(() => useIntelligenceStore().practice);
+
+/** Example: 20 cycles, 2 sessions, 0.75× → "Looped 20× · 2 sessions · down to 0.75×". */
+const practiceWhy = (p: PracticePassage) => ['Looped ' + p.cycles + '×',
+  p.sessions > 1 ? p.sessions + ' sessions' : '', p.slowestRate < 1 ? 'down to ' + p.slowestRate + '×' : ''].filter(Boolean).join(' · ');
+
+/** Picks up where you left off: the passage, looping, at the slowest speed you used. */
+async function practise(p: PracticePassage) {
+  if (isHereP(p) && playback.playing) { await playback.togglePlay(); return; }
+  playback.queue = [];
+  await playback.openRange(p.a, p.b, p.trackId, false);
+  // Speed first, so the loop start is already logged as practice.
+  playback.setRate(p.slowestRate);
+  if (!playback.loop) playback.toggleLoop();
+}
+const isHereP = (p: PracticePassage) => playback.trackId === p.trackId && playback.t >= p.a - 0.5 && playback.t <= p.b + 0.5;
 
 /** The moment being edited, with a working copy of its tags (saved only on Done). */
 const editing = ref<{ id: string; feel: string[]; love: string[]; note: string } | null>(null);
@@ -77,13 +98,13 @@ const isPlaying = (m: Moment) => playback.playing && isHere(m);
         <h1 class="page-title">My Moments</h1>
         <p class="lead body">The passages you saved from the player, played back to back.</p>
       </div>
-      <Button v-if="moments.length" variant="outline" :disabled="!list.length" @click="momentsStore.playAll(list)">
+      <Button v-if="moments.length && tab !== PRACTICE_TAB" variant="outline" :disabled="!list.length" @click="momentsStore.playAll(list)">
         <Icon name="play" :size="14" />
         Play {{ list.length }} {{ list.length === 1 ? 'moment' : 'moments' }} · {{ formatTime(totalSeconds(list)) }}
       </Button>
     </div>
 
-    <template v-if="!moments.length">
+    <template v-if="!moments.length && !practice.length">
       <div class="empty">
         <p class="body">No saved moments yet. Drag across the waveform to select a passage you love, then Save.</p>
         <Button variant="primary" @click="router.push('/')">Open the player</Button>
@@ -94,7 +115,25 @@ const isPlaying = (m: Moment) => playback.playing && isHere(m);
       <Tabs class="tabs" :items="tabs" :selected="tab" label="Collections" @select="selectTab" />
 
       <!-- MomentRow rule: open list split by `line` hairlines (no cards). -->
-      <ol class="list">
+      <ol v-if="tab === PRACTICE_TAB" class="list">
+        <li v-if="!practice.length" class="none body">
+          Nothing here yet. Slow a passage down, or loop it {{ PRACTICE_MIN_CYCLES }} times or more, and it is listed here instead of counting toward your taste.
+        </li>
+        <li v-for="p in practice" :key="p.trackId + ':' + p.a + ':' + p.b" class="prow">
+          <button
+            type="button"
+            class="cp"
+            :class="{ on: isHereP(p) && playback.playing, cur: isHereP(p) && !playback.playing }"
+            :aria-label="'Practise ' + (library.track(p.trackId)?.title || 'passage') + ' ' + formatTime(p.a)"
+            @click="practise(p)"
+          ><Icon :name="isHereP(p) && playback.playing ? 'pause' : 'play'" :size="12" /></button>
+          <div class="pinfo">
+            <div class="item s">{{ library.track(p.trackId)?.title || 'A song' }} · {{ formatTime(p.a) }}–{{ formatTime(p.b) }}</div>
+            <div class="label w">{{ practiceWhy(p) }}</div>
+          </div>
+        </li>
+      </ol>
+      <ol v-else class="list">
         <li v-if="!list.length" class="none body">
           No moments here yet. Save a moment, choose More… and pick Chills or Nostalgia (or tap Melody), and it lands here.
         </li>
@@ -156,6 +195,13 @@ h1 { margin: 0; color: var(--ink); }
      padding, and that strip holds the scrollbar; rows stay aligned with the header. */
   margin-right: calc(-1 * var(--space-3)); padding-right: var(--space-3); }
 .none { padding: var(--space-4) 0; color: var(--ink-sub); border-bottom: 1px solid var(--line); }
+.prow { display: flex; align-items: center; gap: var(--space-4); padding: 14px 0; border-bottom: 1px solid var(--line); }
+.cp { width: 40px; height: 40px; flex: none; border: 1px solid var(--line-strong); border-radius: var(--radius-pill); background: none; color: var(--ink); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.cp.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.cp.cur { border-color: var(--accent); color: var(--accent); }
+.pinfo { flex: 1; min-width: 0; }
+.pinfo .s { color: var(--ink); }
+.pinfo .w { color: var(--ink-sub); margin-top: 3px; }
 .edit { padding: var(--space-3) 0; border-bottom: 1px solid var(--line); }
 /* An empty list is still an open list: hairlines, no dashed box. */
 .empty { margin-top: var(--space-5); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: var(--space-6) 0; text-align: center; color: var(--ink-sub); }

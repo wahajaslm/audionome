@@ -46,8 +46,11 @@ const defaultTimers: Timers = {
 
 export interface ListeningLogOptions {
   sink: EventSink;
-  /** Current track and whether "Learning" is on. Nothing is logged when learning is off. */
-  context(): { trackId: string | null; learning: boolean };
+  /**
+   * Current track and whether "Learning" is on. Nothing is logged when learning is off.
+   * `practice` / `rate` are stamped on every event (core/practice.ts).
+   */
+  context(): { trackId: string | null; learning: boolean; practice?: boolean; rate?: number };
   /** The media clock (use readMediaTime). */
   mediaTime(): number;
   /** Heavy refresh (reload events, re-rank). Run batched, see DELAY FIX 3. */
@@ -104,6 +107,8 @@ export class ListeningLog {
       origin,
       at: this.opts.now ? this.opts.now() : Date.now(),
       positionSec: this.opts.mediaTime(),
+      ...(ctx.practice ? { mode: 'practice' as const } : {}),
+      ...(ctx.rate !== undefined && ctx.rate !== 1 ? { rate: ctx.rate } : {}),
       ...extra,
     };
     this.opts.sink.add(event).then(() => this.scheduleRefresh()).catch(console.warn);

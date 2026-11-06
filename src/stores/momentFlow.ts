@@ -110,7 +110,8 @@ export const useMomentFlowStore = defineStore('momentFlow', () => {
 
   /** Loop cycle hook: after two cycles, offer to save (once). */
   function onLoopCycle(loops: number): void {
-    if (loops >= 2 && !nudged.value && !describe.value) {
+    // No "save this?" nudge while practising: drill is not a sign of taste (core/practice.ts).
+    if (loops >= 2 && !nudged.value && !describe.value && !usePlaybackStore().practicing) {
       nudge.value = true; nudged.value = true;
     }
   }

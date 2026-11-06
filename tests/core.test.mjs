@@ -207,6 +207,18 @@ function makeLog({ learning = true, trackId = 't1' } = {}) {
   return { log, rows, timers, setNow: v => { now = v; }, refreshes: () => refreshes };
 }
 
+test('listening: events logged while practising carry mode and speed (PRACTICE FIX)', () => {
+  const rows = [];
+  const log = new ListeningLog({
+    sink: { add: async e => { rows.push(e); } },
+    context: () => ({ trackId: 't1', learning: true, practice: true, rate: 0.75 }),
+    mediaTime: () => 0, refresh: () => { }, timers: manualTimers(), sessionId: 'S', uid: () => 'id', now: () => 1,
+  });
+  const e = log.emit('seek', 'user', { fromSec: 10, toSec: 5 });
+  assert.equal(e.mode, 'practice');
+  assert.equal(e.rate, 0.75);
+});
+
 test('listening: events are stamped with the media clock; nothing is logged with learning off', async () => {
   const a = makeLog();
   a.setNow(42.731);

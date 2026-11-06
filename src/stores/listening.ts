@@ -17,7 +17,10 @@ export const useListeningStore = defineStore('listening', () => {
 
   const log = markRaw(new ListeningLog({
     sink: eventSink,
-    context: () => ({ trackId: usePlaybackStore().trackId, learning: learning.value }),
+    context: () => {
+      const p = usePlaybackStore();
+      return { trackId: p.trackId, learning: learning.value, practice: p.practicing, rate: p.rate };
+    },
     mediaTime: () => mediaTime(),
     refresh: () => useIntelligenceStore().refresh(),
   }));

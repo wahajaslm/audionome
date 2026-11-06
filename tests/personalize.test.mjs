@@ -130,3 +130,45 @@ test('taste model learns per listener how much DSP vs CLAP similarity counts',()
  assert.ok(summary.familyShare, 'multimodal analyses report a learned family share');
  assert.ok(summary.familyShare.dsp>summary.familyShare.clap, JSON.stringify(summary.familyShare));
 });
+
+// PRACTICE FIX (core/practice.ts): drill is listed under Practising and is not taste.
+import {splitPractice,practicePassages,practicingNow,PRACTICE_MIN_CYCLES} from '../src/core/practice.ts';
+const loopEpisode=(base,cycles,extra={},session='S1')=>[
+ {id:`${base}e`,trackId:'a',sessionId:session,kind:'loop_enabled',at:base,positionSec:70,origin:'user',momentStartSec:70,momentEndSec:78,...extra},
+ ...Array.from({length:cycles},(_,i)=>({id:`${base}c${i}`,trackId:'a',sessionId:session,kind:'loop_cycle',at:base+1+i,positionSec:78,origin:'player',momentStartSec:70,momentEndSec:78,...extra})),
+ {id:`${base}d`,trackId:'a',sessionId:session,kind:'loop_disabled',at:base+cycles+1,positionSec:75,origin:'user',momentStartSec:70,momentEndSec:78},
+];
+
+test('practice: a few loops are listening; a long loop is practice from its first cycle',()=>{
+ const short=loopEpisode(100,3), long=loopEpisode(200,PRACTICE_MIN_CYCLES);
+ const {listening,practice}=splitPractice([...short,...long]);
+ assert.equal(practice.length,long.length,'the whole long episode, including loop_enabled');
+ assert.equal(listening.length,short.length);
+ assert.ok(attentionCandidates(short).length>0,'3 cycles of a favourite still count as interest');
+ assert.equal(attentionCandidates(long).length,0,'20× drill no longer becomes "a moment you return to"');
+});
+
+test('practice: one slowed cycle makes the loop practice; slowed seeks outside loops too; dismissals never',()=>{
+ const slowed=loopEpisode(100,2);
+ slowed[2]={...slowed[2],mode:'practice',rate:0.75};
+ assert.equal(splitPractice(slowed).listening.length,0);
+ const seek={id:'s',trackId:'a',sessionId:'S1',kind:'seek',at:500,positionSec:90,origin:'user',fromSec:90,toSec:70,mode:'practice',rate:0.5};
+ const dismiss={id:'x',trackId:'a',sessionId:'S1',kind:'dismiss_candidate',at:501,positionSec:70,origin:'user',mode:'practice'};
+ const r=splitPractice([seek,dismiss]);
+ assert.deepEqual(r.practice.map(e=>e.id),['s']);
+ assert.deepEqual(r.listening.map(e=>e.id),['x']);
+});
+
+test('practice: passages group sessions, add cycles and keep the slowest speed',()=>{
+ const monday=loopEpisode(100,8,{},'S1');
+ const today=loopEpisode(300,12,{mode:'practice',rate:0.75},'S2');
+ const [p,...rest]=practicePassages([...monday,...today]);
+ assert.equal(rest.length,0);
+ assert.deepEqual({cycles:p.cycles,sessions:p.sessions,slowestRate:p.slowestRate,a:p.a,b:p.b},{cycles:20,sessions:2,slowestRate:0.75,a:70,b:78});
+});
+
+test('practice: live rule is speed below 1x or a loop past the cycle threshold',()=>{
+ assert.equal(practicingNow({rate:0.9,loop:false,loops:0}),true);
+ assert.equal(practicingNow({rate:1,loop:true,loops:PRACTICE_MIN_CYCLES-1}),false);
+ assert.equal(practicingNow({rate:1,loop:true,loops:PRACTICE_MIN_CYCLES}),true);
+});
