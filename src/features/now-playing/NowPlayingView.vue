@@ -101,6 +101,7 @@ function onLoopButton(): void { playback.toggleLoop(); }
         @resize-end="wf.resizeEnd"
         @step="wf.step"
         @select-around="wf.selectAround"
+        @peaks="wf.peaks"
       />
       <SongStrip :timeline="timelineStore.timeline" :duration="duration" :t="t" :moments="stripMoments" @range="onStripRange" />
       <SelectionToolbar

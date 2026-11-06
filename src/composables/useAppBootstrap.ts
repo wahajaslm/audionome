@@ -33,13 +33,17 @@ export function useAppBootstrap(): void {
     try {
       await ensureDemo();
       for (const id of LEAKED_TEST_IDS) if (await db.tracks.get(id)) await deleteTrackEverywhere(id);
-      await Promise.all([listening.loadSettings(), library.loadSettings(), playback.loadSettings()]);
-      await library.load();
-      await moments.load();
-      await intelligence.refresh();
+      await Promise.all([listening.loadSettings(), library.loadSettings(), playback.loadSettings(), library.load()]);
+      // RESUME FIX - a refresh used to open the first song in the library, not the one you were
+      // playing, and at 0:00. Now it opens the last song where you left it, paused (Spotify).
+      // The song loads first; moments and listening history follow without holding it up.
+      // Example: pause "Naina Moray" at 2:41, refresh → "Naina Moray" at 2:41, ready to play.
+      const last = await playback.lastPlayed();
+      const first = library.track(last?.trackId) || library.tracks.find(t => t.id !== 'original-demo') || library.tracks[0];
+      const at = last && first?.id === last.trackId ? last.t : 0;
+      const loading = first && !playback.trackId ? playback.selectTrack(first, at, false) : Promise.resolve();
+      await Promise.all([loading, moments.load().then(() => intelligence.refresh())]);
       scheduleSequentialUploads(() => library.tracks, uploadAudioToCache);
-      const first = library.tracks.find(t => t.id !== 'original-demo') || library.tracks[0];
-      if (first && !playback.trackId) await playback.selectTrack(first, 0, false);
       if (library.autoAnalyze) library.autoAnalyzeLibrary().catch(console.warn);
     } catch (err) {
       console.error(err);

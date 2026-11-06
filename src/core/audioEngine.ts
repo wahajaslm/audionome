@@ -96,6 +96,9 @@ export class NativeAudioEngine {
     el.addEventListener('waiting', () => this.fire('waiting'));
     el.addEventListener('pause', () => this.fire('pause'));
     el.addEventListener('ended', () => this.fire('finish'));
+    // SEEK CLICK FIX (core/audioGraph.ts): fade around every seek while sound is playing.
+    el.addEventListener('seeking', () => { if (!el.paused) this.graph?.duck(); });
+    el.addEventListener('seeked', () => this.graph?.unduck());
   }
 
   private fire(ev: EngineEvent, value?: number): void {
@@ -139,6 +142,7 @@ export class NativeAudioEngine {
     // Not awaited, so el.play() below still runs inside the click (Safari is strict here).
     this.ensureGraph();
     this.graph?.resume();
+    this.graph?.unduck(); // never stay faded out if a seek did not finish
     try {
       return await el.play();
     } catch (err) {

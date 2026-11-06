@@ -1,6 +1,7 @@
 import { computed } from 'vue';
 import { usePlaybackStore } from '../stores/playback';
 import { useMomentsStore } from '../stores/moments';
+import { useLibraryStore } from '../stores/library';
 
 /**
  * Binds the design-system Waveform (wavesurfer.js) to the stores: the app's <audio> element,
@@ -17,7 +18,10 @@ export function useWaveform() {
     currentTime: playback.t,
     selection: playback.sel,
     saved: moments.savedForCurrent,
+    // Stored peaks are the full mix; a stem has its own waveform.
+    storedPeaks: playback.activeStem === 'all' ? playback.currentTrack?.peaks ?? null : null,
   }));
+  const library = useLibraryStore();
 
   return {
     props,
@@ -32,5 +36,9 @@ export function useWaveform() {
     resizeEnd: () => playback.endResize(),
     step: (delta: number) => playback.stepBy(delta),
     selectAround: () => playback.selectAroundPlayhead(),
+    /** Decoded peaks of the full mix are stored with the song (STARTUP FIX). */
+    peaks: (p: { peaks: number[][]; duration: number }) => {
+      if (playback.activeStem === 'all' && playback.trackId) library.setPeaks(playback.trackId, p);
+    },
   };
 }

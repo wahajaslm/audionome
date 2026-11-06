@@ -20,6 +20,9 @@ export interface Track {
   // browser (core/audioGraph.ts). The player uses them to play every song at the same level.
   loudnessLufs?: number;
   peakDb?: number;
+  // Waveform of the full mix (wavesurfer peaks), stored once so a refresh draws it at once
+  // instead of downloading and decoding the whole song again.
+  peaks?: { peaks: number[][]; duration: number };
 }
 export interface Moment {
   id: string;

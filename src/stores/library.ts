@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, reactive, ref, shallowRef } from 'vue';
 import type { Track } from '../data/types';
-import { deleteTrackEverywhere, forgetDeleted, getSetting, importAudioFiles, loadTracks, putAnalysis, putSetting, putTrack, syncFromAnalysisService, updateTrackDuration, updateTrackLoudness } from '../core/repository';
+import { deleteTrackEverywhere, forgetDeleted, getSetting, importAudioFiles, loadTracks, putAnalysis, putSetting, putTrack, syncFromAnalysisService, updateTrackDuration, updateTrackLoudness, updateTrackPeaks } from '../core/repository';
 import { intelligenceHealth, uploadAudioToCache } from '../intelligence/client';
 import { fetchTimelineStatuses, startTimeline, type TimelineJobStatus } from '../core/timeline';
 import { useMomentsStore } from './moments';
@@ -42,9 +42,19 @@ export const useLibraryStore = defineStore('library', () => {
   const track = (id: string | null | undefined) => (id ? byId.value.get(id) : undefined);
 
   /** Reloads tracks, first pulling anything the local analysis service knows about. */
+  /**
+   * STARTUP FIX - the library used to wait for the analysis service's song list (up to 1.8 s,
+   * then a write per row) before showing anything, so a refresh took ~2 s to load the song.
+   * Now the songs on this device are shown at once; the service list is merged in afterwards.
+   * Example: refresh → song title and waveform in ~0.2 s; a song only the service has appears
+   * in Library a moment later.
+   */
   async function load(): Promise<void> {
-    await syncFromAnalysisService();
     tracks.value = await loadTracks();
+    syncFromAnalysisService().then(async () => {
+      tracks.value = await loadTracks();
+      await useIntelligenceStore().refresh();
+    }).catch(console.warn);
   }
 
   async function loadSettings(): Promise<void> {
@@ -59,6 +69,14 @@ export const useLibraryStore = defineStore('library', () => {
     t.durationSec = durationSec;
     tracks.value = [...tracks.value];
     updateTrackDuration(id, durationSec);
+  }
+
+  /** Stores a song's waveform (full mix), so the next visit draws it without decoding. */
+  function setPeaks(id: string, p: { peaks: number[][]; duration: number }): void {
+    const t = track(id);
+    if (!t) return;
+    t.peaks = p;
+    updateTrackPeaks(id, p);
   }
 
   /** Stores a song's measured loudness (once per song; the player levels songs with it). */
@@ -425,7 +443,7 @@ export const useLibraryStore = defineStore('library', () => {
   return {
     tracks, analyzing, autoAnalyze, rightsAsk, isResolvingStream, isStreamingAnalysis, streamProgress,
     analysisQueue, waitingForService, analysisFailed, isFullyAnalysed, timelineStatus, watchTimelineStatus,
-    track, load, loadSettings, correctDuration, setLoudness, setAutoAnalyze, analyze, analyzeAll, autoAnalyzeLibrary, upsert, openStream,
+    track, load, loadSettings, correctDuration, setLoudness, setPeaks, setAutoAnalyze, analyze, analyzeAll, autoAnalyzeLibrary, upsert, openStream,
     openLink, queueAnalysis, importFiles, deleteTrack,
   };
 });

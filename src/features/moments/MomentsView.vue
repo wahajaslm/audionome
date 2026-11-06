@@ -87,7 +87,20 @@ function selectTab(i: number) {
   router.replace({ query: i ? { c: String(i) } : {} });
 }
 
-const isHere = (m: Moment) => playback.trackId === m.trackId && playback.t >= m.startSec - 0.5 && playback.t <= m.endSec + 0.5;
+/**
+ * ONE ACTIVE ROW FIX - every moment containing the playhead used to light up, so two
+ * overlapping moments of one song both showed ⏸ at once.
+ * Now only one row is active: the moment whose range is the player's selection (the one you
+ * pressed), else the first moment in the list that contains the playhead.
+ * Example: moments 1:40–2:10 and 1:50–2:20, you play the second at 1:55 → only it shows ⏸.
+ */
+const activeId = computed(() => {
+  const here = (m: Moment) => playback.trackId === m.trackId && playback.t >= m.startSec - 0.5 && playback.t <= m.endSec + 0.5;
+  const sel = playback.sel;
+  const picked = sel && list.value.find(m => here(m) && Math.abs(m.startSec - sel.a) < 0.5 && Math.abs(m.endSec - sel.b) < 0.5);
+  return (picked || list.value.find(here))?.id ?? null;
+});
+const isHere = (m: Moment) => activeId.value === m.id;
 const isPlaying = (m: Moment) => playback.playing && isHere(m);
 </script>
 

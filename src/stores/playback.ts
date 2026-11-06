@@ -95,6 +95,31 @@ export const usePlaybackStore = defineStore('playback', () => {
   function onFrame(t: number): void {
     region.t = t;
     checkRegionEnd(t);
+    if (Date.now() - savedAt > 5000) rememberPosition();
+  }
+
+  // RESUME FIX - where you are is stored every 5 s while playing, on pause, on a song change and
+  // when the tab is hidden or closed, so a refresh reopens the same song at the same place.
+  let savedAt = 0;
+  function rememberPosition(): void {
+    savedAt = Date.now();
+    if (!trackId.value || loading.value) return;
+    putSetting('lastPlayed', JSON.stringify({ trackId: trackId.value, t: Math.round(region.t * 10) / 10 })).catch(() => { });
+  }
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') rememberPosition(); });
+    window.addEventListener('pagehide', rememberPosition);
+  }
+  watch(playing, p => { if (!p) rememberPosition(); });
+
+  /** The song and position stored by rememberPosition, or null. Near the end → from the start. */
+  async function lastPlayed(): Promise<{ trackId: string; t: number } | null> {
+    try {
+      const v = JSON.parse((await getSetting<string>('lastPlayed')) || 'null');
+      if (!v || typeof v.trackId !== 'string') return null;
+      const d = useLibraryStore().track(v.trackId)?.durationSec || 0;
+      return { trackId: v.trackId, t: d && v.t > d - 5 ? 0 : Math.max(0, Number(v.t) || 0) };
+    } catch { return null; }
   }
 
   async function loadSettings(): Promise<void> {
@@ -188,6 +213,7 @@ export const usePlaybackStore = defineStore('playback', () => {
       if (seq !== loadSeq) return;
       loadedTrackId = t.id;
       loading.value = false;
+      rememberPosition();
       if (play) {
         try { await e.play(); playing.value = true; } catch (err) { console.warn('Play error:', err); }
       }
@@ -490,7 +516,7 @@ export const usePlaybackStore = defineStore('playback', () => {
   return {
     ...toRefs(region), trackId, duration, playing, loading, volume, activeStem, queue, currentTrack,
     rate, normalize, snapToBeat, practicing, setRate, cycleRate, setNormalize, setSnapToBeat, onLoudnessMeasured,
-    engine, attachEngine, onDuration, onFrame, checkRegionEnd, loadSettings,
+    engine, attachEngine, onDuration, onFrame, checkRegionEnd, loadSettings, lastPlayed,
     selectTrack, changeTrack, openRange, playQueue, playNext, togglePlay, playSelection, seekBy, stepBy,
     clickSeek, beginSelection, updateSelection, commitSelection, resizeSelection, endResize, selectAroundPlayhead, clearSelection,
     toggleLoop, selectLast20s, switchStem, restoreFullMix, setVolume, beginScrub, scrubTo, endScrub,

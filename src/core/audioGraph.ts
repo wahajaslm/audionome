@@ -111,6 +111,10 @@ export interface AudioGraphLike {
   setVolume(v: number): void;
   /** Loudness gain in dB, eased over `rampSec` so a change is never a jump. */
   setNormalization(db: number, rampSec: number): void;
+  /** Seek started: fade out in a few ms instead of cutting the wave mid-cycle. */
+  duck(): void;
+  /** Seek landed: fade back in. */
+  unduck(): void;
   close(): void;
 }
 
@@ -118,13 +122,29 @@ export class AudioGraph implements AudioGraphLike {
   private readonly ctx: AudioContext;
   private readonly norm: GainNode;
   private readonly vol: GainNode;
+  /** Seek fades, kept apart from volume and loudness so they never fight. */
+  private readonly seekFade: GainNode;
 
   constructor(el: HTMLMediaElement, ctx: AudioContext = new AudioContext({ latencyHint: 'playback' })) {
     this.ctx = ctx;
     const src = ctx.createMediaElementSource(el);
     this.norm = ctx.createGain();
     this.vol = ctx.createGain();
-    src.connect(this.norm).connect(this.vol).connect(ctx.destination);
+    this.seekFade = ctx.createGain();
+    src.connect(this.seekFade).connect(this.norm).connect(this.vol).connect(ctx.destination);
+  }
+
+  // SEEK CLICK FIX - a seek cut the sound mid-wave and restarted it mid-wave: a click on every
+  // jump, loop restart and scrub. Now it fades out in ~5 ms and back in over ~20 ms, too short
+  // to hear as a fade, long enough to remove the click.
+  // Example: a 4-bar loop restarts 30 times → 30 clean restarts instead of 30 ticks.
+  duck(): void {
+    const g = this.seekFade.gain, now = this.ctx.currentTime;
+    g.cancelScheduledValues(now); g.setValueAtTime(g.value, now); g.setTargetAtTime(0, now, 0.0015);
+  }
+  unduck(): void {
+    const g = this.seekFade.gain, now = this.ctx.currentTime;
+    g.cancelScheduledValues(now); g.setValueAtTime(g.value, now); g.setTargetAtTime(1, now, 0.007);
   }
 
   resume(): void {

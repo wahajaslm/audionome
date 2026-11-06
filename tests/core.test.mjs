@@ -102,7 +102,7 @@ test('engine: with a graph, volume and loudness go to the graph and the element 
   const calls = [];
   const graph = {
     resume: () => calls.push('resume'), close: () => calls.push('close'),
-    setVolume: v => calls.push(['vol', v]), setNormalization: (db, ramp) => calls.push(['norm', db, ramp]),
+    setVolume: v => calls.push(['vol', v]), duck: () => { }, unduck: () => { }, setNormalization: (db, ramp) => calls.push(['norm', db, ramp]),
   };
   const engine = new NativeAudioEngine({ createGraph: () => graph }, el);
   engine.setVolume(0.5);

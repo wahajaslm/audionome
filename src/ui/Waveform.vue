@@ -45,6 +45,8 @@ const props = defineProps<{
   currentTime: number;
   selection: Range | null;
   saved: SavedRange[];
+  /** Peaks stored with the song (full mix only); drawn without decoding. */
+  storedPeaks?: { peaks: number[][]; duration: number } | null;
 }>();
 
 const emit = defineEmits<{
@@ -56,6 +58,8 @@ const emit = defineEmits<{
   'resize-end': [];
   step: [deltaSec: number];
   'select-around': [];
+  /** Peaks were decoded from the audio (not from storedPeaks): worth storing. */
+  peaks: [p: { peaks: number[][]; duration: number }];
 }>();
 
 /**
@@ -83,8 +87,19 @@ function loadWave(): void {
   const el = props.media;
   if (!ws || !el || !el.src || el.src === loadedSrc) return;
   loadedSrc = el.src;
-  const cached = peakCache.get(el.src);
+  const cached = known(el.src);
   ws.load(el.src, cached?.peaks, cached?.duration).catch(err => console.warn('Waveform notice:', err));
+}
+
+/**
+ * Peaks for a source: this session's cache, else the song's stored peaks (STARTUP FIX:
+ * a refresh then draws the waveform at once instead of decoding a 20 MB song again).
+ */
+let fromStore = false;
+function known(src: string): { peaks: number[][]; duration: number } | undefined {
+  const mem = peakCache.get(src);
+  fromStore = !mem && !!props.storedPeaks;
+  return mem ?? props.storedPeaks ?? undefined;
 }
 
 function selRegion(): Region | undefined {
@@ -128,7 +143,7 @@ onMounted(() => {
   };
   regions = RegionsPlugin.create();
   loadedSrc = props.media?.src ?? '';
-  const cached = peakCache.get(loadedSrc);
+  const cached = known(loadedSrc);
   ws = WaveSurfer.create({
     container: host.value,
     media: props.media ?? undefined,
@@ -144,7 +159,12 @@ onMounted(() => {
     barGap: 3,
     barRadius: 1,
     normalize: true,
-    interact: true,
+    // DOUBLE SEEK FIX - with interact on, wavesurfer moved the <audio> itself on every click,
+    // and then the store moved it again (to a saved moment's start, or the same spot): two
+    // seeks per click, heard as a stutter. Clicks are now handled once, in onClick below.
+    // Example: click inside a saved moment at 1:50 → before: jump to 1:50, then to 1:42;
+    // now: one jump to 1:42.
+    interact: false,
     plugins: [
       regions,
       HoverPlugin.create({
@@ -159,9 +179,11 @@ onMounted(() => {
   });
 
   ws.on('decode', d => {
-    if (loadedSrc && ws) peakCache.set(loadedSrc, { peaks: ws.exportPeaks({ maxLength: 4000 }), duration: d });
+    if (!loadedSrc || !ws || peakCache.has(loadedSrc)) return;
+    const p = { peaks: ws.exportPeaks({ maxLength: 4000, precision: 1000 }), duration: d };
+    peakCache.set(loadedSrc, p);
+    if (!fromStore) emit('peaks', p);
   });
-  ws.on('interaction', t => emit('seek', t));
 
   // A drag on empty waveform: Regions makes a new region with its own id.
   regions.on('region-initialized', r => {
@@ -197,6 +219,16 @@ onBeforeUnmount(() => {
 watch(() => props.selection, syncSelection, { deep: true });
 watch(() => props.saved, syncSaved, { deep: true });
 
+// A click is a press and release in nearly the same place; a drag (selection) is not.
+let downX: number | null = null;
+function onPointerDown(e: PointerEvent): void { downX = e.clientX; }
+function onClick(e: MouseEvent): void {
+  if (downX === null || Math.abs(e.clientX - downX) > 5 || !host.value || !(props.duration > 0)) return;
+  downX = null;
+  const r = host.value.getBoundingClientRect();
+  emit('seek', Math.max(0, Math.min(1, (e.clientX - r.left) / Math.max(1, r.width))) * props.duration);
+}
+
 function onKey(e: KeyboardEvent): void {
   const sel = props.selection, dur = props.duration > 0 ? props.duration : 1;
   if (e.shiftKey && sel && (e.key === 'ArrowRight' || e.key === 'ArrowLeft')) {
@@ -220,6 +252,8 @@ function onKey(e: KeyboardEvent): void {
     :aria-valuenow="Math.round(currentTime)"
     :aria-valuetext="formatTime(currentTime) + ' of ' + formatTime(duration)"
     @keydown="onKey"
+    @pointerdown="onPointerDown"
+    @click="onClick"
   ></div>
 </template>
 
