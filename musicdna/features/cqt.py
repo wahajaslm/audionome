@@ -83,6 +83,26 @@ def tonic_view(stored: np.ndarray, tonic_offset: int) -> np.ndarray:
     return stored[:, start:start + VIEW_BINS]
 
 
+def fine_fixed_view(stored: np.ndarray) -> np.ndarray:
+    """(channels, 360, frames): 20-cent rows but anchored to the tuned C, not the tonic.
+    Ablation: fine pitch without Sa alignment."""
+    return stored[:, MARGIN_BINS:MARGIN_BINS + VIEW_BINS]
+
+
+def pool_semitones(view: np.ndarray) -> np.ndarray:
+    """360 rows of 20 cents -> 72 rows of one semitone, each centred on its note (-40..+40 cents)."""
+    grid = view.astype(np.float32)
+    padded = np.pad(grid, ((0, 0), (2, 0), (0, 0)), mode='edge')[:, :VIEW_BINS]
+    channels, _, frames = padded.shape
+    return padded.reshape(channels, VIEW_BINS // 5, 5, frames).mean(axis=2)
+
+
+def semitone_tonic_view(stored: np.ndarray, tonic_offset: int) -> np.ndarray:
+    """(channels, 72, frames): Sa-aligned like the tonic view, pooled to semitones.
+    Ablation: Sa alignment without fine pitch."""
+    return pool_semitones(tonic_view(stored, tonic_offset))
+
+
 def western_view(stored: np.ndarray) -> np.ndarray:
     """(channels, 72, frames): the equal-tempered grid from C2, one row per semitone (5 rows averaged)."""
     grid = stored[:, MARGIN_BINS:MARGIN_BINS + VIEW_BINS].astype(np.float32)

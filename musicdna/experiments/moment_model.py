@@ -32,7 +32,7 @@ from torch import nn
 from musicdna.corpus.genre_mix import GenreMixEntry
 from musicdna.corpus.registry import get_corpus
 from musicdna.experiments.replay_targets import PositionPrior, SongTargets
-from musicdna.features.cqt import HOP, tonic_view, western_view
+from musicdna.features.cqt import HOP, fine_fixed_view, semitone_tonic_view, tonic_view, western_view
 from musicdna.paths import RESEARCH_OUTPUT_DIR
 
 FEATURE_GROUPS = ('dsp', 'spatial', 'vocal', 'intonation', 'intonation_profile', 'eastern')
@@ -46,6 +46,10 @@ VARIANTS: dict[str, dict[str, Any]] = {
     # Need only DSP, spatial and one embedding, so they run before stems and the Eastern features exist.
     # Comparing the three asks: does an encoder trained on Indian classical and Turkish makam music
     # (CultureMERT) find replayed moments in Eastern songs better than general ones (CLAP, MERT)?
+    # Which half of the tonic view matters (2026-11-06)? `full` and `western` differ in pitch detail
+    # (20 cents vs. semitones) AND anchoring (Sa vs. C). These keep everything of `full` but change one.
+    'full_fine_fixed':     {'cqt': 'fine_fixed', 'features': FEATURE_GROUPS, 'embedding': 'clap'},
+    'full_semitone_tonic': {'cqt': 'semitone_tonic', 'features': FEATURE_GROUPS, 'embedding': 'clap'},
     'western_no_cnn':             {'cqt': None, 'features': ('dsp', 'spatial'), 'embedding': 'clap'},
     'western_no_cnn_mert':        {'cqt': None, 'features': ('dsp', 'spatial'), 'embedding': 'mert'},
     'western_no_cnn_culturemert': {'cqt': None, 'features': ('dsp', 'spatial'), 'embedding': 'culturemert'},
@@ -106,7 +110,9 @@ def load_songs(variants: list[str], corpus_name: str = 'genre_mix') -> list[Song
             meta = store.load_json(entry.video_id, 'cqt_meta')
             rate = store.config.vocal.sample_rate
             for view in views:
-                picture = tonic_view(stored, meta['tonic_offset']) if view == 'tonic' else western_view(stored)
+                picture = {'tonic': lambda: tonic_view(stored, meta['tonic_offset']), 'western': lambda: western_view(stored),
+                           'fine_fixed': lambda: fine_fixed_view(stored),
+                           'semitone_tonic': lambda: semitone_tonic_view(stored, meta['tonic_offset'])}[view]()
                 crops = []
                 for i in targets.index:
                     start = int(windows[i][0] * rate / HOP)

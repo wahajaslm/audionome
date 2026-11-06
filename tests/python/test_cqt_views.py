@@ -39,3 +39,14 @@ def test_offset_folds_into_half_octave_either_side():
     assert offset_from_hz(c, 0.0) == 0
     assert offset_from_hz(c * 2 ** (11 / 12), 0.0) == -5           # B is one semitone below C
     assert offset_from_hz(c * 2 ** (2 / 12), 0.0) == 10            # D
+
+
+def test_ablation_views_change_one_thing_each():
+    from musicdna.features.cqt import fine_fixed_view, semitone_tonic_view
+    tonic = 146.83
+    stored, meta = song_cqt(signals(tonic), SR, tonic, 1.0)
+    assert fine_fixed_view(stored).shape[1] == VIEW_BINS            # fine pitch, C-anchored
+    assert semitone_tonic_view(stored, meta.tonic_offset).shape[1] == VIEW_BINS // 5   # semitones, Sa-anchored
+    # Sa-aligned semitone view puts the tonic on row 0 of its octave, like the tonic view.
+    row = int(np.argmax(semitone_tonic_view(stored, meta.tonic_offset)[0].mean(axis=1))) % 12
+    assert row == 0
