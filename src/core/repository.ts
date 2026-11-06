@@ -5,7 +5,7 @@
 import { db, ensureDemo, exportProfile, importFiles } from '../data/db';
 import { deleteTrackFromSQLite } from '../intelligence/client';
 import type { ListeningEvent, Moment, MomentRating, Track, TrackAnalysis, PassageAnalysis } from '../data/types';
-import { SERVICE } from './library';
+import { SERVICE, namedFromCorpus, type CorpusTitles } from './library';
 import { toDbMoment } from './moments';
 
 export { ensureDemo };
@@ -106,6 +106,19 @@ export async function forgetDeleted(id: string): Promise<void> {
  * IndexedDB, adding placeholder track rows for unknown ids. Silent when the service is off.
  * Same merge rules as index.html's refreshLibrary().
  */
+/** Renames placeholder-named songs from the corpus manifests (rule: namedFromCorpus). */
+export async function nameFromCorpus(): Promise<number> {
+  const res = await fetch(SERVICE + '/api/corpus/titles', { signal: AbortSignal.timeout(3000) }).catch(() => null);
+  if (!res || !res.ok) return 0;
+  const titles: CorpusTitles = await res.json();
+  let renamed = 0;
+  for (const t of await db.tracks.toArray()) {
+    const name = namedFromCorpus(t, titles);
+    if (name) { await db.tracks.update(t.id, name).catch(() => { }); renamed++; }
+  }
+  return renamed;
+}
+
 export async function syncFromAnalysisService(): Promise<void> {
   try {
     const res = await fetch(SERVICE + '/api/db/analyses', { signal: AbortSignal.timeout(1800) }).catch(() => null);

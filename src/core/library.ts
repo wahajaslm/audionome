@@ -8,6 +8,25 @@ import { SERVICE_URL } from './service.ts';
 
 export const SERVICE = SERVICE_URL;
 
+/** Song names by video id, from GET /api/corpus/titles. */
+export type CorpusTitles = Record<string, { title: string; artist: string }>;
+
+/**
+ * TITLE FIX - songs named by their YouTube id ('FnDmg-cBVsA · Your library') get their real
+ * song and artist from the local corpus manifests (GET /api/corpus/titles; nothing leaves this
+ * machine). Only placeholder names are replaced: a title equal to the id, and the artist
+ * 'Your library' or empty. Names you typed are never touched.
+ * Example: 'FnDmg-cBVsA · Your library' → 'Aamay Bhashaili Rey · Alamgir, Fariha Pervez'.
+ */
+export function namedFromCorpus(t: Pick<Track, 'id' | 'title' | 'artist'>, titles: CorpusTitles): { title: string; artist: string } | null {
+  const id = t.id.startsWith('youtube-') ? t.id.slice(8) : t.id;
+  const key = titles[t.title] ? t.title : (t.title === t.id || t.title === id) && titles[id] ? id : null;
+  if (!key) return null;
+  const known = titles[key];
+  const artist = !t.artist || t.artist === 'Your library' ? known.artist || t.artist : t.artist;
+  return known.title && (known.title !== t.title || artist !== t.artist) ? { title: known.title, artist } : null;
+}
+
 /** Tracks opened from a stream carry their playable URL and the link they came from. */
 export type PlayableTrack = Track & { streamPlaybackUrl?: string; originalUrl?: string };
 

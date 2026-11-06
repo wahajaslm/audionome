@@ -357,3 +357,13 @@ def test_timeline_status_reports_saved_live_and_queue_position(tmp_path):
     assert jobs.status('died')['full'] == 'stale'
     assert jobs.status('b')['position'] == 2
     assert jobs.status('never') is None
+
+
+def test_corpus_titles_name_songs_by_video_id() -> None:
+    """TITLE FIX: the player renames id-named songs from this map (local manifests only)."""
+    from fastapi.testclient import TestClient
+    from musicdna.service.app import app
+    titles = TestClient(app).get('/api/corpus/titles').json()
+    assert isinstance(titles, dict)
+    for value in list(titles.values())[:5]:
+        assert set(value) == {'title', 'artist'}

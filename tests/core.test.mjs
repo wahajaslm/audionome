@@ -600,3 +600,16 @@ test('details: voice, groove, harmony and similar passages read the measurements
   const sim = similarPassages(analyses, 't', { a: 0, b: 12 });
   assert.deepEqual(sim.map(h => [h.trackId, h.a]), [['u', 30], ['t', 60], ['u', 0]], 'most alike first, own windows left out');
 });
+
+test('titles: placeholder names come from the corpus; names you typed stay (TITLE FIX)', async () => {
+  const { namedFromCorpus } = await import('../src/core/library.ts');
+  const titles = { 'FnDmg-cBVsA': { title: 'Aamay Bhashaili Rey', artist: 'Alamgir, Fariha Pervez' } };
+  assert.deepEqual(namedFromCorpus({ id: 'FnDmg-cBVsA', title: 'FnDmg-cBVsA', artist: 'Your library' }, titles),
+    { title: 'Aamay Bhashaili Rey', artist: 'Alamgir, Fariha Pervez' });
+  assert.deepEqual(namedFromCorpus({ id: 'a1b2', title: 'FnDmg-cBVsA', artist: '' }, titles),
+    { title: 'Aamay Bhashaili Rey', artist: 'Alamgir, Fariha Pervez' }, "imported as 'FnDmg-cBVsA.m4a'");
+  assert.deepEqual(namedFromCorpus({ id: 'youtube-FnDmg-cBVsA', title: 'FnDmg-cBVsA', artist: 'Ali' }, titles),
+    { title: 'Aamay Bhashaili Rey', artist: 'Ali' }, 'a real artist is kept');
+  assert.equal(namedFromCorpus({ id: 'FnDmg-cBVsA', title: 'My edit', artist: 'Your library' }, titles), null, 'a typed title is kept');
+  assert.equal(namedFromCorpus({ id: 'zzz', title: 'zzz', artist: '' }, titles), null);
+});

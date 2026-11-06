@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, reactive, ref, shallowRef } from 'vue';
 import type { Track } from '../data/types';
-import { deleteTrackEverywhere, forgetDeleted, getSetting, importAudioFiles, loadTracks, putAnalysis, putSetting, putTrack, syncFromAnalysisService, updateTrackDuration, updateTrackLoudness, updateTrackPeaks } from '../core/repository';
+import { deleteTrackEverywhere, forgetDeleted, getSetting, importAudioFiles, loadTracks, putAnalysis, putSetting, putTrack, syncFromAnalysisService, nameFromCorpus, updateTrackDuration, updateTrackLoudness, updateTrackPeaks } from '../core/repository';
 import { intelligenceHealth, uploadAudioToCache } from '../intelligence/client';
 import { fetchTimelineStatuses, startTimeline, type TimelineJobStatus } from '../core/timeline';
 import { useMomentsStore } from './moments';
@@ -51,7 +51,7 @@ export const useLibraryStore = defineStore('library', () => {
    */
   async function load(): Promise<void> {
     tracks.value = await loadTracks();
-    syncFromAnalysisService().then(async () => {
+    syncFromAnalysisService().then(nameFromCorpus).then(async () => {
       tracks.value = await loadTracks();
       await useIntelligenceStore().refresh();
     }).catch(console.warn);

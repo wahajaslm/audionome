@@ -24,6 +24,7 @@ from musicdna.audio.io import load_audio
 from musicdna.paths import PUBLIC_DIR
 from musicdna.service.studio import router as studio_router, DEMO_WAV
 from musicdna.service.timeline_api import router as timeline_router, JOBS as TIMELINE_JOBS
+from musicdna.service.corpus_api import router as corpus_router
 from musicdna.service.streaming import (
     resolve_stream, expand_playlist, create_proxy_stream_response, start_cache_download, wait_for_cache_download,
     remember_resolved, resolved_meta,
@@ -41,6 +42,7 @@ def get_repository() -> AnalysisRepository:
 app = FastAPI(title='Music DNA Local Intelligence Service', version='0.5.0')
 app.include_router(studio_router)
 app.include_router(timeline_router)
+app.include_router(corpus_router)
 
 app.add_middleware(
     CORSMiddleware,
