@@ -329,10 +329,19 @@ export const usePlaybackStore = defineStore('playback', () => {
     useListeningStore().emit('seek', 'user', { fromSec: from, toSec: region.t });
   }
 
-  /** A drag on the waveform started: close any open question and stop looping. */
+  /**
+   * A drag on the waveform started: close any open question.
+   * EXPLORE STAYS FIX - a new drag used to close Explore and stop the loop, so picking the next
+   * passage to study meant reopening Explore and pressing Loop again every time.
+   * Now Explore stays open on the new passage, and a running loop moves to it on release.
+   * Example: Explore open, looping 0:10–0:18, drag 0:20–0:28 → Explore shows 0:20–0:28 and
+   * the loop plays 0:20–0:28.
+   */
+  let reloopOnCommit = false;
   function beginSelection(): void {
     const flow = useMomentFlowStore();
-    flow.describe = null; flow.ask = null; flow.explore = false; flow.nudge = false; flow.justSaved = false;
+    flow.describe = null; flow.ask = null; flow.nudge = false; flow.justSaved = false;
+    reloopOnCommit = region.loop;
     region.loop = false; region.loops = 0;
   }
 
@@ -351,6 +360,7 @@ export const usePlaybackStore = defineStore('playback', () => {
     if (!engineRef || !region.sel) return;
     region.sel = snapped(enforceMinimumSelection(region.sel, duration.value));
     region.previewEnd = null;
+    if (reloopOnCommit) { reloopOnCommit = false; toggleLoop(); }
   }
 
   /**
