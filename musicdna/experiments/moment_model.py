@@ -378,10 +378,25 @@ def evaluate_holdout(variant: str, train: list[Song], test: list[Song], epochs: 
                      seeds: int = 1) -> dict[str, Any]:
     """Train on every song of one corpus, score once on another (the confirmation set). Per-song metrics
     are averaged over seeds; nothing from the test songs is used for training, scaling or early stopping."""
+    # RESUME FIX: a session restart killed two 2.5-hour confirmation runs, and nothing was saved until the
+    # end. Each finished seed is now saved, keyed by code version, variant, settings and songs, and a
+    # re-run picks up after the last saved seed. Example: killed during western seed 3 -> seeds 1-2 load.
+    checkpoints = RESEARCH_OUTPUT_DIR / 'checkpoints'
+    checkpoints.mkdir(parents=True, exist_ok=True)
+    import hashlib
+    import subprocess
+    commit = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], capture_output=True, text=True).stdout.strip()
+    songs_key = hashlib.sha1(('|'.join(s.video_id for s in train) + '#' + '|'.join(s.video_id for s in test)).encode()).hexdigest()[:10]
     by_seed = []
     for seed in range(seeds):
+        path = checkpoints / f'holdout_{commit}_{variant}_e{epochs}_{songs_key}_seed{seed}.json'
+        if path.exists():
+            by_seed.append(json.loads(path.read_text()))
+            print(f'  {variant} seed {seed + 1}/{seeds} loaded from {path.name}', flush=True)
+            continue
         scores, residual = Trainer(variant, epochs=epochs, device=device, seed=seed).fit_predict(train, test)
         by_seed.append({s.video_id: song_metrics(scores[s.video_id], residual[s.video_id]) for s in test})
+        path.write_text(json.dumps(by_seed[-1]))
         print(f'  {variant} seed {seed + 1}/{seeds} done', flush=True)
     per_song = [{'video_id': s.video_id, 'region': s.region, 'genre': s.genre,
                  **{m: float(np.nanmean([run[s.video_id][m] for run in by_seed])) for m in ('pairwise_accuracy', 'spearman', 'top1_within_1')}}
