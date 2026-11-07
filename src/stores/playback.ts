@@ -8,6 +8,7 @@ import {
 } from '../core/playback';
 import { normalizationGainDb } from '../core/audioGraph';
 import { practicingNow } from '../core/practice';
+import { radioKey, radioQueue, type RadioItem } from '../core/radio';
 import { putSetting, getSetting } from '../core/repository';
 import { useLibraryStore } from './library';
 import { useListeningStore } from './listening';
@@ -46,6 +47,14 @@ export const usePlaybackStore = defineStore('playback', () => {
   const normalize = ref(true);
   /** Settings: selection edges move to the beat. */
   const snapToBeat = ref(true);
+  /** Moment radio (core/radio.ts): on while it runs; `radioNow` is the passage playing. */
+  const radio = ref(false);
+  const radioNow = ref<RadioItem | null>(null);
+  let radioPlayed = new Set<string>();
+  let radioUpcoming: RadioItem[] = [];
+  let radioFading = false;
+  /** Fade length at each passage change (seconds). */
+  const RADIO_FADE = 0.6;
   /** Practising now (slowed down, or a long loop): events are tagged so taste ignores them. */
   const practicing = computed(() => practicingNow({ rate: rate.value, loop: region.loop, loops: region.loops }));
   // QUIET FIX - said once per device (it was once per song), the first time practice starts,
@@ -75,7 +84,7 @@ export const usePlaybackStore = defineStore('playback', () => {
       log: { flushSpan: listening.flushSpan, emit: listening.emit, openSpan: listening.openSpan },
       isLoading: () => loading.value,
       onPreviewEnd: () => {
-        if (!queue.value.length) return false;
+        if (!queue.value.length && !radio.value) return false;
         playNext().catch(console.error);
         return true;
       },
@@ -95,6 +104,66 @@ export const usePlaybackStore = defineStore('playback', () => {
     region.t = t;
     checkRegionEnd(t);
     if (Date.now() - savedAt > 5000) rememberPosition();
+    // Moment radio: fade out just before the passage ends; the next one fades in.
+    if (radio.value && region.previewEnd !== null && !radioFading && t >= region.previewEnd - RADIO_FADE) {
+      radioFading = true;
+      engineRef?.fade(0, RADIO_FADE);
+    }
+  }
+
+  /**
+   * Moment radio. Starts from a button (Discover); runs until you stop it or take over
+   * (play another song or moment, or click away from the passage).
+   * Next skips (logged as a 'skip', a mild "not this" for the ranker); ♡ saves the passage.
+   * Example: start → suggestion 1 fades into suggestion 2 … every 4th is a saved moment.
+   */
+  async function startRadio(): Promise<void> {
+    radioPlayed = new Set(); radioUpcoming = [];
+    radio.value = true;
+    await radioAdvance();
+  }
+
+  function stopRadio(): void {
+    if (!radio.value) return;
+    radio.value = false; radioNow.value = null; radioUpcoming = [];
+    if (radioFading) { radioFading = false; engineRef?.fade(1, 0.2); }
+  }
+
+  /** The bar's back button on the radio: the passage from its start. */
+  function radioRestart(): void {
+    if (!radio.value || !region.sel) return;
+    region.t = region.sel.a; engineRef?.setTime(region.sel.a);
+  }
+
+  /** Skip: logs it at the current position and moves on. */
+  async function radioSkip(): Promise<void> {
+    if (!radio.value) return;
+    useListeningStore().emit('skip', 'user', { positionSec: region.t });
+    engineRef?.fade(0, 0.25);
+    await new Promise(r => setTimeout(r, 250));
+    await radioAdvance();
+  }
+
+  async function radioAdvance(): Promise<void> {
+    if (!radio.value) return;
+    if (radioUpcoming.length < 2) {
+      const intel = useIntelligenceStore(), lib = useLibraryStore();
+      const playable = (x: { trackId: string }) => !!lib.track(x.trackId);
+      const more = () => radioQueue(intel.suggestions.filter(playable), useMomentsStore().moments.filter(playable),
+        intel.ratings, new Set([...radioPlayed, ...radioUpcoming.map(radioKey)]), 8, radioUpcoming.at(-1)?.trackId ?? trackId.value);
+      let next = more();
+      // Everything played once: start the round again rather than stop.
+      if (!next.length && radioPlayed.size) { radioPlayed = new Set(); next = more(); }
+      radioUpcoming.push(...next);
+    }
+    const item = radioUpcoming.shift();
+    if (!item) { stopRadio(); useUiStore().notify('Save a moment or analyse a song first; then the radio has something to play.'); return; }
+    radioPlayed.add(radioKey(item));
+    radioNow.value = item;
+    radioFading = true; // stays silent until the new passage plays
+    await openRangeInternal(item.a, item.b, item.trackId, false, true);
+    radioFading = false;
+    engineRef?.fade(1, 0.35);
   }
 
   // RESUME FIX - where you are is stored every 5 s while playing, on pause, on a song change and
@@ -235,6 +304,7 @@ export const usePlaybackStore = defineStore('playback', () => {
     const listening = useListeningStore();
     listening.flushSpan('track_change');
     listening.emit('track_change');
+    stopRadio();
     await selectTrack(t, 0, play);
   }
 
@@ -242,7 +312,13 @@ export const usePlaybackStore = defineStore('playback', () => {
    * Opens a passage of any track selected and plays from its start (lists, previews, play-window).
    * Pressing it again while that passage plays pauses it.
    */
+  /** Opens a passage chosen by the user: Moment radio stops (you took over). */
   async function openRange(a: number, b: number, id: string, toggle = true, stopAtEnd = false): Promise<void> {
+    stopRadio();
+    await openRangeInternal(a, b, id, toggle, stopAtEnd);
+  }
+
+  async function openRangeInternal(a: number, b: number, id: string, toggle = true, stopAtEnd = false): Promise<void> {
     const e = engineRef;
     const t = useLibraryStore().track(id) || currentTrack.value;
     if (!t || !e) return;
@@ -268,13 +344,15 @@ export const usePlaybackStore = defineStore('playback', () => {
 
   /** Plays queued passages back to back. */
   async function playQueue(items: QueuedRange[]): Promise<void> {
+    stopRadio();
     queue.value = [...items];
     await playNext();
   }
 
   async function playNext(): Promise<void> {
+    if (radio.value) { await radioAdvance(); return; }
     const next = queue.value.shift();
-    if (next) await openRange(next.a, next.b, next.trackId, false, true);
+    if (next) await openRangeInternal(next.a, next.b, next.trackId, false, true);
     else { region.previewEnd = null; engineRef?.pause(); }
   }
 
@@ -289,7 +367,7 @@ export const usePlaybackStore = defineStore('playback', () => {
     const e = engineRef, listening = useListeningStore();
     if (!e) return;
     if (e.isPlaying()) { e.pause(); listening.emit('pause'); return; }
-    region.previewEnd = null;
+    if (!radio.value) region.previewEnd = null; // the radio keeps its passage end across a pause
     try { await e.play(); listening.emit('play'); } catch (err) {
       console.warn('Playback notice:', err);
       if (!isQuietPlayError(err)) useUiStore().notify('Unable to play this recording.');
@@ -341,14 +419,16 @@ export const usePlaybackStore = defineStore('playback', () => {
     const from = region.t;
     if (target < region.t - 3 && !practicing.value) useIntelligenceStore().rewoundTo(target);
     // KEEPS PLAYING FIX - clicks on the waveform only move the playhead; they never set an end.
-    if (region.sel && contains(region.sel, target)) { region.t = target; region.previewEnd = null; }
+    // Inside the passage: jump there. The radio keeps its passage end, so it still moves on.
+    if (region.sel && contains(region.sel, target)) { region.t = target; if (!radio.value) region.previewEnd = null; }
     else {
       // A saved moment, else a faint "you come back here" mark (QUIET FIX: the mark replaced
       // the text line; clicking it selects the passage, so ♡ saves it).
       const hit = useMomentsStore().savedForCurrent.find(r => contains(r, target))
         ?? (useListeningStore().learning ? useIntelligenceStore().interest.find(r => r.n >= 2 && contains(r, target)) : undefined);
-      if (hit) { region.t = hit.a; region.sel = { a: hit.a, b: hit.b }; region.previewEnd = null; }
+      if (hit) { stopRadio(); region.t = hit.a; region.sel = { a: hit.a, b: hit.b }; region.previewEnd = null; }
       else {
+        stopRadio(); // clicking away from the passage: you took over
         region.t = target; region.sel = null; region.previewEnd = null; region.loop = false;
         flow.describe = null; flow.explore = false; flow.nudge = false;
       }
@@ -517,7 +597,7 @@ export const usePlaybackStore = defineStore('playback', () => {
 
   return {
     ...toRefs(region), trackId, duration, playing, loading, volume, activeStem, queue, currentTrack,
-    rate, normalize, snapToBeat, practicing, setRate, cycleRate, setNormalize, setSnapToBeat, onLoudnessMeasured,
+    rate, normalize, snapToBeat, practicing, setRate, radio, radioNow, startRadio, stopRadio, radioSkip, radioRestart, cycleRate, setNormalize, setSnapToBeat, onLoudnessMeasured,
     engine, attachEngine, onDuration, onFrame, checkRegionEnd, loadSettings, lastPlayed,
     selectTrack, changeTrack, openRange, playQueue, playNext, togglePlay, playSelection, seekBy, stepBy,
     clickSeek, beginSelection, updateSelection, commitSelection, resizeSelection, endResize, selectAroundPlayhead, clearSelection,

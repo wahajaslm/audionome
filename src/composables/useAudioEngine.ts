@@ -104,7 +104,7 @@ export function useAudioEngine(): NativeAudioEngine {
     clock.stop();
     listening.flushSpan('ended');
     playback.playing = false;
-    if (playback.queue.length) playback.playNext().catch(console.error);
+    if (playback.queue.length || playback.radio) playback.playNext().catch(console.error);
   });
   return engine;
 }

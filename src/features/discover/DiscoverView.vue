@@ -49,6 +49,12 @@ const answered = ref<{ s: PreferenceSuggestion; at: number }[]>([]);
  * "New suggestions" reloads analyses and ratings, then shows the next 12 ranked passages,
  * wrapping to the top after the last page. Example: 40 suggestions → 1–12, 13–24, 25–36, 37–40, 1–12.
  */
+/** Starts Moment radio and opens the player, where it plays. */
+async function startRadio() {
+  router.push('/');
+  await playback.startRadio();
+}
+
 const PAGE = 12;
 const page = ref(0);
 const pageCount = computed(() => Math.max(1, Math.ceil(suggestions.value.filter(inTab).length / PAGE)));
@@ -123,6 +129,8 @@ function selectTab(i: number) {
         <p class="lead body">Passages you might enjoy, found by comparing your songs with the moments you saved. Tell us what connects so suggestions can improve.</p>
       </div>
       <div v-if="suggestions.length" class="actions">
+        <!-- Moment radio: endless, faded, starts only from here (core/radio.ts). -->
+        <Button variant="primary" @click="startRadio"><Icon name="play" :size="14" />Moment radio</Button>
         <Button @click="newSuggestions">New suggestions</Button>
         <Button variant="outline" :disabled="!rows.length" @click="playAll">
           <Icon name="play" :size="14" />

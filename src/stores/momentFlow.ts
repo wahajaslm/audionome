@@ -73,7 +73,10 @@ export const useMomentFlowStore = defineStore('momentFlow', () => {
 
   /** Heart in the playback bar: saves the last 20 s. */
   function quickSave(): void {
-    if (usePlaybackStore().selectLast20s()) saveSelection();
+    const playback = usePlaybackStore();
+    // On Moment radio ♡ saves the passage playing, not the last 20 s.
+    if (playback.radio && playback.sel) { saveSelection(); return; }
+    if (playback.selectLast20s()) saveSelection();
   }
 
   /** One-tap answer in the ask row. */

@@ -21,6 +21,8 @@ export function useMediaSession(): void {
   set('pause', () => { if (playback.playing) playback.togglePlay(); });
   set('seekbackward', d => playback.seekBy(-(d.seekOffset ?? 15)));
   set('seekforward', d => playback.seekBy(d.seekOffset ?? 15));
+  // Headphone / keyboard ⏭ skips on Moment radio (no next song otherwise).
+  set('nexttrack', () => { if (playback.radio) playback.radioSkip(); else playback.seekBy(15); });
   set('seekto', d => { if (d.seekTime !== undefined) playback.endScrub(d.seekTime); });
 
   watch(() => playback.currentTrack, t => {

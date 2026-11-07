@@ -172,3 +172,23 @@ test('practice: live rule is speed below 1x or a loop past the cycle threshold',
  assert.equal(practicingNow({rate:1,loop:true,loops:PRACTICE_MIN_CYCLES-1}),false);
  assert.equal(practicingNow({rate:1,loop:true,loops:PRACTICE_MIN_CYCLES}),true);
 });
+
+// Moment radio (core/radio.ts)
+import {radioQueue,radioKey,MOMENT_EVERY} from '../src/core/radio.ts';
+const sg=(t,a)=>({trackId:t,startSec:a,endSec:a+12});
+
+test('radio: mostly suggestions, a saved moment every 4th, no repeats, no dislikes',()=>{
+ const sugg=[sg('a',0),sg('b',0),sg('a',30),sg('c',0),sg('b',30),sg('d',0),sg('d',30),sg('e',0)];
+ const moms=[sg('m',10),sg('n',10)];
+ const q=radioQueue(sugg,moms,[{trackId:'c',startSec:0,endSec:12,value:'dislike'}],new Set(),8);
+ assert.deepEqual(q.map(x=>x.source),['suggestion','suggestion','suggestion','moment','suggestion','suggestion','suggestion','moment']);
+ assert.equal(MOMENT_EVERY,4);
+ assert.ok(!q.some(x=>x.trackId==='c'),'disliked passage left out');
+ assert.equal(new Set(q.map(radioKey)).size,q.length,'no passage twice');
+ for(let i=1;i<q.length;i++) if(q[i].trackId===q[i-1].trackId) assert.fail('same song twice in a row at '+i);
+});
+
+test('radio: what was played is skipped; a suggestion inside a saved moment is not played twice',()=>{
+ const q=radioQueue([sg('a',0),sg('m',12)],[sg('m',10)],[],new Set(['a:0']),5);
+ assert.deepEqual(q.map(x=>[x.trackId,x.a,x.source]),[['m',10,'moment']]);
+});

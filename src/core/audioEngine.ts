@@ -230,6 +230,9 @@ export class NativeAudioEngine {
   }
   getRate(): number { return this.rate; }
 
+  /** Fades the sound to `target` (0..1) over `sec`; no-op without the graph. */
+  fade(target: number, sec: number): void { this.graph?.fade(target, sec); }
+
   /** Releases the audio device (hot-reload teardown). */
   closeGraph(): void { this.graph?.close(); this.graph = null; }
 

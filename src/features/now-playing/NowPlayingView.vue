@@ -159,7 +159,12 @@ function onLoopButton(): void { playback.toggleLoop(); }
       </div>
 
       <div class="caption-line label">
-        <span v-if="loop && sel" class="loopflag">Looping {{ formatTime(sel.a) }} – {{ formatTime(sel.b) }}</span>
+        <span v-if="playback.radio" class="hint">
+          <span>Moment radio · {{ playback.radioNow?.source === 'moment' ? 'one of your moments' : 'like your moments' }}</span>
+          <button type="button" class="link" @click="playback.radioSkip()">Skip ›</button>
+          <button type="button" class="link" @click="playback.stopRadio()">Stop</button>
+        </span>
+        <span v-else-if="loop && sel" class="loopflag">Looping {{ formatTime(sel.a) }} – {{ formatTime(sel.b) }}</span>
         <span v-else-if="pendingAskHere && !slot" class="hint">
           <span>Saved.</span>
           <button type="button" class="link" @click="flow.openAsk()">Add why ›</button>

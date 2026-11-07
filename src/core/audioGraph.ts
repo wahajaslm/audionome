@@ -115,6 +115,8 @@ export interface AudioGraphLike {
   duck(): void;
   /** Seek landed: fade back in. */
   unduck(): void;
+  /** A longer fade (Moment radio's passage changes): to `target` (0..1) over `sec`. */
+  fade(target: number, sec: number): void;
   close(): void;
 }
 
@@ -145,6 +147,10 @@ export class AudioGraph implements AudioGraphLike {
   unduck(): void {
     const g = this.seekFade.gain, now = this.ctx.currentTime;
     g.cancelScheduledValues(now); g.setValueAtTime(g.value, now); g.setTargetAtTime(1, now, 0.007);
+  }
+  fade(target: number, sec: number): void {
+    const g = this.seekFade.gain, now = this.ctx.currentTime;
+    g.cancelScheduledValues(now); g.setValueAtTime(g.value, now); g.linearRampToValueAtTime(Math.max(0, Math.min(1, target)), now + Math.max(0.01, sec));
   }
 
   resume(): void {
