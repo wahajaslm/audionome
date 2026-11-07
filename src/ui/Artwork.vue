@@ -3,7 +3,8 @@
  * Artwork: a song's cover, square with rounded corners. Used on Now playing (hero), in the
  * playback bar and in Library rows.
  * Props: src (the file's own cover picture, a data URL) or art (what to draw it from, see
- * core/artwork.ts); size in px; radius (a token, default radius-sm).
+ * core/artwork.ts); size in px; radius (a token, default radius-sm); fluid (fills its
+ * container's width as a square, ignoring size: Home's song grid).
  * Decorative (aria-hidden): the title next to it names the song.
  * The drawn cover: two-hue gradient from the song's key, a contour of its loudness over time,
  * thin rings for its tempo, and a small sun at its loudest moment.
@@ -11,8 +12,8 @@
 import { computed, useId } from 'vue';
 import { artRecipe, type ArtInput } from '../core/artwork';
 
-const props = withDefaults(defineProps<{ src?: string; art: ArtInput; size?: number; radius?: string }>(), {
-  src: undefined, size: 96, radius: 'var(--radius-sm)',
+const props = withDefaults(defineProps<{ src?: string; art: ArtInput; size?: number; radius?: string; fluid?: boolean }>(), {
+  src: undefined, size: 96, radius: 'var(--radius-sm)', fluid: false,
 });
 
 const id = useId();
@@ -20,7 +21,7 @@ const r = computed(() => (props.src ? null : artRecipe(props.art)));
 </script>
 
 <template>
-  <span class="art" :style="{ width: size + 'px', height: size + 'px', borderRadius: radius }" aria-hidden="true">
+  <span class="art" :class="{ fluid }" :style="fluid ? { borderRadius: radius } : { width: size + 'px', height: size + 'px', borderRadius: radius }" aria-hidden="true">
     <img v-if="src" :src="src" alt="" draggable="false" />
     <svg v-else-if="r" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" focusable="false">
       <defs>
@@ -57,5 +58,6 @@ const r = computed(() => (props.src ? null : artRecipe(props.art)));
 }
 /* Hairline edge over the picture, so a dark cover does not melt into the page. */
 .art::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07); }
+.art.fluid { width: 100%; aspect-ratio: 1; }
 .art img, .art svg { display: block; width: 100%; height: 100%; object-fit: cover; }
 </style>

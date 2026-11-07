@@ -101,7 +101,7 @@ async function onFiles(e: Event): Promise<void> {
       <ul class="tiles">
         <li v-for="s in songs" :key="s.id">
           <button type="button" class="tile" :class="{ on: current?.id === s.id }" @click="playSong(s)">
-            <Artwork v-bind="artworkFor(s)" :size="148" radius="var(--radius-md)" />
+            <Artwork v-bind="artworkFor(s)" fluid radius="var(--radius-md)" />
             <span class="label tile-title">{{ s.title }}</span>
             <span class="caption tile-artist">{{ s.artist }}</span>
           </button>
@@ -157,13 +157,21 @@ async function onFiles(e: Event): Promise<void> {
 .more { background: none; border: 0; padding: 0; color: var(--ink-mute); cursor: pointer; }
 .more:hover { color: var(--ink); }
 
-.tiles { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: var(--space-5) var(--space-4); }
-.tile { display: flex; flex-direction: column; gap: 2px; width: 148px; max-width: 100%; padding: 0; border: 0; background: none; color: inherit; text-align: left; cursor: pointer; }
+.tiles {
+  list-style: none; margin: 0; padding: 0;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--space-5) var(--space-4);
+}
+/* LAYOUT FIX - long titles ("Chaap-Tilak-Sab-Cheeni-Abida-Parveen-Rahat-Fateh-Ali") ran into the
+   next tile, and their width pushed the grid past the right edge. Now each cell may shrink to its
+   column (min-width: 0), the cover fills the column, and title/artist are blocks cut with "…". */
+.tiles li { min-width: 0; }
+.tile { display: block; width: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .tile .art { margin-bottom: var(--space-2); transition: transform .15s ease; }
 .tile:hover .art { transform: translateY(-2px); }
 .tile.on .art { outline: 2px solid var(--accent); outline-offset: 2px; }
-.tile-title { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tile-artist { color: var(--ink-mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile-title, .tile-artist { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile-title { color: var(--ink); }
+.tile-artist { color: var(--ink-mute); margin-top: 2px; }
 
 .empty-line { color: var(--ink-mute); margin: 0; }
 .rows { list-style: none; margin: 0; padding: 0; }
@@ -180,8 +188,6 @@ async function onFiles(e: Event): Promise<void> {
   .page { padding-top: var(--space-4); }
   .cont { gap: var(--space-4); padding: var(--space-4); }
   .cont-art :deep(.art) { width: 88px !important; height: 88px !important; }
-  .tiles { grid-template-columns: repeat(2, 1fr); }
-  .tile { width: 100%; }
-  .tile :deep(.art) { width: 100% !important; height: auto !important; aspect-ratio: 1; }
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 </style>

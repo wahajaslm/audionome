@@ -63,7 +63,7 @@ function toggleMute() {
         <button type="button" class="ib" aria-label="Back 15 seconds" title="Back 15 s" @click="emit('prev')"><Icon name="prev" :size="18" /></button>
         <button type="button" class="play" :aria-label="playing ? 'Pause' : 'Play'" @click="emit('toggle-play')"><Icon :name="playing ? 'pause' : 'play'" :size="18" /></button>
         <button type="button" class="ib" aria-label="Forward 15 seconds" title="Forward 15 s" @click="emit('next')"><Icon name="next" :size="18" /></button>
-        <button type="button" class="ib" :aria-pressed="loop" aria-label="Loop selection" title="Loop selection" @click="emit('loop')"><Icon name="loop" :size="18" /></button>
+        <button type="button" class="ib loop" :aria-pressed="loop" aria-label="Loop selection" title="Loop selection" @click="emit('loop')"><Icon name="loop" :size="18" /></button>
         <button
           type="button"
           class="ib rate"
@@ -206,5 +206,14 @@ function toggleMute() {
   .right, .timeline { display: none; }
   .center { position: static; transform: none; width: auto; min-width: 0; }
   .left { width: auto; max-width: 200px; }
+}
+/* PHONE OVERLAP FIX - at 390px the left block (200px) plus five controls (232px) did not fit,
+   so Back slid under ♡ and Speed ran off the screen. On phones the bar keeps Back · Play ·
+   Forward · Speed; Loop is already on Now playing's strip under the waveform. */
+@media (max-width: 600px) {
+  .left { flex: 1; min-width: 0; max-width: none; }
+  .center { flex: none; }
+  .controls { gap: 4px; }
+  .ib.loop { display: none; }
 }
 </style>
