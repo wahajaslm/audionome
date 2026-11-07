@@ -19,6 +19,7 @@ import BitrateLanes from './BitrateLanes.vue';
 import NerdStats from './NerdStats.vue';
 import NerdCards from './NerdCards.vue';
 import NerdFrameInspector from './NerdFrameInspector.vue';
+import NerdFrameTable from './NerdFrameTable.vue';
 
 const playback = usePlaybackStore();
 const timeline = useTimelineStore();
@@ -107,6 +108,7 @@ function loopRange(a: number, b: number): void {
       @step="s => playback.stepTo(s)"
       @audition="(a, b, back) => playback.audition(a, b, back)"
     />
+    <NerdFrameTable :bitrate="timeline.bitrate" :t="audibleT" :range="range" @go="s => playback.stepTo(s)" />
     <details class="details">
       <summary>Details</summary>
       <NerdStats />

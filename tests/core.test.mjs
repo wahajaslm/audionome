@@ -1043,3 +1043,18 @@ test('frame inspector: AAC fields of a hand-made CPE packet, in order', async ()
   const p = aacPacket(b);
   assert.equal(p.element, 'CPE'); assert.equal(p.channels[0].groups, 2, 'grouping 1011111: one 0 → two groups');
 });
+
+test('frame table: filters and sorting over a frame range', async () => {
+  const { frameRows } = await import('../src/core/bitstream.ts');
+  const f = { t: new Float64Array(6), dur: new Float32Array(6), size: Uint32Array.from([100, 500, 120, 90, 400, 110]), offset: new Float64Array(6), kbps: new Uint16Array(6), hdr: new Uint32Array(6), skipSec: 0, unit: 'frame',
+    dec: { codec: 'mp3', block: Uint8Array.from([0, 1, 2, 3, 0, 0]), gain: Uint8Array.from([150, 151, 140, 141, 160, 160]), bits: Uint16Array.from([1, 9, 3, 2, 8, 1]), reservoir: Uint16Array.from([10, 0, 5, 7, 2, 1]), shape: new Uint8Array(6), ms: new Uint8Array(6), element: new Uint8Array(6) } };
+  assert.deepEqual([...frameRows(f, 0, 5, 'all', 'index')], [0, 1, 2, 3, 4, 5]);
+  assert.deepEqual([...frameRows(f, 0, 5, 'short', 'index')], [2]);
+  assert.deepEqual([...frameRows(f, 0, 5, 'switch', 'index')], [1, 3]);
+  assert.deepEqual([...frameRows(f, 0, 5, 'gainjump', 'index')], [2, 4], 'gain moved 11 and 19');
+  assert.deepEqual([...frameRows(f, 0, 5, 'all', 'size')].slice(0, 2), [1, 4], 'largest first');
+  assert.deepEqual([...frameRows(f, 1, 3, 'all', 'reservoir')], [3, 2, 1], 'only the range, by reservoir');
+  assert.deepEqual([...frameRows(f, 0, 5, 'large', 'index')], [1], 'top 5 % of six frames = the largest');
+  const cbr = { ...f, size: Uint32Array.from([960, 961, 960, 960, 961, 960]) };
+  assert.equal(frameRows(cbr, 0, 5, 'large', 'index').length, 0, 'constant sizes: nothing is "largest"');
+});

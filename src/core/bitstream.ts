@@ -398,3 +398,43 @@ export function aacFields(b: Uint8Array): BitField[] {
   ics();
   return out;
 }
+
+// ---- Frame table: filter and sort frames like a packet list -------------------------------------
+
+export type FrameFilter = 'all' | 'short' | 'switch' | 'large' | 'gainjump';
+export type FrameSort = 'index' | 'size' | 'gain' | 'bits' | 'reservoir';
+
+/** Gain change (steps) from the previous frame that counts as a jump. */
+export const GAIN_JUMP = 6;
+
+/**
+ * Indices of frames i0..i1 that pass `filter`, ordered by `sort` (descending for values,
+ * ascending for index). Example: filter 'short' on a 12 s AAC loop → the 48 eight-short packets.
+ *   short     short blocks / eight-short windows (transients)
+ *   switch    start and stop blocks (the encoder changing window length)
+ *   large     the largest 5 % of the range, by bytes
+ *   gainjump  global gain moved by GAIN_JUMP or more since the previous frame
+ */
+export function frameRows(f: FrameTable, i0: number, i1: number, filter: FrameFilter, sort: FrameSort): Int32Array {
+  const d = f.dec, lo = Math.max(0, i0), hi = Math.min(f.t.length - 1, i1);
+  if (hi < lo) return new Int32Array(0);
+  let cut = 0;
+  if (filter === 'large') {
+    const sizes = Array.from(f.size.subarray(lo, hi + 1)).sort((a, b) => b - a);
+    cut = sizes[Math.max(0, Math.floor(sizes.length * 0.05) - 1)] ?? 0;
+    // Constant-size frames (CBR, give or take padding): there is no "largest" to show.
+    if (sizes[0] - sizes[sizes.length - 1] <= 1) return new Int32Array(0);
+  }
+  const keep: number[] = [];
+  for (let i = lo; i <= hi; i++) {
+    if (filter === 'short' && !(d && d.block[i] === 2)) continue;
+    if (filter === 'switch' && !(d && (d.block[i] === 1 || d.block[i] === 3))) continue;
+    if (filter === 'large' && f.size[i] < cut) continue;
+    if (filter === 'gainjump' && !(d && i > 0 && d.gain[i] !== UNKNOWN && d.gain[i - 1] !== UNKNOWN && Math.abs(d.gain[i] - d.gain[i - 1]) >= GAIN_JUMP)) continue;
+    keep.push(i);
+  }
+  const out = Int32Array.from(keep);
+  if (sort === 'index') return out;
+  const key = (i: number) => (sort === 'size' ? f.size[i] : !d ? 0 : sort === 'gain' ? d.gain[i] : sort === 'bits' ? d.bits[i] : d.reservoir[i]);
+  return out.sort((a, b) => key(b) - key(a) || a - b);
+}
