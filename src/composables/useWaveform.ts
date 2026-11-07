@@ -2,6 +2,8 @@ import { computed } from 'vue';
 import { usePlaybackStore } from '../stores/playback';
 import { useMomentsStore } from '../stores/moments';
 import { useLibraryStore } from '../stores/library';
+import { useIntelligenceStore } from '../stores/intelligence';
+import { useListeningStore } from '../stores/listening';
 
 /**
  * Binds the design-system Waveform (wavesurfer.js) to the stores: the app's <audio> element,
@@ -18,6 +20,10 @@ export function useWaveform() {
     currentTime: playback.t,
     selection: playback.sel,
     saved: moments.savedForCurrent,
+    // Passages you return to (2+ returns), not saved yet; hidden while Learning is off.
+    hints: useListeningStore().learning ? useIntelligenceStore().interest
+      .filter(r => r.n >= 2 && !moments.savedForCurrent.some(s => Math.max(s.a, r.a) < Math.min(s.b, r.b)))
+      .map(r => ({ a: r.a, b: r.b })) : [],
     // Stored peaks are the full mix; a stem has its own waveform.
     storedPeaks: playback.activeStem === 'all' ? playback.currentTrack?.peaks ?? null : null,
   }));

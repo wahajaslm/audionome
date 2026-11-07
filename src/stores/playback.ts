@@ -48,12 +48,11 @@ export const usePlaybackStore = defineStore('playback', () => {
   const snapToBeat = ref(true);
   /** Practising now (slowed down, or a long loop): events are tagged so taste ignores them. */
   const practicing = computed(() => practicingNow({ rate: rate.value, loop: region.loop, loops: region.loops }));
-  // Said once per song, the first time practice starts, so the listener knows why their
-  // loops do not show up as "moments you return to".
-  let practiceToldFor: string | null = null;
-  watch(practicing, on => {
-    if (!on || practiceToldFor === trackId.value) return;
-    practiceToldFor = trackId.value;
+  // QUIET FIX - said once per device (it was once per song), the first time practice starts,
+  // so the listener knows why their loops do not show up as "moments you return to".
+  watch(practicing, async on => {
+    if (!on || await getSetting<boolean>('practiceTold')) return;
+    putSetting('practiceTold', true).catch(() => { });
     useUiStore().notify('Practice mode: these loops will not change your taste profile.', 'See Practising', '/moments?c=4');
   });
   const queue = ref<QueuedRange[]>([]);
@@ -344,7 +343,10 @@ export const usePlaybackStore = defineStore('playback', () => {
     // KEEPS PLAYING FIX - clicks on the waveform only move the playhead; they never set an end.
     if (region.sel && contains(region.sel, target)) { region.t = target; region.previewEnd = null; }
     else {
-      const hit = useMomentsStore().savedForCurrent.find(r => contains(r, target));
+      // A saved moment, else a faint "you come back here" mark (QUIET FIX: the mark replaced
+      // the text line; clicking it selects the passage, so ♡ saves it).
+      const hit = useMomentsStore().savedForCurrent.find(r => contains(r, target))
+        ?? (useListeningStore().learning ? useIntelligenceStore().interest.find(r => r.n >= 2 && contains(r, target)) : undefined);
       if (hit) { region.t = hit.a; region.sel = { a: hit.a, b: hit.b }; region.previewEnd = null; }
       else {
         region.t = target; region.sel = null; region.previewEnd = null; region.loop = false;

@@ -45,6 +45,8 @@ const props = defineProps<{
   currentTime: number;
   selection: Range | null;
   saved: SavedRange[];
+  /** Passages you keep coming back to: a faint dotted line under the wave, nothing else. */
+  hints?: Range[];
   /** Peaks stored with the song (full mix only); drawn without decoding. */
   storedPeaks?: { peaks: number[][]; duration: number } | null;
 }>();
@@ -70,6 +72,7 @@ const peakCache = new Map<string, { peaks: number[][]; duration: number }>();
 
 const SEL_ID = 'sel';
 const SAVED_PREFIX = 'saved:';
+const HINT_PREFIX = 'hint:';
 
 const host = ref<HTMLDivElement | null>(null);
 let ws: WaveSurfer | null = null;
@@ -135,6 +138,30 @@ function syncSaved(): void {
   }
 }
 
+/**
+ * QUIET FIX - "You often come back to this part" used to be a text line with Save / Dismiss
+ * buttons under the waveform. Now it is only a faint dotted line under that passage; a click
+ * on it selects the passage (store: clickSeek), so ♡ saves it. Nothing to dismiss.
+ */
+function syncHints(): void {
+  if (!regions) return;
+  const list = props.hints ?? [];
+  const want = new Map(list.map(h => [HINT_PREFIX + Math.round(h.a * 10) + ':' + Math.round(h.b * 10), h]));
+  for (const r of regions.getRegions()) if (r.id.startsWith(HINT_PREFIX) && !want.has(r.id)) r.remove();
+  const have = new Set(regions.getRegions().map(r => r.id));
+  for (const [id, h] of want) {
+    if (have.has(id)) continue;
+    const r = regions.addRegion({ id, start: h.a, end: h.b, color: 'transparent', drag: false, resize: false });
+    const style = () => {
+      if (!r.element) return;
+      r.element.style.pointerEvents = 'none';
+      r.element.style.borderBottom = '2px dotted ' + (token('--accent') || '#8ec5b8');
+      r.element.style.opacity = '0.55';
+    };
+    if (r.element) style(); else r.once('render', style);
+  }
+}
+
 onMounted(() => {
   if (!host.value) return;
   colors = {
@@ -187,12 +214,12 @@ onMounted(() => {
 
   // A drag on empty waveform: Regions makes a new region with its own id.
   regions.on('region-initialized', r => {
-    if (r.id === SEL_ID || r.id.startsWith(SAVED_PREFIX)) return;
+    if (r.id === SEL_ID || r.id.startsWith(SAVED_PREFIX) || r.id.startsWith(HINT_PREFIX)) return;
     emit('select-start');
     r.on('update', () => emit('select', r.start, r.end));
   });
   regions.on('region-created', r => {
-    if (r.id === SEL_ID || r.id.startsWith(SAVED_PREFIX)) return;
+    if (r.id === SEL_ID || r.id.startsWith(SAVED_PREFIX) || r.id.startsWith(HINT_PREFIX)) return;
     // The drag is done: drop the plugin's region; the store's selection is drawn as 'sel'.
     selRegion()?.remove();
     emit('select', r.start, r.end);
@@ -206,6 +233,7 @@ onMounted(() => {
 
   props.media?.addEventListener('loadedmetadata', loadWave);
   syncSaved();
+  syncHints();
   syncSelection();
 });
 
@@ -218,6 +246,7 @@ onBeforeUnmount(() => {
 
 watch(() => props.selection, syncSelection, { deep: true });
 watch(() => props.saved, syncSaved, { deep: true });
+watch(() => props.hints, syncHints, { deep: true });
 
 // A click is a press and release in nearly the same place; a drag (selection) is not.
 let downX: number | null = null;

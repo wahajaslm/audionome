@@ -55,9 +55,11 @@ const matchedSaved = computed(() => sel.value && moments.savedForCurrent.find(r 
 /** A saved moment with this exact range (within 0.5 s): the loop bar shows "Saved". */
 const savedHere = computed(() => sel.value && moments.savedForCurrent.find(r => Math.abs(r.a - sel.value!.a) < 0.5 && Math.abs(r.b - sel.value!.b) < 0.5));
 
-/** "You often come back to this part": an attention hint under the playhead (words, not marks). */
-const activeHint = computed(() => listening.learning
-  ? intelligence.interest.find(r => r.n >= 2 && t.value >= r.a && t.value <= r.b) : undefined);
+/** "Add why" shows while the just-saved passage is still selected (QUIET FIX in momentFlow). */
+const pendingAskHere = computed(() => {
+  const p = flow.pendingAsk, s = sel.value;
+  return !!p && !!s && Math.abs(p.a - s.a) < 0.5 && Math.abs(p.b - s.b) < 0.5;
+});
 
 /** Moments of the selected passage, as dots under the waveform. */
 const stripMoments = computed(() => (timelineStore.timeline && sel.value ? passageMoments(timelineStore.timeline, sel.value) : []));
@@ -158,10 +160,9 @@ function onLoopButton(): void { playback.toggleLoop(); }
 
       <div class="caption-line label">
         <span v-if="loop && sel" class="loopflag">Looping {{ formatTime(sel.a) }} – {{ formatTime(sel.b) }}</span>
-        <span v-else-if="activeHint" class="hint">
-          <span>You often come back to this part<template v-if="activeHint.reasons[0]"> · {{ activeHint.reasons[0] }}</template></span>
-          <Button size="sm" @click="intelligence.confirmCandidate(activeHint.trackId, activeHint.a)">Save</Button>
-          <Button size="sm" @click="intelligence.dismissCandidate(activeHint.trackId, activeHint.a)">Dismiss</Button>
+        <span v-else-if="pendingAskHere && !slot" class="hint">
+          <span>Saved.</span>
+          <button type="button" class="link" @click="flow.openAsk()">Add why ›</button>
         </span>
         <span v-else class="guide">Drag across the waveform to pick a passage. Playback never stops.</span>
         <span v-if="sel && matchedSaved" class="extras">

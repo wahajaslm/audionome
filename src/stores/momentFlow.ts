@@ -5,6 +5,7 @@ import { useMomentsStore } from './moments';
 import { usePlaybackStore } from './playback';
 import { useUiStore } from './ui';
 import { useIntelligenceStore } from './intelligence';
+import { getSetting, putSetting } from '../core/repository';
 
 /** The moment that the ask row / describe strip is about. `mid` = saved moment id. */
 export interface FlowTarget extends Range { mid?: string | null }
@@ -27,13 +28,21 @@ export const useMomentFlowStore = defineStore('momentFlow', () => {
   const nudged = ref(false);
   const justSaved = ref(false);
   const explore = ref(false);
+  /**
+   * QUIET FIX - the "What stood out?" question used to open by itself after every save.
+   * Now it waits here; a small "Add why" link under the waveform opens it.
+   */
+  const pendingAsk = ref<AskState | null>(null);
+  /** Songs where "Not now" was pressed on the save nudge: it never comes back for them. */
+  let nudgeOff: string[] = [];
+  getSetting<string>('nudgeOff').then(v => { try { nudgeOff = JSON.parse(v || '[]'); } catch { /* keep empty */ } }).catch(() => { });
 
   /** 1 listen · 2 selected · 3 describing · 4 saved. */
   const step = computed(() => (describe.value || ask.value) ? 3 : usePlaybackStore().sel ? 2 : justSaved.value ? 4 : 1);
 
   function resetForTrack(): void {
     describe.value = null; ask.value = null; explore.value = false;
-    justSaved.value = false;
+    justSaved.value = false; pendingAsk.value = null;
   }
 
   /**
@@ -52,8 +61,14 @@ export const useMomentFlowStore = defineStore('momentFlow', () => {
     nudge.value = false; justSaved.value = true;
     useUiStore().notify(isNew ? 'Saved to My Moments' : 'Already in My Moments', 'View', '/moments');
     const aq = useIntelligenceStore().questionFor(playback.trackId || '', r.a, r.b);
-    describe.value = null;
-    ask.value = { q: aq.question, chips: aq.chips, a: r.a, b: r.b, mid: id };
+    describe.value = null; ask.value = null;
+    pendingAsk.value = { q: aq.question, chips: aq.chips, a: r.a, b: r.b, mid: id };
+  }
+
+  /** "Add why": opens the question saved by saveSelection. */
+  function openAsk(): void {
+    if (!pendingAsk.value) return;
+    ask.value = pendingAsk.value; pendingAsk.value = null;
   }
 
   /** Heart in the playback bar: saves the last 20 s. */
@@ -108,15 +123,29 @@ export const useMomentFlowStore = defineStore('momentFlow', () => {
     useUiStore().notify('Saved your moment' + (q.length ? ' · ' + q.join(', ') : ''), 'View', '/moments');
   }
 
-  /** Loop cycle hook: after two cycles, offer to save (once). */
+  /**
+   * Loop cycle hook: offer to save, at most once per song load.
+   * QUIET FIX - it used to ask after 2 loops of anything. Now it asks only when this passage
+   * is one you already came back to before (an attention hint from earlier listening), never
+   * while practising, never for a saved passage, and never again on a song where you said
+   * "Not now".
+   * Example: first time you loop the chorus → nothing. Next day, loop it twice again → one line.
+   */
   function onLoopCycle(loops: number): void {
-    // No "save this?" nudge while practising: drill is not a sign of taste (core/practice.ts).
-    if (loops >= 2 && !nudged.value && !describe.value && !usePlaybackStore().practicing) {
-      nudge.value = true; nudged.value = true;
-    }
+    const playback = usePlaybackStore(), sel = playback.sel;
+    if (loops < 2 || nudged.value || describe.value || playback.practicing || !sel || !playback.trackId) return;
+    if (nudgeOff.includes(playback.trackId)) return;
+    const overlaps = (r: Range) => Math.max(r.a, sel.a) < Math.min(r.b, sel.b);
+    if (useMomentsStore().savedForCurrent.some(overlaps)) return;
+    if (!useIntelligenceStore().interest.some(r => r.n >= 2 && overlaps(r))) return;
+    nudge.value = true; nudged.value = true;
   }
 
-  function dismissNudge(): void { nudge.value = false; nudged.value = true; }
+  function dismissNudge(): void {
+    nudge.value = false; nudged.value = true;
+    const id = usePlaybackStore().trackId;
+    if (id && !nudgeOff.includes(id)) { nudgeOff = [...nudgeOff, id]; putSetting('nudgeOff', JSON.stringify(nudgeOff)).catch(() => { }); }
+  }
 
   function toggleExplore(): void {
     if (!usePlaybackStore().sel) return;
@@ -140,6 +169,7 @@ export const useMomentFlowStore = defineStore('momentFlow', () => {
   }
 
   return {
+    pendingAsk, openAsk,
     ask, describe, feel, love, note, nudge, nudged, justSaved, explore, step,
     resetForTrack, saveSelection, quickSave, answer, skipAsk, more, toggleFeel, toggleLove, closeDescribe,
     finishDescribe, onLoopCycle, dismissNudge, toggleExplore, closeExplore, removeMoment,
