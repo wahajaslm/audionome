@@ -194,6 +194,18 @@ A follow-up search covered Germany only. Notes: `research_notes/Audio ML job req
 - **Not found:** readable 2025-2026 roles at Native Instruments, Steinberg, Bosch, Siemens, Mercedes or the big-tech offices in Germany.
 - **Effect on the recommendation:** none. Germany shows the same gap, more strongly: evaluation is demanded but never specified.
 
+## Addendum: audio effects and plugin companies (23 postings)
+
+A follow-up search covered plugin and music-creation-tool companies. Notes: `research_notes/Audio ML job requirements plugins/plugins.md`. Main sources: JUCE forum jobs, ADC jobs board, Arturia, Ableton and NI/iZotope postings.
+
+- **Split:** 13 DSP-only (57%), 8 ML-heavy (35%), 2 hybrid (9%).
+- **Neural effects proper:** 3 of 23 (13%). Arturia ports a neural compressor to real-time C++; Arturia uses ML in a virtual-analog filter; one contract ML denoise plugin.
+- **Other ML roles:** generative and assistive tools, data work, singing synthesis (Ableton, NI/iZotope, Dreamtonics, Supertone, Yamaha).
+- **Most asked:** classical DSP 15, C++ 14, JUCE 9, neural networks 8, musical background 7, plugin formats 6, embedded hardware 5, PyTorch 4.
+- **Never named:** DDSP, error-to-signal ratio, spectral losses, MUSHRA, dry/wet capture, RTNeural, SIMD.
+- **Not found:** dated postings at Neural DSP, Universal Audio, Positive Grid, IK, Line 6, Fractal, Kemper, Softube, Antares, Celemony, Steinberg, LANDR, RoEx, Spitfire.
+- **Effect on the plan:** neural audio effects are a small niche. Effects projects (Track C) stay, but after the speech and music projects. Any effects project must ship as real-time C++, since that is what these roles screen for.
+
 ## Conclusion
 
 - **The job market and the methodology answer different questions.** Postings show where audio ML jobs are: speech, real-time systems and devices. Methodology shows what makes any audio result credible. sprisk is a methodology engine, so the methodology should set the Must tier.
