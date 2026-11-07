@@ -221,3 +221,11 @@ Sources were found by a literature search agent and are linked in the session no
     - Hand-built vocal, intonation and Eastern-ensemble blocks: ≤ 0.004, i.e. unused.
     - In `western`, the semitone CQT matters in both regions: Eastern +0.045, Western +0.029.
   - **Reading:** the fine-pitch, Sa-aligned picture is what helps on Eastern songs, and it is ignored on Western songs. That is the predicted direction. The hand-built Eastern descriptors add nothing on top. Not a confirmation: 1 seed, and a design shaped on these songs. The decision rests on the confirmation set.
+- **2026-11-07 · Confirmation test (decides H1/H2): NOT SUPPORTED.** Trained on all 92 main-set songs, scored once on 85 fresh songs, 5 seeds. Pairwise accuracy:
+  - **Eastern:** `full` 0.658 vs. `western` 0.661. **Western:** 0.670 vs. 0.683. **House:** 0.643 vs. 0.616.
+  - **H1, full − western on Eastern songs: +0.000 [−0.022, +0.023].** The interval includes 0.
+  - **H2, Eastern gain − Western gain: +0.013 [−0.017, +0.041].** The interval includes 0. The positive point estimate comes only from `full` losing a little on Western songs.
+  - **Baselines:** brightness rule 0.611 on Eastern songs. Both models now beat it, unlike on the main set.
+  - **Reading:** the exploratory +0.040 on the main set did not replicate. It most likely reflects a design shaped on those songs. On fresh songs the fine-pitch, Sa-aligned view adds nothing over the semitone view.
+  - **Code:** `comparisons()` now also reports the H2 interval (`asymmetry`), resampling Eastern and Western songs separately. Plot and verdict: `notebooks/02_base_model.ipynb`, section "Decide".
+  - Run: `research-output/runs/20261107-003430_genre_mix_on_genre_mix_confirm_full+western.json`.

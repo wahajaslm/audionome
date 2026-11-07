@@ -416,14 +416,24 @@ def comparisons(variants: dict[str, dict[str, Any]], seed: int = 0) -> dict[str,
             left = {r['video_id']: r for r in variants[a]['per_song']}
             right = {r['video_id']: r for r in variants[b]['per_song']}
             out[f'{a} - {b}'] = {}
+            diffs: dict[str, np.ndarray] = {}
             for region in REGIONS:
                 d = np.array([left[v]['pairwise_accuracy'] - right[v]['pairwise_accuracy'] for v in left
                               if v in right and (region == 'all' or left[v]['region'] == region)
                               and np.isfinite(left[v]['pairwise_accuracy']) and np.isfinite(right[v]['pairwise_accuracy'])])
                 if len(d):
+                    diffs[region] = d
                     boots = [np.mean(rng.choice(d, len(d))) for _ in range(4000)]
                     out[f'{a} - {b}'][region] = {'diff': float(d.mean()), 'ci95': [float(x) for x in np.percentile(boots, [2.5, 97.5])],
                                                  'songs': int(len(d))}
+            # H2 FIX - the decision rule needs an interval for (Eastern gain - Western gain), but only
+            # per-region intervals were reported. The two regions are different songs, so each is
+            # resampled on its own. Example: eastern +0.000, western -0.013 -> asymmetry +0.013 [-0.017, +0.041].
+            if 'eastern' in diffs and 'western' in diffs:
+                e, w = diffs['eastern'], diffs['western']
+                boots = [np.mean(rng.choice(e, len(e))) - np.mean(rng.choice(w, len(w))) for _ in range(4000)]
+                out[f'{a} - {b}']['asymmetry'] = {'diff': float(e.mean() - w.mean()),
+                                                  'ci95': [float(x) for x in np.percentile(boots, [2.5, 97.5])]}
     return out
 
 
@@ -542,7 +552,7 @@ def main() -> None:
         print(f'{name:<26} pairwise accuracy  {cells}')
     for pair, regions in report['comparisons'].items():
         cells = '  '.join(f"{r}: {regions[r]['diff']:+.3f} [{regions[r]['ci95'][0]:+.3f}, {regions[r]['ci95'][1]:+.3f}]"
-                          for r in ('eastern', 'western') if r in regions)
+                          for r in ('eastern', 'western', 'asymmetry') if r in regions)
         print(f'{pair:<40} paired difference  {cells}')
     for variant, entry in report['variants'].items():
         for name, regions in entry.get('importance', {}).items():
