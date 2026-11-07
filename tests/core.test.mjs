@@ -833,3 +833,11 @@ test('stats for nerds: each row takes the first source that knows it', async () 
   assert.equal(pb['Audio device'], '48 kHz · running · latency 10 ms + output 20 ms');
   assert.match(analysisRows(null)[0][1], /not available/);
 });
+
+test('bitrate: a passage gets its own min / avg / max and bytes (Nerds view)', async () => {
+  const { rangeStats } = await import('../src/core/bitrate.ts');
+  const info = { codec: 'AAC', container: 'M4A', mode: 'VBR', avgKbps: 0, kbps: [100, 120, 140, 160], binSec: 0.5, durationSec: 2, exact: true };
+  assert.deepEqual(rangeStats(info, 0.5, 1.5), { min: 120, avg: 130, max: 140, bytes: 16250, sec: 1 });
+  assert.equal(rangeStats(info, 0.75, 1.25).avg, 130, 'half bins weigh by time');
+  assert.equal(rangeStats(info, 3, 4), null, 'outside the file');
+});

@@ -22,10 +22,7 @@ import { barAt, passageMoments, quantile, rankIn, type StemName } from '../../co
 import { FEELINGS, QUALITIES } from '../../core/moments';
 import { grooveDetails, harmonyDetails, similarPassages, teaser, voiceDetails } from '../../core/passageDetails';
 import { useLibraryStore } from '../../stores/library';
-import DescribeStrip from '../../ui/DescribeStrip.vue';
-import AskRow from '../../ui/AskRow.vue';
 import SpectrumSwitch from '../../ui/SpectrumSwitch.vue';
-import NerdStats from './NerdStats.vue';
 import LiveLanes from './LiveLanes.vue';
 import { formatTime } from '../../ui/format';
 
@@ -35,7 +32,6 @@ const intelligence = useIntelligenceStore();
 const momentsStore = useMomentsStore();
 const timelineStore = useTimelineStore();
 const { sel, activeStem, t, playing } = storeToRefs(playback);
-const { feel, love, note, ask } = storeToRefs(flow);
 /**
  * ONE STRIP FIX - Explore opens without a selection too: then it is about the whole song
  * (nothing gets highlighted). With a selection it is about that passage, as before.
@@ -56,10 +52,6 @@ const range = computed(() => {
   const d = tl > 0 && !capped.value ? tl : playback.duration;
   return d > 0 ? { a: 0, b: d } : null;
 });
-/** The question after Save, for this passage (EXPLORE ASK FIX); More… opens Describe below. */
-const askHere = computed(() => (ask.value && sel.value && Math.abs(ask.value.a - sel.value.a) < 0.5 && Math.abs(ask.value.b - sel.value.b) < 0.5 ? ask.value : null));
-const describeOpen = ref(false);
-function askMore(): void { flow.skipAsk(); describeOpen.value = true; }
 const { timeline, spectrum, spectrumState, spectrumView, spectrumKind, viewBusy, serviceOff } = storeToRefs(timelineStore);
 
 const zoom = ref<'live' | 'all'>('live');
@@ -194,7 +186,6 @@ const measurements = computed(() => {
       </div>
     </header>
 
-    <AskRow v-if="askHere" :question="askHere.q" :chips="askHere.chips" @answer="flow.answer" @more="askMore" @skip="flow.skipAsk()" />
 
     <div class="moments">
       <button v-for="m in moments" :key="m.at + m.text" type="button" class="mo" @click="jump(m.at)">
@@ -259,25 +250,6 @@ const measurements = computed(() => {
         </table>
       </div>
     </details>
-    <details class="fold" :open="describeOpen" @toggle="describeOpen = ($event.target as HTMLDetailsElement).open">
-      <summary>Describe this moment</summary>
-      <!-- ONE SAVE PATH: the same Feels / Love / Note strip and the same save as after ♡ Save. -->
-      <DescribeStrip
-        flat
-        :feelings="FEELINGS"
-        :qualities="QUALITIES"
-        :feel="feel"
-        :love="love"
-        :note="note"
-        @toggle-feel="flow.toggleFeel"
-        @toggle-love="flow.toggleLove"
-        @update:note="v => (note = v)"
-        @cancel="flow.closeExplore()"
-        @done="flow.finishDescribe()"
-      />
-    </details>
-    <!-- Stats for nerds: codec, encoder, bitrate, device, analysis (closed by default). -->
-    <NerdStats />
   </section>
 </template>
 

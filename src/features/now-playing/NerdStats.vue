@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
- * Stats for nerds (core/nerdStats.ts): folded at the bottom of Explore, closed by default.
- * Opening it reads MediaInfo from the song file (in the browser) and asks the local service for
+ * Stats for nerds columns (core/nerdStats.ts), shown in the Nerds view (NerdsPanel.vue).
+ * Mounting it reads MediaInfo from the song file (in the browser) and asks the local service for
  * ffprobe's facts; playback numbers refresh twice a second while it is open. Each value says
  * which source it came from (frames · MediaInfo · ffprobe).
  */
@@ -15,7 +15,7 @@ import { useTimelineStore } from '../../stores/timeline';
 
 const playback = usePlaybackStore();
 const timeline = useTimelineStore();
-const open = ref(false);
+const open = ref(true); // the Nerds view is the toggle; mounted = open
 const mi = ref<MediaInfoFacts | null>(null);
 const probe = ref<ProbeInfo | null>(null);
 const state = ref<'idle' | 'loading' | 'done'>('idle');
@@ -35,7 +35,7 @@ async function load(): Promise<void> {
   if (loadedFor !== id) return;
   mi.value = m; probe.value = p; state.value = 'done';
 }
-watch(open, o => { if (o) load(); });
+watch(open, o => { if (o) load(); }, { immediate: true });
 watch(() => playback.trackId, () => { loadedFor = null; if (open.value) load(); });
 
 // Live numbers: re-read twice a second while open (not every frame).
@@ -72,11 +72,8 @@ const sourcesNote = computed(() => state.value === 'loading' ? 'Reading MediaInf
 
 <template>
   <section class="nerd">
-    <button type="button" class="toggle" :aria-expanded="open" @click="open = !open">
-      <span class="caret" :class="{ open }">›</span> Stats for nerds
-      <span v-if="open && sourcesNote" class="src">{{ sourcesNote }}</span>
-    </button>
-    <div v-if="open" class="grid">
+    <div v-if="sourcesNote" class="src">{{ sourcesNote }}</div>
+    <div class="grid">
       <div v-for="g in groups" :key="g.title" class="col">
         <h3 class="gt">{{ g.title }}</h3>
         <dl>
@@ -91,12 +88,12 @@ const sourcesNote = computed(() => state.value === 'loading' ? 'Reading MediaInf
 </template>
 
 <style scoped>
-.nerd { margin-top: var(--space-4); border-top: 1px solid var(--line); padding-top: var(--space-2); }
+.nerd { margin-top: var(--space-3); border-top: 1px solid var(--line); padding-top: var(--space-2); }
 .toggle { display: flex; align-items: baseline; gap: 8px; border: 0; background: none; padding: 6px 0; color: var(--ink-sub); font: 13px var(--font-sans); cursor: pointer; width: 100%; text-align: left; }
 .toggle:hover { color: var(--ink); }
 .caret { display: inline-block; transition: transform 150ms ease; }
 .caret.open { transform: rotate(90deg); }
-.src { margin-left: auto; color: var(--ink-mute); font-size: 12px; }
+.src { text-align: right; color: var(--ink-mute); font-size: 12px; }
 .grid { display: grid; grid-template-columns: 1.2fr 1fr 0.8fr; gap: var(--space-6); padding: var(--space-2) 0 var(--space-3); }
 .gt { margin: 0 0 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-sub); }
 dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }

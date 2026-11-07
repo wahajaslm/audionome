@@ -12,7 +12,8 @@
  * Props: range (null = whole song); loop; playing; exploring; saved; effects (drawer open);
  *        effectsOn (an effect is active: the button is tinted); compare / original (the A/B
  *        button: shown when the song has a mix or version; pressed while Original plays).
- * Emits: play, loop, explore, save, effects, original, clear.
+ * Emits: play, loop, explore, nerds, save, effects, original, clear. Explore, Nerds, Save and
+ * Effects are views: one is open at a time (ONE VIEW FIX, stores/momentFlow.ts).
  */
 import Icon from './Icon.vue';
 import { formatTime } from './format';
@@ -24,8 +25,11 @@ defineProps<{
   compare?: boolean;
   /** The untouched song is playing (the Original button is pressed). */
   original?: boolean;
+  /** The Nerds view / the Save view is open (their buttons are pressed). */
+  nerds?: boolean;
+  saving?: boolean;
 }>();
-const emit = defineEmits<{ play: []; loop: []; explore: []; save: []; effects: []; original: []; clear: [] }>();
+const emit = defineEmits<{ play: []; loop: []; explore: []; nerds: []; save: []; effects: []; original: []; clear: [] }>();
 </script>
 
 <template>
@@ -41,7 +45,8 @@ const emit = defineEmits<{ play: []; loop: []; explore: []; save: []; effects: [
         <button v-if="range" type="button" class="b ic" :aria-label="playing ? 'Pause' : 'Play this passage'" @click="emit('play')"><Icon :name="playing ? 'pause' : 'play'" :size="16" /></button>
         <button type="button" class="b" :aria-pressed="loop" :title="range ? 'Loop this passage' : 'Loop the bars around the playhead'" @click="emit('loop')"><Icon name="loop" :size="16" /><span class="t">Loop</span></button>
         <button type="button" class="b" :aria-pressed="exploring" :title="range ? 'Explore this passage' : 'Explore the whole song'" @click="emit('explore')"><Icon name="sparkle" :size="16" /><span class="t">Explore</span></button>
-        <button type="button" class="b" :class="{ saved }" :title="range ? 'Save this passage' : 'Save the last 20 seconds'" @click="emit('save')"><Icon name="heart" :size="16" /><span class="t">{{ saved ? 'Saved' : 'Save' }}</span></button>
+        <button type="button" class="b" :aria-pressed="!!nerds" title="Stats for nerds: codec, bitrate curve, playback" @click="emit('nerds')"><Icon name="stats" :size="16" /><span class="t">Nerds</span></button>
+        <button type="button" class="b" :class="{ saved }" :aria-pressed="!!saving" :title="range ? 'Save this passage and say why' : 'Save the last 20 seconds'" @click="emit('save')"><Icon name="heart" :size="16" /><span class="t">{{ saved ? 'Saved' : 'Save' }}</span></button>
         <button type="button" class="b" :class="{ on: effectsOn }" :aria-pressed="effects" title="Effects for this song" @click="emit('effects')"><Icon name="fx" :size="16" /><span class="t">Effects</span></button>
         <button v-if="compare" type="button" class="b ab" :aria-pressed="original" title="Hear the song without your effects; press again to go back" @click="emit('original')">Original</button>
         <button v-if="range" type="button" class="x" aria-label="Clear selection" @click="emit('clear')"><Icon name="close" :size="14" /></button>

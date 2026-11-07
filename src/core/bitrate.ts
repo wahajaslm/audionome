@@ -271,3 +271,21 @@ export function bitrateSummary(i: BitrateInfo): string {
   if (i.channels) out.push(i.channels === 1 ? 'mono' : i.channels === 2 ? 'stereo' : i.channels + ' ch');
   return out.join(' · ');
 }
+
+/**
+ * Bitrate of one passage, for the Nerds view (in sync with the selection or loop).
+ * `bytes` = what the file spends on it; min/max over its half-second bins.
+ * Example: 1:10–1:22 of a 128 kbps AAC → { min 118, avg 128, max 139, bytes ≈ 192 000 }.
+ */
+export function rangeStats(i: BitrateInfo, a: number, b: number): { min: number; avg: number; max: number; bytes: number; sec: number } | null {
+  const lo = Math.max(0, a), hi = Math.min(i.durationSec, b);
+  if (!(hi > lo)) return null;
+  let bits = 0, min = Infinity, max = 0;
+  for (let k = Math.floor(lo / i.binSec); k * i.binSec < hi && k < i.kbps.length; k++) {
+    const s = Math.max(lo, k * i.binSec), e = Math.min(hi, (k + 1) * i.binSec), v = i.kbps[k];
+    if (!(e > s) || !v) continue;
+    bits += v * 1000 * (e - s); min = Math.min(min, v); max = Math.max(max, v);
+  }
+  if (!bits) return null;
+  return { min, avg: Math.round(bits / (hi - lo) / 1000), max, bytes: Math.round(bits / 8), sec: hi - lo };
+}

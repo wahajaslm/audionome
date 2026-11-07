@@ -31,6 +31,7 @@ import DescribeStrip from '../../ui/DescribeStrip.vue';
 import Button from '../../ui/Button.vue';
 import ExplorePanel from './ExplorePanel.vue';
 import EffectsDrawer from './EffectsDrawer.vue';
+import NerdsPanel from './NerdsPanel.vue';
 import { similarPassages } from '../../core/passageDetails';
 import { barAt, beatInBar, blockIndexAt } from '../../core/timeline';
 import SongStrip from './SongStrip.vue';
@@ -57,8 +58,14 @@ const analyzingStep = computed(() => (currentTrack.value ? library.analyzing[cur
 const analysis = computed(() => intelligence.currentAnalysis);
 
 /** Which panel the slot under the toolbar shows (one at a time, index.html's priority). */
-const slot = computed(() => explore.value ? 'explore' : describe.value ? 'describe'
-  : ask.value ? 'ask' : (nudge.value && sel.value) ? 'nudge' : null);
+/** The one open view under the strip (ONE VIEW FIX); Save shows its question, strip or nudge. */
+const slot = computed(() => {
+  const v = flow.view;
+  if (v === 'explore') return 'explore';
+  if (v === 'nerds') return 'nerds';
+  if (v !== 'save') return null;
+  return describe.value ? 'describe' : ask.value ? 'ask' : (nudge.value && sel.value) ? 'nudge' : null;
+});
 
 /** A saved moment overlapping the selection (offers Remove). */
 const matchedSaved = computed(() => sel.value && moments.savedForCurrent.find(r => overlaps(r, sel.value!)));
@@ -221,7 +228,9 @@ async function onFiles(e: Event): Promise<void> {
         :playing="playing"
         :exploring="explore"
         :saved="!!savedHere"
-        :effects="playback.effectsOpen"
+        :effects="flow.effects"
+        :nerds="flow.nerds"
+        :saving="flow.view === 'save'"
         :effects-on="playback.effectsOn"
         :compare="playback.hasVersions"
         :original="playback.fx.listen === 'original'"
@@ -229,8 +238,9 @@ async function onFiles(e: Event): Promise<void> {
         @play="playback.playSelection()"
         @loop="onLoopButton"
         @explore="flow.toggleExplore()"
-        @save="sel ? flow.saveSelection() : flow.quickSave()"
-        @effects="playback.effectsOpen = !playback.effectsOpen"
+        @save="flow.toggleSave()"
+        @effects="flow.effects = !flow.effects"
+        @nerds="flow.toggleNerds()"
         @clear="playback.clearSelection()"
       >
         <template v-if="liveNow" #live>
@@ -262,6 +272,7 @@ async function onFiles(e: Event): Promise<void> {
       <div class="slot" :class="{ open: !!slot }">
         <div class="slot-in">
           <ExplorePanel v-if="slot === 'explore'" />
+          <NerdsPanel v-else-if="slot === 'nerds'" />
           <DescribeStrip
             v-else-if="slot === 'describe'"
             :feelings="FEELINGS"

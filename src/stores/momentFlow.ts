@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import type { Range } from '../core/playback';
 import { useMomentsStore } from './moments';
 import { usePlaybackStore } from './playback';
@@ -27,7 +27,19 @@ export const useMomentFlowStore = defineStore('momentFlow', () => {
   const nudge = ref(false);
   const nudged = ref(false);
   const justSaved = ref(false);
-  const explore = ref(false);
+  /**
+   * ONE VIEW FIX - Explore, Nerds, Effects and Save could be open together (Save's question
+   * even showed inside Explore). Now one view is open at a time; opening one closes the other.
+   * Example: Explore open → press Effects → Explore closes, the effects drawer opens.
+   */
+  const view = ref<'explore' | 'nerds' | 'effects' | 'save' | null>(null);
+  const viewFlag = (name: 'explore' | 'nerds' | 'effects') => computed<boolean>({
+    get: () => view.value === name,
+    set: on => { if (on) view.value = name; else if (view.value === name) view.value = null; },
+  });
+  const explore = viewFlag('explore');
+  const nerds = viewFlag('nerds');
+  const effects = viewFlag('effects');
   /**
    * QUIET FIX - the "What stood out?" question used to open by itself after every save.
    * Now it waits here; a small "Add why" link under the waveform opens it.
@@ -36,6 +48,13 @@ export const useMomentFlowStore = defineStore('momentFlow', () => {
   /** Songs where "Not now" was pressed on the save nudge: it never comes back for them. */
   let nudgeOff: string[] = [];
   getSetting<string>('nudgeOff').then(v => { try { nudgeOff = JSON.parse(v || '[]'); } catch { /* keep empty */ } }).catch(() => { });
+
+  // The Save view is open while its question, describe strip or nudge is up; another view
+  // closing it clears them.
+  watch(() => !!(ask.value || describe.value || nudge.value), on => {
+    if (on) view.value = 'save'; else if (view.value === 'save') view.value = null;
+  });
+  watch(view, v => { if (v !== 'save') { ask.value = null; describe.value = null; nudge.value = false; } });
 
   /** 1 listen · 2 selected · 3 describing · 4 saved. */
   const step = computed(() => (describe.value || ask.value) ? 3 : usePlaybackStore().sel ? 2 : justSaved.value ? 4 : 1);
@@ -49,8 +68,7 @@ export const useMomentFlowStore = defineStore('momentFlow', () => {
    * Save (the loop bar's ♡): stores the selection once and asks one question about it.
    * KEEP LOOPING FIX - saving used to clear the selection and stop the loop you were
    * listening to. Now the passage stays selected and keeps looping.
-   * With Explore open the question shows inside Explore (EXPLORE ASK FIX: it used to be
-   * skipped there, so saving from Explore asked nothing once Describe was folded away).
+   * The question opens in the Save view (ONE VIEW FIX), never inside Explore.
    */
   function saveSelection(): void {
     const playback = usePlaybackStore();
@@ -61,9 +79,22 @@ export const useMomentFlowStore = defineStore('momentFlow', () => {
     nudge.value = false; justSaved.value = true;
     useUiStore().notify(isNew ? 'Saved to My Moments' : 'Already in My Moments', 'View', '/moments');
     const aq = useIntelligenceStore().questionFor(playback.trackId || '', r.a, r.b);
-    describe.value = null; ask.value = null;
-    pendingAsk.value = { q: aq.question, chips: aq.chips, a: r.a, b: r.b, mid: id };
+    describe.value = null;
+    pendingAsk.value = null;
+    ask.value = { q: aq.question, chips: aq.chips, a: r.a, b: r.b, mid: id };
   }
+
+  /**
+   * The strip's Save button: saves (the passage, or the last 20 s) and opens the Save view;
+   * pressed again it closes the view. The moment stays saved either way.
+   */
+  function toggleSave(): void {
+    if (view.value === 'save') { view.value = null; return; }
+    if (usePlaybackStore().sel) saveSelection(); else quickSave();
+  }
+
+  /** The strip's Nerds button. */
+  function toggleNerds(): void { nerds.value = !nerds.value; }
 
   /** "Add why": opens the question saved by saveSelection. */
   function openAsk(): void {
@@ -136,7 +167,8 @@ export const useMomentFlowStore = defineStore('momentFlow', () => {
    */
   function onLoopCycle(loops: number): void {
     const playback = usePlaybackStore(), sel = playback.sel;
-    if (loops < 2 || nudged.value || describe.value || playback.practicing || !sel || !playback.trackId) return;
+    // Never over an open view (ONE VIEW FIX): the nudge would replace it.
+    if (loops < 2 || nudged.value || view.value || playback.practicing || !sel || !playback.trackId) return;
     if (nudgeOff.includes(playback.trackId)) return;
     const overlaps = (r: Range) => Math.max(r.a, sel.a) < Math.min(r.b, sel.b);
     if (useMomentsStore().savedForCurrent.some(overlaps)) return;
@@ -172,6 +204,7 @@ export const useMomentFlowStore = defineStore('momentFlow', () => {
   }
 
   return {
+    view, nerds, effects, toggleSave, toggleNerds,
     pendingAsk, openAsk,
     ask, describe, feel, love, note, nudge, nudged, justSaved, explore, step,
     resetForTrack, saveSelection, quickSave, answer, skipAsk, more, toggleFeel, toggleLove, closeDescribe,

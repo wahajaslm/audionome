@@ -60,8 +60,6 @@ export const usePlaybackStore = defineStore('playback', () => {
   /** What plays now: Original (nothing), the mix, or a saved version. */
   const effects = computed<EffectParams>(() => effectiveParams(fx.value));
   const effectsOn = computed(() => effectsActive(effects.value));
-  /** The Effects drawer under the strip is open. */
-  const effectsOpen = ref(false);
   /** A version is being rendered for download. */
   const rendering = ref(false);
   let fxFor: string | null = null;
@@ -707,7 +705,8 @@ export const usePlaybackStore = defineStore('playback', () => {
       region.t = region.sel.a; region.previewEnd = region.sel.b; e.setTime(region.t);
       // LIVE EXPLORE FIX - looping a passage opens Explore, so its live analysis is on screen.
       const flow = useMomentFlowStore();
-      flow.explore = true; flow.describe = null; flow.nudge = false;
+      // ONE VIEW FIX: only when no other view is open (Nerds, Effects or Save stay as they are).
+      if (!flow.view) flow.explore = true;
     }
     useListeningStore().emit(region.loop ? 'loop_enabled' : 'loop_disabled', 'user',
       { momentStartSec: region.sel.a, momentEndSec: region.sel.b });
@@ -787,7 +786,7 @@ export const usePlaybackStore = defineStore('playback', () => {
 
   return {
     ...toRefs(region), trackId, duration, playing, loading, volume, activeStem, queue, currentTrack,
-    rate, normalize, snapToBeat, practicing, setRate, fx, effects, effectsOn, effectsOpen, rendering, applyPreset, setControl, resetFxGroup, listenTo, hasVersions, toggleOriginal, saveVersion, renameVersion, deleteVersion, downloadVersion, deck, radio, radioNow, startRadio, stopRadio, radioSkip, radioRestart, cycleRate, setNormalize, setSnapToBeat, onLoudnessMeasured,
+    rate, normalize, snapToBeat, practicing, setRate, fx, effects, effectsOn, rendering, applyPreset, setControl, resetFxGroup, listenTo, hasVersions, toggleOriginal, saveVersion, renameVersion, deleteVersion, downloadVersion, deck, radio, radioNow, startRadio, stopRadio, radioSkip, radioRestart, cycleRate, setNormalize, setSnapToBeat, onLoudnessMeasured,
     engine, attachEngine, onDuration, onFrame, checkRegionEnd, loadSettings, lastPlayed,
     selectTrack, changeTrack, openRange, playQueue, playNext, togglePlay, playSelection, seekBy, stepBy,
     clickSeek, beginSelection, updateSelection, commitSelection, resizeSelection, endResize, selectAroundPlayhead, clearSelection,
