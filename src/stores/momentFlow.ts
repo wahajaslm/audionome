@@ -150,8 +150,8 @@ export const useMomentFlowStore = defineStore('momentFlow', () => {
     if (id && !nudgeOff.includes(id)) { nudgeOff = [...nudgeOff, id]; putSetting('nudgeOff', JSON.stringify(nudgeOff)).catch(() => { }); }
   }
 
+  /** Explore: about the selected passage, or the whole song when nothing is selected. */
   function toggleExplore(): void {
-    if (!usePlaybackStore().sel) return;
     explore.value = !explore.value;
     describe.value = null; ask.value = null; nudge.value = false;
     if (explore.value) { feel.value = []; love.value = []; note.value = ''; }

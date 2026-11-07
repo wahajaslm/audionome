@@ -8,6 +8,7 @@
  */
 
 import { dbToGain, type AudioGraphLike, type DeckGainLike } from './audioGraph.ts';
+import { NEUTRAL, type EffectParams } from './effects.ts';
 
 /** 'swap': a crossfade made the other deck the playing one (the waveform follows it). */
 export type EngineEvent = 'timeupdate' | 'play' | 'pause' | 'finish' | 'playing' | 'waiting' | 'swap';
@@ -59,6 +60,7 @@ export class NativeAudioEngine {
   private volume = 1;
   private normDb = 0;
   private rate = 1;
+  private effects: { p: EffectParams; delaySec: number } = { p: NEUTRAL, delaySec: 0.33 };
 
   private readonly hooks: AudioEngineHooks;
 
@@ -210,6 +212,7 @@ export class NativeAudioEngine {
     try { this.graph = this.hooks.createGraph(); } catch (err) { console.warn('Web Audio notice:', err); this.graph = null; }
     try { this.gains = this.graph ? this.decks.map(d => this.graph!.addDeck(d as HTMLMediaElement)) : []; }
     catch (err) { console.warn('Web Audio notice:', err); this.gains = []; }
+    this.graph?.setEffects(this.effects.p, this.effects.delaySec);
     this.applyLevel(0);
   }
 
@@ -260,6 +263,17 @@ export class NativeAudioEngine {
 
   /** Fades the playing deck to `target` (0..1) over `sec`; no-op without the graph. */
   fade(target: number, sec: number): void { this.gain?.fade(target, sec); }
+
+  /**
+   * Effects on what you hear (core/effects.ts). Kept until the graph exists (first play), then
+   * applied there. Without Web Audio they are not available (hasEffects() is false).
+   */
+  setEffects(p: EffectParams, delaySec: number): void {
+    this.effects = { p, delaySec };
+    this.graph?.setEffects(p, delaySec);
+  }
+  /** False only when the browser has no Web Audio (checked after the first play). */
+  hasEffects(): boolean { return !this.graphTried || !!this.graph; }
 
   /** True when crossfade() can run: two decks routed through the graph. */
   canCrossfade(): boolean { return this.decks.length > 1 && this.gains.length === this.decks.length; }

@@ -24,6 +24,8 @@ import AskRow from '../../ui/AskRow.vue';
 import DescribeStrip from '../../ui/DescribeStrip.vue';
 import Button from '../../ui/Button.vue';
 import ExplorePanel from './ExplorePanel.vue';
+import EffectsDrawer from './EffectsDrawer.vue';
+import { similarPassages } from '../../core/passageDetails';
 import SongStrip from './SongStrip.vue';
 import { useTimelineStore } from '../../stores/timeline';
 import { passageMoments } from '../../core/timeline';
@@ -47,13 +49,42 @@ const analyzingStep = computed(() => (currentTrack.value ? library.analyzing[cur
 const analysis = computed(() => intelligence.currentAnalysis);
 
 /** Which panel the slot under the toolbar shows (one at a time, index.html's priority). */
-const slot = computed(() => (explore.value && sel.value) ? 'explore' : describe.value ? 'describe'
+const slot = computed(() => explore.value ? 'explore' : describe.value ? 'describe'
   : ask.value ? 'ask' : (nudge.value && sel.value) ? 'nudge' : null);
 
 /** A saved moment overlapping the selection (offers Remove). */
 const matchedSaved = computed(() => sel.value && moments.savedForCurrent.find(r => overlaps(r, sel.value!)));
 /** A saved moment with this exact range (within 0.5 s): the loop bar shows "Saved". */
 const savedHere = computed(() => sel.value && moments.savedForCurrent.find(r => Math.abs(r.a - sel.value!.a) < 0.5 && Math.abs(r.b - sel.value!.b) < 0.5));
+
+/** Strip, passage selected: its part and loop state. Example: "part B, heard 3× · looping". */
+const passageBits = computed(() => {
+  const r = sel.value, tl = timelineStore.timeline;
+  if (!r) return '';
+  const out: string[] = [];
+  const mid = (r.a + r.b) / 2, part = tl?.sections?.find(p => mid >= p.a && mid < p.b);
+  if (part) out.push(`part ${part.label}, heard ${tl!.sections!.filter(p => p.label === part.label).length}×`);
+  if (loop.value) out.push('looping');
+  return out.join(' · ');
+});
+/** Strip, passage selected: the closest passage in another song (tap to jump there). */
+const soundsLike = computed(() => {
+  const r = sel.value, id = playback.trackId;
+  if (!r || !id) return null;
+  const s = similarPassages(intelligence.analyses, id, r, 3).find(x => x.trackId !== id && library.track(x.trackId));
+  return s ? { ...s, title: library.track(s.trackId)!.title } : null;
+});
+/** Strip, nothing selected: the song and you. Example: "4 parts · 2 ♡ saved · you come back to 1:10". */
+const songBits = computed(() => {
+  const tl = timelineStore.timeline, out: string[] = [];
+  if (tl?.sections?.length) out.push(new Set(tl.sections.map(p => p.label)).size + ' parts');
+  const n = moments.savedForCurrent.length;
+  if (n) out.push(n + ' ♡ saved');
+  const back = listening.learning ? [...intelligence.interest].filter(r => r.n >= 2).sort((x, y) => y.n - x.n)[0] : undefined;
+  if (back) out.push('you come back to ' + formatTime(back.a));
+  if (!out.length) out.push('drag across the waveform to pick a passage');
+  return out.join(' · ');
+});
 
 /** "Add why" shows while the just-saved passage is still selected (QUIET FIX in momentFlow). */
 const pendingAskHere = computed(() => {
@@ -106,20 +137,41 @@ function onLoopButton(): void { playback.toggleLoop(); }
         @peaks="wf.peaks"
       />
       <SongStrip :timeline="timelineStore.timeline" :duration="duration" :t="t" :moments="stripMoments" @range="onStripRange" @seek="playback.clickSeek" />
+      <!-- ONE STRIP FIX: always here; whole song when nothing is selected (ui/SelectionToolbar.vue). -->
       <SelectionToolbar
-        v-if="sel"
         :range="sel"
-        :duration="duration"
         :loop="loop"
         :playing="playing"
         :exploring="explore"
         :saved="!!savedHere"
+        :effects="playback.effectsOpen"
+        :effects-on="playback.effectsOn"
         @play="playback.playSelection()"
         @loop="onLoopButton"
         @explore="flow.toggleExplore()"
-        @save="flow.saveSelection()"
+        @save="sel ? flow.saveSelection() : flow.quickSave()"
+        @effects="playback.effectsOpen = !playback.effectsOpen"
         @clear="playback.clearSelection()"
-      />
+      >
+        <template #info>
+          <template v-if="playback.radio">
+            <span>· Moment radio · {{ playback.radioNow?.source === 'moment' ? 'one of your moments' : 'like your moments' }}</span>
+            <button type="button" class="link" @click="playback.radioSkip()">Skip ›</button>
+            <button type="button" class="link" @click="playback.stopRadio()">Stop</button>
+          </template>
+          <template v-else-if="pendingAskHere && !slot">
+            <span>· Saved.</span>
+            <button type="button" class="link" @click="flow.openAsk()">Add why ›</button>
+          </template>
+          <template v-else-if="sel">
+            <span v-if="passageBits">· {{ passageBits }}</span>
+            <button v-if="soundsLike" type="button" class="link" @click="playback.openRange(soundsLike.a, soundsLike.b, soundsLike.trackId, true)">· sounds like {{ soundsLike.title }} {{ formatTime(soundsLike.a) }} ›</button>
+            <button v-if="matchedSaved" type="button" class="link" @click="flow.removeMoment(matchedSaved.id)">· remove from ♡</button>
+          </template>
+          <span v-else>· {{ songBits }}</span>
+        </template>
+        <template #drawer><EffectsDrawer /></template>
+      </SelectionToolbar>
 
       <!-- AskRow rule: the slot opens with a 280 ms grid-rows transition; never a modal. -->
       <div class="slot" :class="{ open: !!slot }">
@@ -158,22 +210,6 @@ function onLoopButton(): void { playback.toggleLoop(); }
         </div>
       </div>
 
-      <div class="caption-line label">
-        <span v-if="playback.radio" class="hint">
-          <span>Moment radio · {{ playback.radioNow?.source === 'moment' ? 'one of your moments' : 'like your moments' }}</span>
-          <button type="button" class="link" @click="playback.radioSkip()">Skip ›</button>
-          <button type="button" class="link" @click="playback.stopRadio()">Stop</button>
-        </span>
-        <span v-else-if="loop && sel" class="loopflag">Looping {{ formatTime(sel.a) }} – {{ formatTime(sel.b) }}</span>
-        <span v-else-if="pendingAskHere && !slot" class="hint">
-          <span>Saved.</span>
-          <button type="button" class="link" @click="flow.openAsk()">Add why ›</button>
-        </span>
-        <span v-else class="guide">Drag across the waveform to pick a passage. Playback never stops.</span>
-        <span v-if="sel && matchedSaved" class="extras">
-          <Button size="sm" @click="flow.removeMoment(matchedSaved.id)">Remove saved moment</Button>
-        </span>
-      </div>
     </div>
 
   </div>
@@ -206,19 +242,7 @@ function onLoopButton(): void { playback.toggleLoop(); }
 .slot.open { grid-template-rows: 1fr; }
 .slot-in { min-height: 0; overflow: hidden; }
 .slot.open .slot-in { padding-top: var(--space-2); }
-.caption-line {
-  min-height: 30px;
-  margin-top: var(--space-3);
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  color: var(--ink-sub);
-}
-.guide { color: var(--ink-mute); }
-.loopflag { color: var(--accent); font-variant-numeric: tabular-nums; }
 .hint { display: inline-flex; align-items: center; gap: var(--space-1); }
-.extras { margin-left: auto; display: inline-flex; gap: var(--space-1); }
 @media (prefers-reduced-motion: reduce) { .slot { transition: none; } }
 @media (max-width: 820px) {
   .pcol { padding-top: var(--space-4); }

@@ -12,6 +12,8 @@
  * louder. Now each song is measured once and brought to the same loudness.
  */
 
+import { EffectsChain, type EffectParams } from './effects.ts';
+
 /** Target loudness, measured on the mono mix (see measureLoudness). About −14 LUFS in stereo. */
 export const TARGET_LUFS = -17;
 /** Quiet songs are lifted at most this much, so noise and weak masters are not blown up. */
@@ -124,12 +126,14 @@ export interface AudioGraphLike {
   setVolume(v: number): void;
   /** Routes one <audio> element (a deck) into the graph and returns its gain stages. */
   addDeck(el: HTMLMediaElement): DeckGainLike;
+  /** Effects on the sum of both decks (core/effects.ts); `delaySec` = echo time. */
+  setEffects(p: EffectParams, delaySec: number): void;
   close(): void;
 }
 
 /**
  *   deck A <audio> → fade → loudness ┐
- *   deck B <audio> → fade → loudness ┴→ volume → speakers
+ *   deck B <audio> → fade → loudness ┴→ effects → volume → speakers
  *
  * CROSSFADE FIX - with one element, a passage change had to fade out, load, then fade in: a
  * dip of silence between passages. Two decks let the next passage start while the last one
@@ -138,12 +142,17 @@ export interface AudioGraphLike {
 export class AudioGraph implements AudioGraphLike {
   private readonly ctx: AudioContext;
   private readonly vol: GainNode;
+  private readonly fx: EffectsChain;
 
   constructor(ctx: AudioContext = new AudioContext({ latencyHint: 'playback' })) {
     this.ctx = ctx;
     this.vol = ctx.createGain();
+    this.fx = new EffectsChain(ctx);
+    this.fx.output.connect(this.vol);
     this.vol.connect(ctx.destination);
   }
+
+  setEffects(p: EffectParams, delaySec: number): void { this.fx.set(p, delaySec); }
 
   resume(): void {
     if (this.ctx.state !== 'running') this.ctx.resume().catch(() => { });
@@ -165,7 +174,7 @@ export class AudioGraph implements AudioGraphLike {
     const ctx = this.ctx;
     const src = ctx.createMediaElementSource(el);
     const fade = ctx.createGain(), norm = ctx.createGain();
-    src.connect(fade).connect(norm).connect(this.vol);
+    src.connect(fade).connect(norm).connect(this.fx.input);
     const set = (g: AudioParam, fn: (now: number) => void) => {
       const now = ctx.currentTime;
       g.cancelScheduledValues(now); g.setValueAtTime(g.value, now); fn(now);

@@ -35,6 +35,11 @@ const momentsStore = useMomentsStore();
 const timelineStore = useTimelineStore();
 const { sel, activeStem, t, playing } = storeToRefs(playback);
 const { feel, love, note, ask } = storeToRefs(flow);
+/**
+ * ONE STRIP FIX - Explore opens without a selection too: then it is about the whole song
+ * (nothing gets highlighted). With a selection it is about that passage, as before.
+ */
+const range = computed(() => sel.value ?? (playback.duration > 0 ? { a: 0, b: playback.duration } : null));
 /** The question after Save, for this passage (EXPLORE ASK FIX); More… opens Describe below. */
 const askHere = computed(() => (ask.value && sel.value && Math.abs(ask.value.a - sel.value.a) < 0.5 && Math.abs(ask.value.b - sel.value.b) < 0.5 ? ask.value : null));
 const describeOpen = ref(false);
@@ -49,11 +54,11 @@ const exact = computed(() => (saved.value ? momentsStore.passages[saved.value.id
 watch(saved, m => { if (m) momentsStore.analyzeExactly(m.id); }, { immediate: true });
 const segs = computed(() => intelligence.currentAnalysis?.segments ?? []);
 const summary = computed(() => (exact.value ? exactSummary(segs.value, exact.value)
-  : sel.value && segs.value.length ? passageSummary(segs.value, sel.value) : null));
+  : range.value && segs.value.length ? passageSummary(segs.value, range.value) : null));
 
 /** Caption line. Example: "D Minor · 79 BPM · bars 28–49 · part D, heard 3× in the song". */
 const facts = computed(() => {
-  const tl = timeline.value, r = sel.value;
+  const tl = timeline.value, r = range.value;
   if (!r) return '';
   const out: string[] = [];
   const key = summary.value?.key ?? tl?.key;
@@ -66,15 +71,15 @@ const facts = computed(() => {
   return out.join(' · ');
 });
 
-const moments = computed(() => (timeline.value && sel.value ? passageMoments(timeline.value, sel.value) : []));
+const moments = computed(() => (timeline.value && range.value ? passageMoments(timeline.value, range.value) : []));
 /** Placeholders for the moments a later tier will add. */
 const waitingMoments = computed(() => {
-  if (!sel.value || timelineStore.full) return [];
+  if (!range.value || timelineStore.full) return [];
   if (serviceOff.value) return ['Moments need the analysis service. Start it to see them.'];
   return timelineStore.quick ? ['Separating stems… drop-outs and the vocal range come next.'] : ['Finding beats and chords…'];
 });
 function jump(sec: number): void {
-  playback.clickSeek(Math.max(sel.value?.a ?? 0, sec - 2));
+  playback.clickSeek(Math.max(range.value?.a ?? 0, sec - 2));
   if (!playing.value) playback.togglePlay();
 }
 
@@ -86,13 +91,16 @@ const waitingText = computed(() => ({
 
 // S / M: solo plays one stem, mute plays the song without it ('no_<stem>'). Pressing again goes back to the mix.
 /** Lanes drag: the dragged range becomes the passage; loop and Explore stay on (resize path). */
-function setLoop(a: number, b: number): void { playback.resizeSelection(a, b); playback.endResize(); }
+function setLoop(a: number, b: number): void {
+  if (!sel.value) { playback.beginSelection(); playback.updateSelection(a, b); playback.commitSelection(); return; }
+  playback.resizeSelection(a, b); playback.endResize();
+}
 function solo(s: StemName): void { playback.switchStem(activeStem.value === s ? 'all' : s); }
 function mute(s: StemName): void { playback.switchStem(activeStem.value === 'no_' + s ? 'all' : 'no_' + s); }
 
 /** Rails: where the last second sits among every moment of the song (percentile), and the passage's middle 80%. */
 const rails = computed(() => {
-  const tl = timeline.value, sp = spectrum.value, r = sel.value;
+  const tl = timeline.value, sp = spectrum.value, r = range.value;
   if (!r) return [];
   const defs: { k: string; curve?: ArrayLike<number>; word: [string, string] }[] = [
     { k: 'Loudness', curve: tl?.mix ?? sp?.loud, word: ['quieter', 'louder'] },
@@ -120,7 +128,7 @@ const railNow = computed(() => rails.value.map(r => {
 
 /** Folded detail sections (DETAIL SECTIONS): Voice, Groove, Harmony, each with a one-line teaser. */
 const details = computed(() => {
-  const r = sel.value, tl = timeline.value;
+  const r = range.value, tl = timeline.value;
   if (!r) return [];
   const voice = voiceDetails(tl, r), groove = grooveDetails(tl, segs.value, r), harmony = harmonyDetails(tl, segs.value, r);
   return [
@@ -131,12 +139,12 @@ const details = computed(() => {
 });
 const library = useLibraryStore();
 /** Passages that sound most like this one (CLAP + DSP embeddings), in this song or others. */
-const similar = computed(() => (sel.value && playback.trackId ? similarPassages(intelligence.analyses, playback.trackId, sel.value) : []));
+const similar = computed(() => (range.value && playback.trackId ? similarPassages(intelligence.analyses, playback.trackId, range.value) : []));
 function playSimilar(trackId: string, a: number, b: number): void { playback.openRange(a, b, trackId, true); }
 
 /** Measurements, with units, what they mean, and where they come from (plain words, no badges). */
 const measurements = computed(() => {
-  const tl = timeline.value, r = sel.value, rows: [string, string, string, string][] = [];
+  const tl = timeline.value, r = range.value, rows: [string, string, string, string][] = [];
   if (!r) return rows;
   const m = Object.fromEntries((summary.value?.measures ?? []).map(x => [x.key, x.value]));
   if (summary.value?.key) rows.push(['Key', summary.value.key, 'Most common key across the passage', 'Window analysis']);
@@ -154,11 +162,11 @@ const measurements = computed(() => {
 </script>
 
 <template>
-  <section v-if="sel" class="panel" aria-label="Explore this passage">
+  <section v-if="range" class="panel" aria-label="Explore this passage">
     <header class="head">
       <div>
-        <h2 class="heading">Explore this passage</h2>
-        <div class="caption sub">{{ formatTime(sel.a) }} – {{ formatTime(sel.b) }}<template v-if="facts"> · {{ facts }}</template></div>
+        <h2 class="heading">{{ sel ? 'Explore this passage' : 'Explore this song' }}</h2>
+        <div class="caption sub">{{ formatTime(range.a) }} – {{ formatTime(range.b) }}<template v-if="facts"> · {{ facts }}</template></div>
       </div>
       <div class="tools">
         <SpectrumSwitch :kind="spectrumKind" :busy="viewBusy" @select="k => timelineStore.setSpectrumKind(k)" />
@@ -182,7 +190,7 @@ const measurements = computed(() => {
       :timeline="timeline"
       :spectrum="spectrum"
       :view="spectrumView"
-      :range="sel"
+      :range="range"
       :t="t"
       :zoom="zoom"
       :active-stem="activeStem"

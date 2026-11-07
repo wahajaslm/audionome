@@ -9,6 +9,7 @@ import {
 import { normalizationGainDb } from '../core/audioGraph';
 import { practicingNow } from '../core/practice';
 import { radioKey, radioQueue, type RadioItem } from '../core/radio';
+import { cleanEffects, echoDelaySec, effectsActive, NEUTRAL, PRESETS, withControl, type EffectParams, type PresetName } from '../core/effects';
 import { putSetting, getSetting } from '../core/repository';
 import { useLibraryStore } from './library';
 import { useListeningStore } from './listening';
@@ -47,6 +48,11 @@ export const usePlaybackStore = defineStore('playback', () => {
   const normalize = ref(true);
   /** Settings: selection edges move to the beat. */
   const snapToBeat = ref(true);
+  /** Effects on what you hear (core/effects.ts), remembered between visits. */
+  const effects = ref<EffectParams>({ ...NEUTRAL });
+  const effectsOn = computed(() => effectsActive(effects.value));
+  /** The Effects drawer under the strip is open. */
+  const effectsOpen = ref(false);
   /** Bumped when a crossfade swaps decks, so the waveform follows the playing element. */
   const deck = ref(0);
   /** Moment radio (core/radio.ts): on while it runs; `radioNow` is the passage playing. */
@@ -97,6 +103,13 @@ export const usePlaybackStore = defineStore('playback', () => {
       onLoopCycle: loops => useMomentFlowStore().onLoopCycle(loops),
     });
     e.setVolume(volume.value);
+    applyEffects();
+    // Echo repeats on the beat: re-time it when a song's tempo arrives.
+    watch(() => useTimelineStore().timeline?.tempoBpm, applyEffects);
+    // Karaoke carries over to the next song once its stems exist, without a toast each time.
+    watch(() => [trackId.value, useTimelineStore().full] as const, ([, full]) => {
+      if (effects.value.karaoke && full && activeStem.value !== 'no_vocals') switchStem('no_vocals', true).catch(console.warn);
+    });
   }
 
   /** Engine hook: the media reported its real duration. */
@@ -253,6 +266,8 @@ export const usePlaybackStore = defineStore('playback', () => {
     if (typeof n === 'boolean') normalize.value = n;
     const snap = await getSetting<boolean>('snapToBeat');
     if (typeof snap === 'boolean') snapToBeat.value = snap;
+    try { effects.value = cleanEffects(JSON.parse((await getSetting<string>('effects')) || 'null')); } catch { effects.value = { ...NEUTRAL }; }
+    applyEffects();
     applyLoudness(0);
   }
 
@@ -294,6 +309,29 @@ export const usePlaybackStore = defineStore('playback', () => {
   function cycleRate(): void {
     const i = RATES.indexOf(rate.value);
     setRate(RATES[(i + 1) % RATES.length]);
+  }
+
+  /** Sends the effects to the engine; echo follows the song's tempo when it is known. */
+  function applyEffects(): void {
+    engineRef?.setEffects(effects.value, echoDelaySec(useTimelineStore().timeline?.tempoBpm));
+  }
+
+  /**
+   * Sets the effects (a preset or one moved control), remembers them, and handles Karaoke,
+   * which plays the song without its vocal stem.
+   * Example: setEffects(PRESETS.hall.params) → a large room; withControl(p, 'pan', -0.5) → custom.
+   */
+  async function setEffects(p: EffectParams): Promise<void> {
+    const wasKaraoke = effects.value.karaoke;
+    effects.value = p;
+    applyEffects();
+    putSetting('effects', JSON.stringify(p)).catch(() => { });
+    if (p.karaoke && activeStem.value !== 'no_vocals') await switchStem('no_vocals');
+    else if (!p.karaoke && wasKaraoke && activeStem.value === 'no_vocals') await switchStem('all');
+  }
+  const applyPreset = (name: Exclude<PresetName, 'custom'>) => setEffects({ ...PRESETS[name].params });
+  function setControl<K extends keyof EffectParams>(key: K, value: EffectParams[K]): Promise<void> {
+    return setEffects(withControl(effects.value, key, value));
   }
 
   /** The selection on the beat (when the setting is on and the song has beats). */
@@ -485,7 +523,7 @@ export const usePlaybackStore = defineStore('playback', () => {
       else {
         stopRadio(); // clicking away from the passage: you took over
         region.t = target; region.sel = null; region.previewEnd = null; region.loop = false;
-        flow.describe = null; flow.explore = false; flow.nudge = false;
+        flow.describe = null; flow.nudge = false; // Explore stays open: it follows the whole song now
       }
     }
     e.setTime(region.t);
@@ -587,7 +625,7 @@ export const usePlaybackStore = defineStore('playback', () => {
   }
 
   /** Switches the audio source to one separated stem (or back to 'all'), keeping position. */
-  async function switchStem(stem: string): Promise<void> {
+  async function switchStem(stem: string, quiet = false): Promise<void> {
     const e = engineRef;
     stem = String(stem).toLowerCase();
     if (!e || !trackId.value || activeStem.value === stem) return;
@@ -600,11 +638,11 @@ export const usePlaybackStore = defineStore('playback', () => {
     if (trackId.value !== id) return;
     // 'no_drums' etc. is the song without that stem (Explore's Mute). Example: "Without drums".
     const name = stem.startsWith('no_') ? 'Without ' + stem.slice(3) : stem.charAt(0).toUpperCase() + stem.slice(1);
-    if (!ok) { useUiStore().notify(name + ': stems are not separated yet. They are on the way.'); return; }
+    if (!ok) { if (!quiet) useUiStore().notify(name + ': stems are not separated yet. They are on the way.'); return; }
     const prevSrc = e.el.src, prevStem = activeStem.value;
     activeStem.value = stem;
     const pos = region.t, wasPlaying = playing.value;
-    useUiStore().notify('Loading ' + name.toLowerCase() + '…');
+    if (!quiet) useUiStore().notify('Loading ' + name.toLowerCase() + '…');
     try {
       await e.load(url, pos);
       if (!e.hasSource()) throw new Error('stem failed to load');
@@ -618,10 +656,11 @@ export const usePlaybackStore = defineStore('playback', () => {
     }
   }
 
-  /** Leaving Explore returns to the full mix. */
+  /** Leaving Explore returns to the full mix (Karaoke keeps the song without vocals). */
   function restoreFullMix(): void {
     const e = engineRef;
     if (!e || !trackId.value || activeStem.value === 'all') return;
+    if (effects.value.karaoke && activeStem.value === 'no_vocals') return;
     activeStem.value = 'all';
     const pos = region.t, wasPlaying = playing.value;
     e.load(fullMixUrl(trackId.value), pos).then(() => { if (wasPlaying) e.play().catch(console.warn); }).catch(console.warn);
@@ -652,7 +691,7 @@ export const usePlaybackStore = defineStore('playback', () => {
 
   return {
     ...toRefs(region), trackId, duration, playing, loading, volume, activeStem, queue, currentTrack,
-    rate, normalize, snapToBeat, practicing, setRate, deck, radio, radioNow, startRadio, stopRadio, radioSkip, radioRestart, cycleRate, setNormalize, setSnapToBeat, onLoudnessMeasured,
+    rate, normalize, snapToBeat, practicing, setRate, effects, effectsOn, effectsOpen, setEffects, applyPreset, setControl, deck, radio, radioNow, startRadio, stopRadio, radioSkip, radioRestart, cycleRate, setNormalize, setSnapToBeat, onLoudnessMeasured,
     engine, attachEngine, onDuration, onFrame, checkRegionEnd, loadSettings, lastPlayed,
     selectTrack, changeTrack, openRange, playQueue, playNext, togglePlay, playSelection, seekBy, stepBy,
     clickSeek, beginSelection, updateSelection, commitSelection, resizeSelection, endResize, selectAroundPlayhead, clearSelection,

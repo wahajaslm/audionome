@@ -101,7 +101,7 @@ test('engine: AbortError from play() is ignored', async () => {
 function fakeGraph(calls) {
   let n = 0;
   return {
-    resume: () => calls.push('resume'), close: () => calls.push('close'), setVolume: v => calls.push(['vol', v]),
+    resume: () => calls.push('resume'), close: () => calls.push('close'), setVolume: v => calls.push(['vol', v]), setEffects: () => { },
     addDeck: () => { const d = n++; return {
       setNormalization: (db, ramp) => calls.push(['norm', d, db, ramp]), duck: () => calls.push(['duck', d]),
       unduck: () => calls.push(['unduck', d]), fade: (to, sec) => calls.push(['fade', d, to, sec]),

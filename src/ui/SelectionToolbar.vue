@@ -1,116 +1,68 @@
 <script setup lang="ts">
 /**
- * SelectionToolbar: the loop bar under a selected passage. Every control for the passage
- * lives here (ONE PLACE FIX: Explore used to sit apart, at the far right of the caption line).
- * ▶/⏸ play · Loop (toggle) · Explore (toggle) · ♡ Save (shows "Saved" once saved) · ✕ clear.
- * Props: range { a, b } (seconds); duration (seconds, to centre it on the selection); loop;
- *        playing; exploring; saved.
- * Emits: play, loop, explore, save, clear.
- * It is centred on the selection and clamped to the waveform's edges (the parent's width).
+ * SelectionToolbar: the one strip under the waveform (ONE STRIP FIX).
+ *
+ * It used to appear only after you selected a passage, so nobody found Loop, Explore or Save.
+ * Now it is always there, in the same place: what you are hearing and how it fits your taste on
+ * the left (the `info` slot), the controls on the right. With nothing selected the controls act
+ * on the whole song; with a passage selected, on that passage.
+ *   No selection:  Whole song · … │ Loop · Explore · ♡ · Effects
+ *   Selection:     1:10 – 1:22 · … │ ▶ · Loop · Explore · ♡ · Effects · ✕
+ * Effects opens a drawer under the same strip (the `drawer` slot); nothing pops up.
+ * Props: range (null = whole song); loop; playing; exploring; saved; effects (drawer open);
+ *        effectsOn (an effect is active: the button is tinted).
+ * Emits: play, loop, explore, save, effects, clear.
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import Icon from './Icon.vue';
 import { formatTime } from './format';
 
-const props = defineProps<{
-  range: { a: number; b: number }; duration: number; loop: boolean; playing: boolean; exploring: boolean; saved: boolean;
+defineProps<{
+  range: { a: number; b: number } | null; loop: boolean; playing: boolean; exploring: boolean; saved: boolean;
+  effects: boolean; effectsOn: boolean;
 }>();
-const emit = defineEmits<{ play: []; loop: []; explore: []; save: []; clear: [] }>();
-
-const wrap = ref<HTMLDivElement | null>(null);
-const bar = ref<HTMLDivElement | null>(null);
-const left = ref(0);
-let observer: ResizeObserver | null = null;
-
-function place(): void {
-  if (!wrap.value || !bar.value) return;
-  const W = wrap.value.clientWidth, w = bar.value.offsetWidth;
-  const centre = ((props.range.a + props.range.b) / 2 / Math.max(1, props.duration)) * W;
-  left.value = Math.max(0, Math.min(W - w, centre - w / 2));
-}
-watch(() => [props.range.a, props.range.b, props.duration, props.loop, props.saved], () => nextTick(place));
-onMounted(() => {
-  place();
-  observer = new ResizeObserver(place);
-  if (wrap.value) observer.observe(wrap.value);
-});
-onBeforeUnmount(() => observer?.disconnect());
-const label = computed(() => formatTime(props.range.a) + ' – ' + formatTime(props.range.b));
+const emit = defineEmits<{ play: []; loop: []; explore: []; save: []; effects: []; clear: [] }>();
 </script>
 
 <template>
-  <div ref="wrap" class="wrap">
-    <div ref="bar" class="tb" role="toolbar" aria-label="Selected moment" :style="{ left: left + 'px' }">
-      <span class="rng">{{ label }}</span>
-      <button type="button" class="b ic" :aria-label="playing ? 'Pause' : 'Play this passage'" @click="emit('play')"><Icon :name="playing ? 'pause' : 'play'" :size="16" /></button>
-      <button type="button" class="b" :aria-pressed="loop" @click="emit('loop')"><Icon name="loop" :size="16" />Loop</button>
-      <button type="button" class="b" :aria-pressed="exploring" @click="emit('explore')"><Icon name="sparkle" :size="16" />Explore</button>
-      <button type="button" class="b" :class="{ saved }" @click="emit('save')"><Icon name="heart" :size="16" />{{ saved ? 'Saved' : 'Save' }}</button>
-      <button type="button" class="x" aria-label="Clear selection" @click="emit('clear')"><Icon name="close" :size="14" /></button>
+  <div class="strip">
+    <div class="row" role="toolbar" :aria-label="range ? 'Selected passage' : 'This song'">
+      <div class="info label">
+        <span class="what">{{ range ? formatTime(range.a) + ' – ' + formatTime(range.b) : 'Whole song' }}</span>
+        <slot name="info" />
+      </div>
+      <div class="ctl">
+        <button v-if="range" type="button" class="b ic" :aria-label="playing ? 'Pause' : 'Play this passage'" @click="emit('play')"><Icon :name="playing ? 'pause' : 'play'" :size="16" /></button>
+        <button type="button" class="b" :aria-pressed="loop" :title="range ? 'Loop this passage' : 'Loop the bars around the playhead'" @click="emit('loop')"><Icon name="loop" :size="16" /><span class="t">Loop</span></button>
+        <button type="button" class="b" :aria-pressed="exploring" :title="range ? 'Explore this passage' : 'Explore the whole song'" @click="emit('explore')"><Icon name="sparkle" :size="16" /><span class="t">Explore</span></button>
+        <button type="button" class="b" :class="{ saved }" :title="range ? 'Save this passage' : 'Save the last 20 seconds'" @click="emit('save')"><Icon name="heart" :size="16" /><span class="t">{{ saved ? 'Saved' : 'Save' }}</span></button>
+        <button type="button" class="b" :class="{ on: effectsOn }" :aria-pressed="effects" title="Effects: space, room, tone" @click="emit('effects')"><Icon name="fx" :size="16" /><span class="t">Effects</span></button>
+        <button v-if="range" type="button" class="x" aria-label="Clear selection" @click="emit('clear')"><Icon name="close" :size="14" /></button>
+      </div>
     </div>
+    <div class="drawer" :class="{ open: effects }"><div class="drawer-in"><slot name="drawer" /></div></div>
   </div>
 </template>
 
 <style scoped>
-.wrap {
-  position: relative;
-  height: 58px;
-  animation: open 200ms ease;
-}
-@keyframes open { from { height: 0; opacity: 0; } to { height: 58px; opacity: 1; } }
-.tb {
-  position: absolute;
-  top: var(--space-2);
-  height: 44px;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 0 var(--space-1) 0 14px;
-  background: var(--bg-panel);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-pop);
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-.rng {
-  font-size: 13px;
-  color: var(--ink-sub);
-  padding-right: 10px;
-  margin-right: 2px;
-  border-right: 1px solid var(--line-strong);
-}
+.strip { margin-top: var(--space-2); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.row { display: flex; align-items: center; gap: var(--space-3); min-height: 44px; }
+/* The info side shrinks first; the controls never move. */
+.info { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 6px; color: var(--ink-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.what { color: var(--ink); flex: none; }
+.ctl { flex: none; display: flex; align-items: center; gap: 2px; }
 .b {
-  height: 36px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--ink);
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font: 14px var(--font-sans);
-  cursor: pointer;
+  height: 34px; padding: 0 10px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--ink);
+  display: flex; align-items: center; gap: 7px; font: 14px var(--font-sans); cursor: pointer;
 }
 .b:hover { background: var(--bg-raise); }
-.b.ic { width: 36px; padding: 0; justify-content: center; }
-.b.saved { color: var(--accent); }
+.b.ic { width: 34px; padding: 0; justify-content: center; }
+.b.saved, .b.on { color: var(--accent); }
 .b[aria-pressed='true'] { background: var(--bg-raise); color: var(--accent); }
-.x {
-  width: 32px;
-  height: 36px;
-  border: 0;
-  background: none;
-  color: var(--ink-mute);
-  border-radius: var(--radius-sm);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-}
+.x { width: 30px; height: 34px; border: 0; background: none; color: var(--ink-mute); border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .x:hover { background: var(--bg-raise); color: var(--ink); }
-@media (max-width: 600px) { .rng { display: none; } .b { padding: 0 8px; gap: 5px; } }
-@media (prefers-reduced-motion: reduce) { .wrap { animation: none; } }
+.drawer { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 220ms ease; }
+.drawer.open { grid-template-rows: 1fr; }
+.drawer-in { overflow: hidden; }
+@media (max-width: 700px) { .b .t { display: none; } .b { padding: 0 9px; } }
+@media (prefers-reduced-motion: reduce) { .drawer { transition: none; } }
 </style>
