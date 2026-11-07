@@ -4,8 +4,8 @@
  *
  *   Listen to   (Original) (My mix) (Late drive ✕) …        + Save version   ⤓ Download
  *   Start from  Concert hall · Stadium · Late night · Lo-fi · Slowed + reverb …
- *   SPACE ↺        TONE ↺         MOTION ↺        TAPE & STEMS ↺
- *   Pan ━━●━━      Bass ━━●━━     Chorus ●━━━     Tape speed ━━●━━
+ *   SPACE ↺        TONE ↺         MOTION ↺        PITCH & STEMS ↺
+ *   Pan ━━●━━      Bass ━━●━━     Chorus ●━━━     Transpose · Fine tune · Tape speed
  *   …              …              …               Vinyl …  [Full mix | Karaoke | …]
  *
  * Original is an A/B switch (the mix is kept). Presets and controls change "My mix"; Save

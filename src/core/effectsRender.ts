@@ -1,11 +1,13 @@
 /**
  * "Download my version": renders a song through the same effects chain the player uses, faster
  * than real time (OfflineAudioContext), and returns a WAV file.
- * Tape speed is the source's playback rate (pitch moves, as when listening). The level is the
+ * Tape speed is the source's playback rate (pitch moves, as when listening); Transpose runs
+ * through the player's pitch-shift worklet. The level is the
  * song's own; if effects push peaks past −1 dBFS the whole render is turned down to fit.
  * Example: a 4:31 song with "Slowed + reverb" → a 5:19 WAV (0.85×) with the room's tail.
  */
 import { EffectsChain, type EffectParams } from './effects.ts';
+import { pitchRatio } from './pitchShift.ts';
 
 /** 16-bit PCM WAV from rendered audio. */
 export function wavFromBuffer(buf: { numberOfChannels: number; sampleRate: number; length: number; getChannelData(c: number): Float32Array }): Blob {
@@ -48,6 +50,8 @@ export async function renderWithEffects(audio: ArrayBuffer, p: EffectParams, bpm
   const chain = new EffectsChain(ctx);
   chain.set(p, bpm);
   chain.setPlaying(true);
+  // Transpose: the same pitch shifter as in the player, so the WAV sounds like what you heard.
+  if (pitchRatio(p.transpose, p.tune) !== 1) chain.attachPitch(await (await import('./pitchNode.ts')).createPitchNode(ctx));
   src.connect(chain.input);
   chain.output.connect(ctx.destination);
   src.start();

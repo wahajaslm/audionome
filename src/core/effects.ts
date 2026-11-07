@@ -11,9 +11,12 @@
  * One chain after both decks, so a crossfade keeps the same sound. Off = every stage neutral.
  * Echo and tremolo follow the song's beat when its tempo is known. Tape speed and stems are
  * not nodes: the engine changes the playback rate (pitch moves with it), the store switches
- * the stem source.
+ * the stem source. Transpose is a pitch shifter in front of the EQ (core/pitchShift.ts),
+ * attached once its audio worklet has loaded (attachPitch).
  * Example: "Slowed + reverb" → tape 0.85× and a large room; "Radio" → a narrow mono band.
  */
+
+import { pitchRatio } from './pitchShift.ts';
 
 export type StemMode = 'mix' | 'no_vocals' | 'vocals' | 'no_drums';
 export type PresetName = 'off' | 'hall' | 'stadium' | 'night' | 'lofi' | 'slowed' | 'nightcore' | 'underwater'
@@ -51,7 +54,11 @@ export interface EffectParams {
   phaser: number;
   /** Volume pulse on the beat. */
   tremolo: number;
-  // Tape & stems
+  // Pitch & stems
+  /** Transpose in semitones, −12 … 12: pitch moves, tempo stays. */
+  transpose: number;
+  /** Fine tune in cents, −50 … 50 (match a record that is not at A440). */
+  tune: number;
   /** Tape speed 0.75 … 1.25: tempo and pitch move together ("slowed", "sped up"). */
   tape: number;
   /** Vinyl crackle 0 … 1. */
@@ -63,7 +70,7 @@ export interface EffectParams {
 export const NEUTRAL: EffectParams = {
   preset: 'off', pan: 0, width: 1, room: 0, size: 0.5, echo: 0, spin: false,
   bass: 0, mid: 0, treble: 0, filter: 0, warmth: 0, night: false,
-  chorus: 0, flanger: 0, phaser: 0, tremolo: 0, tape: 1, crackle: 0, stem: 'mix',
+  chorus: 0, flanger: 0, phaser: 0, tremolo: 0, transpose: 0, tune: 0, tape: 1, crackle: 0, stem: 'mix',
 };
 
 const P = (preset: PresetName, x: Partial<EffectParams>): EffectParams => ({ ...NEUTRAL, ...x, preset });
@@ -109,7 +116,9 @@ export const GROUPS: { id: EffectGroup; label: string; controls: Control[]; togg
     { key: 'phaser', label: 'Phaser', min: 0, max: 1, step: 0.05, show: pct },
     { key: 'tremolo', label: 'Tremolo', min: 0, max: 1, step: 0.05, show: pct },
   ] },
-  { id: 'tape', label: 'Tape & stems', toggles: [], controls: [
+  { id: 'tape', label: 'Pitch & stems', toggles: [], controls: [
+    { key: 'transpose', label: 'Transpose', min: -12, max: 12, step: 1, show: v => (v === 0 ? 'original key' : (v > 0 ? '+' : '−') + Math.abs(v) + (Math.abs(v) === 1 ? ' semitone' : ' semitones')) },
+    { key: 'tune', label: 'Fine tune', min: -50, max: 50, step: 1, show: v => (v === 0 ? '0 cents' : (v > 0 ? '+' : '−') + Math.abs(v) + ' cents') },
     { key: 'tape', label: 'Tape speed', min: 0.75, max: 1.25, step: 0.01, show: v => v.toFixed(2) + '×' },
     { key: 'crackle', label: 'Vinyl', min: 0, max: 1, step: 0.05, show: pct },
   ] },
@@ -155,6 +164,7 @@ export function cleanEffects(v: unknown): EffectParams {
     bass: num('bass', -12, 12), mid: num('mid', -12, 12), treble: num('treble', -12, 12), filter: num('filter', -1, 1),
     warmth: num('warmth', 0, 1), night: x.night === true,
     chorus: num('chorus', 0, 1), flanger: num('flanger', 0, 1), phaser: num('phaser', 0, 1), tremolo: num('tremolo', 0, 1),
+    transpose: Math.round(num('transpose', -12, 12)), tune: Math.round(num('tune', -50, 50)),
     tape: num('tape', 0.75, 1.25), crackle: num('crackle', 0, 1), stem,
   };
 }
@@ -232,6 +242,8 @@ export class EffectsChain {
   private readonly n: Record<string, AudioNode & { [k: string]: unknown }> = {};
   private roomSize = -1;
   private playingNow = false;
+  /** The pitch shifter (an AudioWorkletNode with a `ratio` param), once loaded. */
+  private pitch: AudioWorkletNode | null = null;
   private last: EffectParams = NEUTRAL;
 
   constructor(ctx: BaseAudioContext) {
@@ -306,6 +318,18 @@ export class EffectsChain {
   }
   private p(name: string, param: string): AudioParam { return (this.n[name] as unknown as Record<string, AudioParam>)[param]; }
 
+  /**
+   * Puts the pitch shifter between the input and the EQ, already at the current ratio (no
+   * glide from 1 at the start of a render). Example: transpose −2 → ratio 0.891 at once.
+   */
+  attachPitch(node: AudioWorkletNode): void {
+    const bass = this.n.bass as unknown as AudioNode;
+    this.input.disconnect(bass);
+    this.input.connect(node).connect(bass);
+    this.pitch = node;
+    node.parameters.get('ratio')!.setValueAtTime(pitchRatio(this.last.transpose, this.last.tune), this.ctx.currentTime);
+  }
+
   /** The song plays or pauses: vinyl crackle follows it (no crackle over silence). */
   setPlaying(on: boolean): void {
     this.playingNow = on;
@@ -349,6 +373,7 @@ export class EffectsChain {
     this.to(this.p('chorusWet', 'gain'), p.chorus * 0.7);
     this.to(this.p('flangerWet', 'gain'), p.flanger * 0.7);
     this.to(this.p('crackleGain', 'gain'), this.playingNow ? p.crackle * 0.5 : 0);
+    if (this.pitch) this.to(this.pitch.parameters.get('ratio')!, pitchRatio(p.transpose, p.tune));
   }
 }
 

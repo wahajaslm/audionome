@@ -154,6 +154,9 @@ export class AudioGraph implements AudioGraphLike {
     this.fx = new EffectsChain(ctx);
     this.fx.output.connect(this.vol);
     this.vol.connect(ctx.destination);
+    // Transpose loads in the background; until then (or if it fails) the chain plays without it.
+    import('./pitchNode.ts').then(m => m.createPitchNode(ctx)).then(n => this.fx.attachPitch(n))
+      .catch(err => console.warn('Transpose unavailable:', err));
   }
 
   setEffects(p: EffectParams, bpm: number | null): void { this.fx.set(p, bpm); }
