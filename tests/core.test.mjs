@@ -10,7 +10,7 @@ import { measureLoudness, normalizationGainDb, MAX_BOOST_DB } from '../src/core/
 import { toDbMoment, withTags, collectionsOf, newMoment, savedRanges } from '../src/core/moments.ts';
 import { barAt, beatInBar, blockIndexAt, chordChart, chordSheet, noteName, passageEvidence, passageMoments, rankIn } from '../src/core/timeline.ts';
 import { extractEmbeddedPicture, parseKey, artRecipe, artFromAnalysis } from '../src/core/artwork.ts';
-import { bandForHz, computeSpectrum, computeView, fft, hzToMel, melFilters, melToHz, SPEC_SR } from '../src/core/spectrum.ts';
+import { bandForHz, computeSpectrum, computeView, fft, hzToMel, melFilters, melToHz, SPEC_HOP, SPEC_SR } from '../src/core/spectrum.ts';
 
 /** Minimal HTMLMediaElement stand-in: an EventTarget with the fields the engine reads. */
 class FakeMedia extends EventTarget {
@@ -993,4 +993,16 @@ test('nerds zoom: steps, Fit, pointer-anchored zoom and pan (ZOOM FIX)', async (
   assert.deepEqual(z.viewOf(z.panBy({ span: 2, center: 15, follow: false }, r, 0, 100), r, 0), [20, 22], 'pan stops at the end');
   assert.equal(z.panBy(fit, r, 0, 3), fit, 'nothing to pan at Fit');
   assert.equal(z.spanLabel(0.5), '500 ms'); assert.equal(z.spanLabel(2), '2 s'); assert.equal(z.spanLabel(90), '1:30');
+});
+
+test('spectrum: two frames per FFT and the shared pass give the same pictures (SPEED FIX)', () => {
+  const sr = SPEC_SR, x = new Float32Array(sr * 3).map((_, i) => 0.4 * Math.sin(2 * Math.PI * 440 * i / sr) + 0.2 * Math.sin(2 * Math.PI * 3100 * i / sr) * (i % 9000 < 4500 ? 1 : 0));
+  const mel = computeSpectrum(x), lin = computeView(x, 'linear');
+  assert.equal(mel.linear.frames, lin.frames);
+  let maxDiff = 0;
+  for (let i = 0; i < lin.data.length; i++) maxDiff = Math.max(maxDiff, Math.abs(mel.linear.data[i] - lin.data[i]));
+  assert.ok(maxDiff <= 1, 'linear from the mel pass = linear on its own (rounding only): ' + maxDiff);
+  // An odd frame count still fills the last frame (its partner in the FFT is silence).
+  const odd = computeView(new Float32Array(SPEC_HOP * 4 + 1).fill(0.1), 'linear');
+  assert.equal(odd.frames, 5);
 });

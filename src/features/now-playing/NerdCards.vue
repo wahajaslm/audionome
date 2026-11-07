@@ -11,7 +11,9 @@ import { frameAt, framesIn, frameSummary, rangeStats, mp3Header, type BitrateInf
 import { BLOCK_NAMES, blockMix, sizeHistogram, transients } from '../../core/bitstream';
 import { bytes } from '../../core/nerdStats';
 
-const props = defineProps<{ bitrate: BitrateInfo | null; t: number; range: { a: number; b: number }; isPassage: boolean }>();
+const props = defineProps<{ bitrate: BitrateInfo | null; t: number; range: { a: number; b: number }; isPassage: boolean;
+  /** Timing corrections behind the lanes (output latency, priming, spectrum centring). */
+  alignment?: { k: string; v: string }[] }>();
 
 type Row = { k: string; v: string; mark?: string };
 const f = computed(() => props.bitrate?.frames ?? null);
@@ -139,6 +141,12 @@ const file = computed<Row[]>(() => {
       <dl>
         <template v-for="r in file" :key="r.k"><dt>{{ r.k }}</dt><dd>{{ r.v }}</dd></template>
       </dl>
+      <template v-if="alignment?.length">
+        <header class="h sub"><span class="t">Alignment</span></header>
+        <dl>
+          <template v-for="r in alignment" :key="r.k"><dt>{{ r.k }}</dt><dd>{{ r.v }}</dd></template>
+        </dl>
+      </template>
     </section>
   </div>
 </template>
@@ -154,6 +162,7 @@ const file = computed<Row[]>(() => {
 .t { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-sub); }
 .id { font-size: 12px; color: var(--ink); white-space: nowrap; }
 .mute { color: var(--ink-mute); }
+.h.sub { margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--line); height: auto; }
 dl { margin: 0; display: grid; grid-template-columns: auto 1fr; column-gap: 16px; row-gap: 5px; font-size: 12px; line-height: 1.35; }
 dt { color: var(--ink-mute); white-space: nowrap; display: flex; align-items: center; }
 dd { margin: 0; color: var(--ink); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

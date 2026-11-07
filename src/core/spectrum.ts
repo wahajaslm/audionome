@@ -48,6 +48,8 @@ export interface Spectrum extends SpectrumView {
   /** 10 frames/s curves: loudness 0..1 (mix floor … loudest) and spectral centroid in Hz. */
   loud: Float32Array;
   bright: Float32Array;
+  /** The linear view, made in the same STFT pass (the worker keeps it; not sent with mel). */
+  linear?: SpectrumView;
 }
 
 // C2: below it an 8192-point FFT (2.7 Hz bins) is coarser than a quarter tone and the rows go blocky.
@@ -107,52 +109,95 @@ function triangularFilters(edges: number[], sr: number, nfft: number): BandFilte
 
 /** In-place iterative radix-2 FFT on (re, im), n a power of two. */
 export function fft(re: Float32Array, im: Float32Array): void {
-  const n = re.length;
-  for (let i = 1, j = 0; i < n; i++) {
-    let bit = n >> 1;
-    for (; j & bit; bit >>= 1) j ^= bit;
-    j ^= bit;
+  const n = re.length, { rev, cos, sin } = fftTables(n);
+  for (let i = 0; i < n; i++) {
+    const j = rev[i];
     if (i < j) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; }
   }
   for (let len = 2; len <= n; len <<= 1) {
-    const ang = -2 * Math.PI / len, wr = Math.cos(ang), wi = Math.sin(ang), half = len >> 1;
+    const half = len >> 1, step = n / len;
     for (let i = 0; i < n; i += len) {
-      let cr = 1, ci = 0;
-      for (let k = 0; k < half; k++) {
-        const a = i + k, b = a + half;
+      for (let k = 0, t = 0; k < half; k++, t += step) {
+        const a = i + k, b = a + half, cr = cos[t], ci = sin[t];
         const tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr;
         re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
-        const nr = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nr;
       }
     }
   }
 }
 
-/** Hann-windowed STFT frames → filtered band energies in dB, quantised to 0..255 over SPEC_RANGE_DB. */
-function bandFrames(x: Float32Array, nfft: number, hop: number, filters: BandFilter[],
-  perFrame?: (f: number, re: Float32Array, im: Float32Array) => void): { db: Float32Array; frames: number; maxDb: number } {
-  const half = nfft / 2, bands = filters.length;
+/** Bit-reversal order and twiddle factors per FFT size, made once (SPEED FIX). */
+const FFT_TABLES = new Map<number, { rev: Uint32Array; cos: Float64Array; sin: Float64Array }>();
+function fftTables(n: number): { rev: Uint32Array; cos: Float64Array; sin: Float64Array } {
+  let t = FFT_TABLES.get(n);
+  if (t) return t;
+  const rev = new Uint32Array(n), bits = Math.log2(n);
+  for (let i = 0; i < n; i++) { let r = 0; for (let b = 0; b < bits; b++) r = (r << 1) | ((i >> b) & 1); rev[i] = r; }
+  const cos = new Float64Array(n / 2), sin = new Float64Array(n / 2);
+  for (let k = 0; k < n / 2; k++) { cos[k] = Math.cos(-2 * Math.PI * k / n); sin[k] = Math.sin(-2 * Math.PI * k / n); }
+  t = { rev, cos, sin };
+  FFT_TABLES.set(n, t);
+  return t;
+}
+
+/**
+ * Hann-windowed STFT frames → band energies in dB, for one or more filter banks at once.
+ *
+ * SPEED FIX - switching to CQT took ~14 s and Linear ~3.6 s on a 9-minute song: every view ran
+ * its own STFT, one frame per FFT. Now two frames share one complex FFT (frame A in the real
+ * part, frame B in the imaginary part, separated afterwards by conjugate symmetry), and
+ * banks with the same FFT size share one pass (Mel and Linear: one STFT, two filter banks).
+ * Example: 9-min song → Mel + Linear together in about the time Mel alone took.
+ */
+function bandFramesMulti(x: Float32Array, nfft: number, hop: number, banks: BandFilter[][],
+  perFrame?: (f: number, pow: Float32Array) => void): { db: Float32Array[]; frames: number; maxDb: number[] } {
+  const half = nfft / 2;
   const frames = Math.max(1, Math.floor((x.length - 1) / hop) + 1);
   const win = new Float32Array(nfft).map((_, i) => 0.5 - 0.5 * Math.cos(2 * Math.PI * i / nfft));
-  const db = new Float32Array(frames * bands);
-  const re = new Float32Array(nfft), im = new Float32Array(nfft), pow = new Float32Array(half + 1);
-  let maxDb = -Infinity;
-  for (let f = 0; f < frames; f++) {
-    const c = f * hop - half;  // centred frames, like librosa (center=True, zero padded)
-    for (let i = 0; i < nfft; i++) { const s = c + i; re[i] = s >= 0 && s < x.length ? x[s] * win[i] : 0; im[i] = 0; }
-    fft(re, im);
-    for (let k = 0; k <= half; k++) pow[k] = re[k] * re[k] + im[k] * im[k];
-    perFrame?.(f, re, im);
-    for (let b = 0; b < bands; b++) {
-      const { start, w } = filters[b];
-      let e = 0;
-      for (let k = 0; k < w.length; k++) e += w[k] * pow[start + k];
-      const d = 10 * Math.log10(e + 1e-10);
-      db[f * bands + b] = d;
-      if (d > maxDb) maxDb = d;
+  const db = banks.map(b => new Float32Array(frames * b.length)), maxDb = banks.map(() => -Infinity);
+  const re = new Float32Array(nfft), im = new Float32Array(nfft);
+  const powA = new Float32Array(half + 1), powB = new Float32Array(half + 1);
+  const fill = (buf: Float32Array, f: number) => {
+    const c = f * hop - half; // centred frames, like librosa (center=True, zero padded)
+    for (let i = 0; i < nfft; i++) { const s = c + i; buf[i] = s >= 0 && s < x.length ? x[s] * win[i] : 0; }
+  };
+  const bandsOf = (f: number, pow: Float32Array) => {
+    perFrame?.(f, pow);
+    for (let q = 0; q < banks.length; q++) {
+      const filters = banks[q], out = db[q], nb = filters.length;
+      for (let b = 0; b < nb; b++) {
+        const { start, w } = filters[b];
+        let e = 0;
+        for (let k = 0; k < w.length; k++) e += w[k] * pow[start + k];
+        const d = 10 * Math.log10(e + 1e-10);
+        out[f * nb + b] = d;
+        if (d > maxDb[q]) maxDb[q] = d;
+      }
     }
+  };
+  for (let f = 0; f < frames; f += 2) {
+    const two = f + 1 < frames;
+    fill(re, f);
+    if (two) fill(im, f + 1); else im.fill(0);
+    fft(re, im);
+    // Z = A + iB  →  A[k] = (Z[k] + conj Z[n−k]) / 2,  B[k] = (Z[k] − conj Z[n−k]) / 2i
+    for (let k = 0; k <= half; k++) {
+      const nk = (nfft - k) & (nfft - 1);
+      const zr = re[k], zi = im[k], wr = re[nk], wi = im[nk];
+      const ar = (zr + wr) / 2, ai = (zi - wi) / 2, br = (zi + wi) / 2, bi = (wr - zr) / 2;
+      powA[k] = ar * ar + ai * ai; powB[k] = br * br + bi * bi;
+    }
+    bandsOf(f, powA);
+    if (two) bandsOf(f + 1, powB);
   }
   return { db, frames, maxDb };
+}
+
+/** One filter bank (the common case). */
+function bandFrames(x: Float32Array, nfft: number, hop: number, filters: BandFilter[],
+  perFrame?: (f: number, pow: Float32Array) => void): { db: Float32Array; frames: number; maxDb: number } {
+  const r = bandFramesMulti(x, nfft, hop, [filters], perFrame);
+  return { db: r.db[0], frames: r.frames, maxDb: r.maxDb[0] };
 }
 
 /**
@@ -206,12 +251,13 @@ export function computeSpectrum(x: Float32Array, sr = SPEC_SR): Spectrum {
   const fps = sr / hop, per10 = fps / 10;
   const nCurve = Math.ceil((Math.floor((x.length - 1) / hop) + 1) / per10);
   const centroidSum = new Float32Array(nCurve), centroidN = new Float32Array(nCurve);
-  const { db, frames, maxDb } = bandFrames(x, n, hop, melFilters(sr, n), (f, re, im) => {
+  const multi = bandFramesMulti(x, n, hop, [melFilters(sr, n), linearFilters(sr, n)], (f, pow) => {
     let num = 0, den = 0;
-    for (let k = 0; k <= half; k++) { const mag = Math.hypot(re[k], im[k]); num += mag * k * sr / n; den += mag; }
+    for (let k = 0; k <= half; k++) { const mag = Math.sqrt(pow[k]); num += mag * k * sr / n; den += mag; }
     const ci = Math.min(nCurve - 1, Math.floor(f / per10));
     if (den > 1e-9) { centroidSum[ci] += num / den; centroidN[ci]++; }
   });
+  const db = multi.db[0], frames = multi.frames, maxDb = multi.maxDb[0];
   const m0 = hzToMel(SPEC_FMIN), m1 = hzToMel(SPEC_FMAX);
   const freqs = centres(Array.from({ length: SPEC_BANDS + 2 }, (_, i) => melToHz(m0 + (m1 - m0) * i / (SPEC_BANDS + 1))));
 
@@ -227,7 +273,10 @@ export function computeSpectrum(x: Float32Array, sr = SPEC_SR): Spectrum {
   const floor = sorted[Math.floor(0.02 * (sorted.length - 1))], top = sorted[sorted.length - 1];
   const loud = rmsDb.map(v => Math.max(0, Math.min(1, (v - floor) / Math.max(1e-6, top - floor))));
   const bright = centroidSum.map((v, i) => centroidN[i] ? v / centroidN[i] : 0);
-  return { kind: 'mel', fps, bands: SPEC_BANDS, frames, fmin: SPEC_FMIN, fmax: SPEC_FMAX, freqs, data: quantise(db, maxDb), loud, bright };
+  // Linear came out of the same STFT; it is handed back with the mel view (the worker keeps it).
+  const linFreqs = Float32Array.from({ length: LINEAR_BANDS }, (_, i) => SPEC_FMAX * (i + 1) / (LINEAR_BANDS + 1));
+  const linear: SpectrumView = { kind: 'linear', fps, bands: LINEAR_BANDS, frames, fmin: 0, fmax: SPEC_FMAX, freqs: linFreqs, data: quantise(multi.db[1], multi.maxDb[1]) };
+  return { kind: 'mel', fps, bands: SPEC_BANDS, frames, fmin: SPEC_FMIN, fmax: SPEC_FMAX, freqs, data: quantise(db, maxDb), loud, bright, linear };
 }
 
 /** Row (0 = bottom band) whose centre is nearest `hz`, for axis labels. */

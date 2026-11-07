@@ -22,8 +22,8 @@ import { barAt, passageMoments, quantile, rankIn, type StemName } from '../../co
 import { FEELINGS, QUALITIES } from '../../core/moments';
 import { grooveDetails, harmonyDetails, similarPassages, teaser, voiceDetails } from '../../core/passageDetails';
 import { useLibraryStore } from '../../stores/library';
-import SpectrumSwitch from '../../ui/SpectrumSwitch.vue';
 import LiveLanes from './LiveLanes.vue';
+import { useAudibleTime } from '../../composables/useAudibleTime';
 import NerdOverview from './NerdOverview.vue';
 import { panBy, spanLabel, stepZoom, viewOf, zoomAt, type ZoomState } from '../../core/zoom';
 import { formatTime } from '../../ui/format';
@@ -54,7 +54,7 @@ const range = computed(() => {
   const d = tl > 0 && !capped.value ? tl : playback.duration;
   return d > 0 ? { a: 0, b: d } : null;
 });
-const { timeline, spectrum, spectrumState, spectrumView, spectrumKind, viewBusy, serviceOff } = storeToRefs(timelineStore);
+const { timeline, spectrum, spectrumState, spectrumView, spectrumKind, serviceOff } = storeToRefs(timelineStore);
 
 /**
  * ZOOM - the same zoom as Nerds (core/zoom.ts): − / + steps, Fit, pinch or ⌘-scroll around the
@@ -66,14 +66,16 @@ const { timeline, spectrum, spectrumState, spectrumView, spectrumKind, viewBusy,
 const ZOOM_START: ZoomState = { span: 10, center: 0, follow: true };
 const zoom = ref<ZoomState>({ ...ZOOM_START });
 const whole = computed(() => range.value ?? { a: 0, b: 1 });
-const win = computed(() => viewOf(zoom.value, whole.value, t.value));
+// DELAY FIX: the lanes, overview and Follow use the moment you hear (composables/useAudibleTime.ts).
+const { audibleT } = useAudibleTime();
+const win = computed(() => viewOf(zoom.value, whole.value, audibleT.value));
 const fitted = computed(() => zoom.value.span === null || zoom.value.span >= whole.value.b - whole.value.a);
-const zoomIn = () => { zoom.value = stepZoom(zoom.value, whole.value, t.value, -1); };
-const zoomOut = () => { zoom.value = stepZoom(zoom.value, whole.value, t.value, 1); };
+const zoomIn = () => { zoom.value = stepZoom(zoom.value, whole.value, audibleT.value, -1); };
+const zoomOut = () => { zoom.value = stepZoom(zoom.value, whole.value, audibleT.value, 1); };
 const fit = () => { zoom.value = { ...zoom.value, span: null }; };
 const toggleFollow = () => { const [v0, v1] = win.value; zoom.value = { ...zoom.value, follow: !zoom.value.follow, center: (v0 + v1) / 2 }; };
-const onZoom = (factor: number, at: number) => { zoom.value = zoomAt(zoom.value, whole.value, t.value, factor, at); };
-const onPan = (d: number) => { zoom.value = panBy(zoom.value, whole.value, t.value, d); };
+const onZoom = (factor: number, at: number) => { zoom.value = zoomAt(zoom.value, whole.value, audibleT.value, factor, at); };
+const onPan = (d: number) => { zoom.value = panBy(zoom.value, whole.value, audibleT.value, d); };
 const onCenter = (c: number) => { if (!fitted.value) zoom.value = { ...zoom.value, follow: false, center: c }; };
 // A new passage starts at the opening view again.
 watch(() => [range.value?.a, range.value?.b], () => { zoom.value = { ...ZOOM_START }; });
@@ -206,7 +208,6 @@ const measurements = computed(() => {
         <div v-if="!sel && capped" class="caption sub">Analysis covers the first {{ ANALYSIS_CAP_SEC / 60 }} minutes of this song.</div>
       </div>
       <div class="tools">
-        <SpectrumSwitch :kind="spectrumKind" :busy="viewBusy" @select="k => timelineStore.setSpectrumKind(k)" />
         <div class="zoom" role="group" aria-label="Zoom">
           <button type="button" class="zb" aria-label="Zoom out" title="Zoom out (−)" :disabled="fitted" @click="zoomOut">−</button>
           <span class="span" aria-live="polite">{{ fitted ? 'Fit' : spanLabel(win[1] - win[0]) }}</span>
@@ -225,17 +226,20 @@ const measurements = computed(() => {
       <div v-for="w in waitingMoments" :key="w" class="mo wait"><span class="mt">…</span><span>{{ w }}</span></div>
     </div>
 
-    <NerdOverview v-if="!fitted" class="over" :envelope="timelineStore.envelope" :range="range" :win="win" :t="t" @center="onCenter" />
+    <NerdOverview v-if="!fitted" class="over" :envelope="timelineStore.envelope" :range="range" :win="win" :t="audibleT" @center="onCenter" />
     <div class="lanes-wrap" tabindex="0" aria-label="Lanes. + and − zoom, 0 fits, F follows the playhead" @keydown="onKey">
     <LiveLanes
       :timeline="timeline"
       :spectrum="spectrum"
       :view="spectrumView"
       :range="range"
-      :t="t"
+      :t="audibleT"
       :win="win"
       :active-stem="activeStem"
       :waiting-text="waitingText"
+      :spectrum-kind="spectrumKind"
+      :ready-kinds="timelineStore.readyKinds"
+      @kind="k => timelineStore.setSpectrumKind(k)"
       @seek="s => playback.clickSeek(s)"
       @loop="setLoop"
       @solo="solo"

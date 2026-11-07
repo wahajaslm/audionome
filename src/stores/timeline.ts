@@ -5,6 +5,7 @@ import { SPEC_SR, type Spectrum, type SpectrumKind, type SpectrumView } from '..
 import { getSetting, putSetting } from '../core/repository';
 import { fallbackUrl } from '../core/library';
 import { measureLoudness } from '../core/audioGraph';
+import { warmTiles } from '../core/laneDraw';
 import { parseBitrate, type BitrateInfo } from '../core/bitrate';
 import { makeEnvelope, type Envelope } from '../core/envelope';
 import { useLibraryStore } from './library';
@@ -79,6 +80,23 @@ export const useTimelineStore = defineStore('timeline', () => {
     finally { viewBusy.value = false; }
     if (mySeq === seq && spectrumKind.value !== kind) ensureView(spectrumKind.value);
   }
+
+  /** Builds the chosen view first, then the others, one at a time in the worker. */
+  async function prefetchViews(mySeq: number): Promise<void> {
+    // Linear first: it came out of the mel pass and only has to be handed over.
+    const order: SpectrumKind[] = ['linear', 'cqt'];
+    for (const k of order) {
+      if (mySeq !== seq) return;
+      if (k === 'mel' || views.value[k]) continue;
+      while (viewBusy.value && mySeq === seq) await new Promise(r => setTimeout(r, 100));
+      await ensureView(k);
+    }
+  }
+
+  /** Views ready to show at once (the picker marks the others as being made). */
+  const readyKinds = computed<SpectrumKind[]>(() => (spectrum.value ? ['mel', ...(Object.keys(views.value) as SpectrumKind[])] : []));
+  // Draw-ready tiles for every finished view, made when the browser is idle (core/laneDraw.ts).
+  watch(readyKinds, () => warmTiles([spectrum.value, views.value.linear, views.value.cqt]));
 
   const quick = computed(() => hasQuick(timeline.value));
   const full = computed(() => hasFull(timeline.value));
@@ -180,7 +198,9 @@ export const useTimelineStore = defineStore('timeline', () => {
       if (mySeq !== seq) return;
       spectrum.value = result;
       spectrumState.value = 'done';
-      ensureView(spectrumKind.value);
+      // SPEED FIX - make the other views in the background now (Linear is instant, CQT a few
+      // seconds in the worker), so a later switch shows them at once.
+      prefetchViews(mySeq).catch(console.warn);
     } catch (err) {
       console.warn('Spectrum notice:', err);
       if (mySeq === seq) spectrumState.value = 'error';
@@ -226,5 +246,5 @@ export const useTimelineStore = defineStore('timeline', () => {
     });
   }
 
-  return { trackId, timeline, spectrum, bitrate, envelope, spectrumState, spectrumKind, spectrumView, viewBusy, setSpectrumKind, serviceOff, quick, full, statusText, load, bind };
+  return { trackId, timeline, spectrum, bitrate, envelope, readyKinds, spectrumState, spectrumKind, spectrumView, viewBusy, setSpectrumKind, serviceOff, quick, full, statusText, load, bind };
 });

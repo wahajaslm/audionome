@@ -9,7 +9,9 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { BAR_STEPS, labelStep, noteName, quantile, STEM_NAMES, TIME_STEPS, type StemName, type Timeline } from '../../core/timeline';
-import { bandForHz, spectrumLabels, spectrumTiles, SPEC_TILE, type Spectrum, type SpectrumView } from '../../core/spectrum';
+import { type Spectrum, type SpectrumKind, type SpectrumView } from '../../core/spectrum';
+import { drawSpectrum, drawSpectrumLabels, tilesFor } from '../../core/laneDraw';
+import SpectrumKindPicker from '../../ui/SpectrumKindPicker.vue';
 import { useTimeDrag } from '../../composables/useTimeDrag';
 
 const props = defineProps<{
@@ -25,8 +27,11 @@ const props = defineProps<{
   /** 'all', a stem (solo) or 'no_<stem>' (mute): what is playing. */
   activeStem: string;
   waitingText: { quick: string; full: string; spectrum: string };
+  /** The chosen spectrum view and the views ready to show (picker in the label column). */
+  spectrumKind: SpectrumKind;
+  readyKinds: SpectrumKind[];
 }>();
-const emit = defineEmits<{ seek: [sec: number]; loop: [a: number, b: number]; solo: [stem: StemName]; mute: [stem: StemName]; zoom: [factor: number, atSec: number]; pan: [deltaSec: number] }>();
+const emit = defineEmits<{ seek: [sec: number]; loop: [a: number, b: number]; solo: [stem: StemName]; mute: [stem: StemName]; zoom: [factor: number, atSec: number]; pan: [deltaSec: number]; kind: [kind: SpectrumKind] }>();
 
 type Row = { k: 'bar' | 'spec' | 'chord' | 'melody' | 'stem' | 'loud' | 'axis'; h: number; gap?: number; name: string; s?: StemName; y?: number };
 const ROWS: Row[] = [
@@ -46,7 +51,7 @@ const cv = ref<HTMLCanvasElement | null>(null);
 const width = ref(0);
 let ro: ResizeObserver | null = null;
 let tiles: HTMLCanvasElement[] = [];
-watch(() => props.view, s => { tiles = s ? spectrumTiles(s) : []; }, { immediate: true });
+watch(() => props.view, s => { tiles = s ? tilesFor(s) : []; }, { immediate: true });
 
 const soloed = computed(() => (STEM_NAMES as readonly string[]).includes(props.activeStem) ? props.activeStem : null);
 const mutedStem = computed(() => props.activeStem.startsWith('no_') ? props.activeStem.slice(3) : null);
@@ -105,22 +110,9 @@ function draw(): void {
     } else if (r.k === 'spec') {
       const sp = props.view;
       if (!sp || !tiles.length) { pend(r, props.waitingText.spectrum); continue; }
-      // Slice [v0, v1] out of the tiles; a view can cross a tile edge, so draw per tile.
-      const f0 = Math.max(0, v0 * sp.fps), f1 = Math.min(sp.frames, v1 * sp.fps);
-      g.imageSmoothingEnabled = true;
-      for (let ti = Math.floor(f0 / SPEC_TILE); ti <= Math.floor((f1 - 1) / SPEC_TILE) && ti < tiles.length; ti++) {
-        const t0 = ti * SPEC_TILE, a = Math.max(f0, t0), b = Math.min(f1, t0 + tiles[ti].width);
-        if (b <= a) continue;
-        g.drawImage(tiles[ti], a - t0, 0, b - a, sp.bands, X(a / sp.fps), ry, X(b / sp.fps) - X(a / sp.fps), r.h);
-      }
-      // Axis labels follow the view: Hz for mel and linear, note names for CQT.
-      const bandY = (f: number) => ry + r.h - (bandForHz(sp, f) + 0.5) / sp.bands * r.h;
-      g.font = '600 10px ' + font;
-      for (const [f, label] of spectrumLabels(sp.kind)) {
-        const yy = bandY(f);
-        g.fillStyle = 'rgba(14,14,16,0.72)'; g.fillRect(2, yy - 7, 40, 13);
-        g.fillStyle = C.ink; g.fillText(label, 5, yy + 3);
-      }
+      // Shared with Nerds (core/laneDraw.ts): centred columns, frequency labels.
+      drawSpectrum(g, sp, tiles, X, v0, v1, { y: ry, h: r.h });
+      drawSpectrumLabels(g, sp, { y: ry, h: r.h }, font, C.ink);
     } else if (r.k === 'chord') {
       if (!tl?.chords?.length) { pend(r, props.waitingText.quick); continue; }
       for (const ch of tl.chords) {
@@ -234,7 +226,7 @@ const stemsReady = computed(() => !!props.timeline?.stems);
     <div class="lbl" :style="{ height: HEIGHT + 'px' }">
       <div v-for="r in ROWS.filter(x => x.name)" :key="r.name" class="l" :style="{ top: r.y + 'px', height: r.h + 'px' }">
         <span v-if="r.s" class="sw" :style="{ background: 'var(--stem-' + r.s + ')' }"></span>
-        <span>{{ r.name }}<small v-if="r.k === 'spec' && $props.view" class="kindl">{{ $props.view.kind === 'cqt' ? 'CQT' : $props.view.kind === 'linear' ? 'Linear' : 'Mel' }}</small></span>
+        <span>{{ r.name }}<SpectrumKindPicker v-if="r.k === 'spec'" :kind="$props.spectrumKind" :ready="$props.readyKinds" @select="k => emit('kind', k)" /></span>
         <template v-if="r.s">
           <button type="button" class="sm" :aria-pressed="soloed === r.s" :disabled="!stemsReady" :aria-label="'Solo ' + r.s" @click="emit('solo', r.s)">S</button>
           <button type="button" class="sm" :aria-pressed="mutedStem === r.s" :disabled="!stemsReady" :aria-label="'Mute ' + r.s" @click="emit('mute', r.s)">M</button>

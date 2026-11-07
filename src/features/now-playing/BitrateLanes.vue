@@ -10,7 +10,9 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { frameAt, type BitrateInfo } from '../../core/bitrate';
 import { FRAME_DETAIL_SEC } from '../../core/zoom';
 import type { Envelope } from '../../core/envelope';
-import { bandForHz, spectrumLabels, spectrumTiles, SPEC_TILE, type SpectrumView } from '../../core/spectrum';
+import { type SpectrumKind, type SpectrumView } from '../../core/spectrum';
+import { drawSpectrum, drawSpectrumLabels, tilesFor } from '../../core/laneDraw';
+import SpectrumKindPicker from '../../ui/SpectrumKindPicker.vue';
 import { labelStep, quantile, TIME_STEPS } from '../../core/timeline';
 import { useTimeDrag } from '../../composables/useTimeDrag';
 
@@ -22,6 +24,9 @@ const props = defineProps<{
   /** Fine waveform (core/envelope.ts) and the spectrum view, on the same clock. */
   envelope: Envelope | null;
   view: SpectrumView | null;
+  /** The chosen spectrum view and the views ready to show (picker in the label column). */
+  spectrumKind: SpectrumKind;
+  readyKinds: SpectrumKind[];
   /** Loudness, 10 values per second (service curve or the browser's). */
   loud: ArrayLike<number> | null;
   /** The passage (selection) or the whole song. */
@@ -31,7 +36,7 @@ const props = defineProps<{
   /** The visible [start, end] in seconds (ZOOM FIX: the panel owns zoom and pan, core/zoom.ts). */
   win: [number, number];
 }>();
-const emit = defineEmits<{ seek: [sec: number]; loop: [a: number, b: number]; zoom: [factor: number, atSec: number]; pan: [deltaSec: number] }>();
+const emit = defineEmits<{ seek: [sec: number]; loop: [a: number, b: number]; zoom: [factor: number, atSec: number]; pan: [deltaSec: number]; kind: [kind: SpectrumKind] }>();
 
 /**
  * DECODER LANES - Blocks (long · start · short · stop per frame: shorts mark transients),
@@ -47,7 +52,7 @@ const ROWS = {
 };
 const HEIGHT = 362;
 let tiles: HTMLCanvasElement[] = [];
-watch(() => props.view, v => { tiles = v ? spectrumTiles(v) : []; }, { immediate: true });
+watch(() => props.view, v => { tiles = v ? tilesFor(v) : []; }, { immediate: true });
 /** Block colours by kind: long (quiet), start / stop (amber), short (accent). */
 const BLOCK_PRIORITY = [1, 2, 3, 2];
 const cv = ref<HTMLCanvasElement | null>(null);
@@ -91,20 +96,9 @@ function draw(): void {
   // Spectrum: the same tiles as Explore, sliced to the view.
   const sp = props.view, P = ROWS.spec;
   if (sp && tiles.length) {
-    const f0 = Math.max(0, v0 * sp.fps), f1 = Math.min(sp.frames, v1 * sp.fps);
-    g.imageSmoothingEnabled = !frameMode.value; // at frame zoom, crisp columns line up with frames
-    for (let ti = Math.floor(f0 / SPEC_TILE); ti <= Math.floor((f1 - 1) / SPEC_TILE) && ti < tiles.length; ti++) {
-      const t0 = ti * SPEC_TILE, a = Math.max(f0, t0), b = Math.min(f1, t0 + tiles[ti].width);
-      if (b <= a) continue;
-      g.drawImage(tiles[ti], a - t0, 0, b - a, sp.bands, X(a / sp.fps), P.y, X(b / sp.fps) - X(a / sp.fps), P.h);
-    }
-    g.imageSmoothingEnabled = true;
-    g.font = '600 10px ' + font;
-    for (const [hz, label] of spectrumLabels(sp.kind)) {
-      const yy = P.y + P.h - (bandForHz(sp, hz) + 0.5) / sp.bands * P.h;
-      g.fillStyle = 'rgba(14,14,16,0.72)'; g.fillRect(2, yy - 7, 40, 13);
-      g.fillStyle = C.ink; g.fillText(label, 5, yy + 3);
-    }
+    // Shared with Explore (core/laneDraw.ts); crisp at frame zoom so columns line up with frames.
+    drawSpectrum(g, sp, tiles, X, v0, v1, P, frameMode.value);
+    drawSpectrumLabels(g, sp, P, font, C.ink);
     g.font = '10px ' + font;
   } else { g.fillStyle = C.mute; g.fillText('Reading audio…', 8, P.y + P.h / 2); }
 
@@ -293,7 +287,7 @@ const drag = useTimeDrag(
   <div class="lanes">
     <div class="lbl" :style="{ height: HEIGHT + 'px' }">
       <div class="l" :style="{ top: ROWS.wave.y + 'px', height: ROWS.wave.h + 'px' }"><span>Waveform</span></div>
-      <div class="l" :style="{ top: ROWS.spec.y + 'px', height: ROWS.spec.h + 'px' }"><span>Spectrum<small v-if="$props.view">{{ $props.view.kind === 'cqt' ? 'CQT' : $props.view.kind === 'linear' ? 'Linear' : 'Mel' }}</small></span></div>
+      <div class="l" :style="{ top: ROWS.spec.y + 'px', height: ROWS.spec.h + 'px' }"><span>Spectrum<SpectrumKindPicker :kind="$props.spectrumKind" :ready="$props.readyKinds" @select="k => emit('kind', k)" /></span></div>
       <div class="l" :style="{ top: ROWS.rate.y + 'px', height: ROWS.rate.h + 'px' }">
         <span>Bitrate<small v-if="bitrate">{{ bitrate.codec }} {{ bitrate.mode }}{{ bitrate.exact ? '' : ' · average' }}</small></span>
       </div>

@@ -11,6 +11,7 @@
 import { computed, ref, watch } from 'vue';
 import { panBy, spanLabel, stepZoom, viewOf, zoomAt, type ZoomState } from '../../core/zoom';
 import NerdOverview from './NerdOverview.vue';
+import { useAudibleTime } from '../../composables/useAudibleTime';
 import { formatTime } from '../../ui/format';
 import { usePlaybackStore } from '../../stores/playback';
 import { useTimelineStore } from '../../stores/timeline';
@@ -27,21 +28,33 @@ const timeline = useTimelineStore();
  * and an overview with the visible window as a draggable box. Frame bars appear at ≤ 3 s.
  */
 const zoom = ref<ZoomState>({ span: null, center: 0, follow: true });
+/** The moment you hear (DELAY FIX): lanes, cards and Follow use it, not the decoder clock. */
+const { latency, audibleT } = useAudibleTime();
 
 /** The passage, or the whole song (the file's own length when it was read). */
 const range = computed(() => playback.sel ?? { a: 0, b: timeline.bitrate?.durationSec || playback.duration || 1 });
-const win = computed(() => viewOf(zoom.value, range.value, playback.t));
+const win = computed(() => viewOf(zoom.value, range.value, audibleT.value));
+/** The Alignment block in the panel: every timing correction, in numbers. */
+const alignment = computed(() => {
+  const fr = timeline.bitrate?.frames, sp = timeline.spectrumView;
+  const rows: { k: string; v: string }[] = [];
+  rows.push({ k: 'Output latency', v: latency.value ? `${(latency.value * 1000).toFixed(0)} ms, compensated` : 'starts with playback' });
+  if (fr) rows.push({ k: 'Encoder priming', v: fr.skipSec ? `${(fr.skipSec * 1000).toFixed(1)} ms skipped` : 'none' });
+  if (sp) rows.push({ k: 'Spectrum frames', v: `centred · ${(1000 / sp.fps).toFixed(1)} ms step` });
+  if (timeline.envelope) rows.push({ k: 'Waveform', v: `${(1000 / timeline.envelope.rate).toFixed(0)} ms resolution` });
+  return rows;
+});
 const spanText = computed(() => spanLabel(win.value[1] - win.value[0]));
 const fitted = computed(() => zoom.value.span === null || zoom.value.span >= range.value.b - range.value.a);
-const zoomIn = () => { zoom.value = stepZoom(zoom.value, range.value, playback.t, -1); };
-const zoomOut = () => { zoom.value = stepZoom(zoom.value, range.value, playback.t, 1); };
+const zoomIn = () => { zoom.value = stepZoom(zoom.value, range.value, audibleT.value, -1); };
+const zoomOut = () => { zoom.value = stepZoom(zoom.value, range.value, audibleT.value, 1); };
 const fit = () => { zoom.value = { ...zoom.value, span: null }; };
 const toggleFollow = () => {
   const [v0, v1] = win.value;
   zoom.value = { ...zoom.value, follow: !zoom.value.follow, center: (v0 + v1) / 2 };
 };
-const onZoom = (factor: number, at: number) => { zoom.value = zoomAt(zoom.value, range.value, playback.t, factor, at); };
-const onPan = (d: number) => { zoom.value = panBy(zoom.value, range.value, playback.t, d); };
+const onZoom = (factor: number, at: number) => { zoom.value = zoomAt(zoom.value, range.value, audibleT.value, factor, at); };
+const onPan = (d: number) => { zoom.value = panBy(zoom.value, range.value, audibleT.value, d); };
 const onCenter = (c: number) => { if (!fitted.value) zoom.value = { ...zoom.value, follow: false, center: c }; };
 // A new passage starts at Fit.
 watch(() => [range.value.a, range.value.b], () => { zoom.value = { ...zoom.value, span: null }; });
@@ -73,13 +86,13 @@ function loopRange(a: number, b: number): void {
         <button type="button" class="zt" :aria-pressed="zoom.follow" title="Keep the playhead in the middle (F)" @click="toggleFollow">Follow</button>
       </div>
     </header>
-    <NerdOverview v-if="!fitted" class="over" :envelope="timeline.envelope" :range="range" :win="win" :t="playback.t" @center="onCenter" />
+    <NerdOverview v-if="!fitted" class="over" :envelope="timeline.envelope" :range="range" :win="win" :t="audibleT" @center="onCenter" />
     <div class="lanes-wrap" tabindex="0" aria-label="Lanes. + and − zoom, 0 fits, F follows the playhead" @keydown="onKey">
-    <BitrateLanes :bitrate="timeline.bitrate" :envelope="timeline.envelope" :view="timeline.spectrumView" :win="win" :loud="loud" :range="range" :sel="playback.sel" :t="playback.t" @seek="s => playback.clickSeek(s)" @loop="loopRange" @zoom="onZoom" @pan="onPan" />
+    <BitrateLanes :bitrate="timeline.bitrate" :envelope="timeline.envelope" :view="timeline.spectrumView" :win="win" :spectrum-kind="timeline.spectrumKind" :ready-kinds="timeline.readyKinds" @kind="k => timeline.setSpectrumKind(k)" :loud="loud" :range="range" :sel="playback.sel" :t="audibleT" @seek="s => playback.clickSeek(s)" @loop="loopRange" @zoom="onZoom" @pan="onPan" />
     </div>
     <p class="hint">Pinch or ⌘-scroll to zoom · ⇧-scroll or swipe to pan · drag to loop · frame bars at 3 s and less</p>
     <!-- At a glance: the frame now, this passage, the file (NerdCards.vue). -->
-    <NerdCards :bitrate="timeline.bitrate" :t="playback.t" :range="range" :is-passage="!!playback.sel" />
+    <NerdCards :bitrate="timeline.bitrate" :t="audibleT" :alignment="alignment" :range="range" :is-passage="!!playback.sel" />
     <details class="details">
       <summary>Details</summary>
       <NerdStats />
