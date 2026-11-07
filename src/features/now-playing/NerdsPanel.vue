@@ -4,17 +4,17 @@
  * passage or loop, else the whole song.
  *   header      Stats for nerds · this passage 1:10 – 1:22   (Follow playhead | Whole passage)
  *   curves      Bitrate (large) · Loudness · time — playhead and loop band; click / drag
- *   this line   12.0 s · 118–139 kbps · avg 128 · 187 kB · now 131 kbps · looped 3×
- *   columns     File · Playback · Analysis (NerdStats.vue)
+ *   curves      + Blocks · Gain · Reservoir (MP3) / Shape (AAC): decoder fields per frame
+ *   cards       Now · This passage · File (NerdCards.vue)
+ *   Details     the File · Playback · Analysis columns as text (NerdStats.vue), folded
  */
 import { computed, ref } from 'vue';
-import { frameAt, frameLine, framesIn, rangeStats } from '../../core/bitrate';
-import { bytes } from '../../core/nerdStats';
 import { formatTime } from '../../ui/format';
 import { usePlaybackStore } from '../../stores/playback';
 import { useTimelineStore } from '../../stores/timeline';
 import BitrateLanes from './BitrateLanes.vue';
 import NerdStats from './NerdStats.vue';
+import NerdCards from './NerdCards.vue';
 
 const playback = usePlaybackStore();
 const timeline = useTimelineStore();
@@ -24,38 +24,6 @@ const zoom = ref<'frames' | 'live' | 'all'>('all');
 /** The passage, or the whole song (the file's own length when it was read). */
 const range = computed(() => playback.sel ?? { a: 0, b: timeline.bitrate?.durationSec || playback.duration || 1 });
 const loud = computed(() => timeline.timeline?.mix ?? timeline.spectrum?.loud ?? null);
-const nowKbps = computed(() => {
-  const br = timeline.bitrate;
-  return br ? br.kbps[Math.min(br.kbps.length - 1, Math.max(0, Math.floor(playback.t / br.binSec)))] : null;
-});
-/** The line under the curves, for the passage (or the whole song). */
-const line = computed(() => {
-  const br = timeline.bitrate, r = range.value, out: string[] = [];
-  out.push((r.b - r.a).toFixed(1) + ' s');
-  const st = br ? rangeStats(br, r.a, r.b) : null;
-  if (st) {
-    out.push(st.min === st.max ? `${st.avg} kbps` : `${st.min}–${st.max} kbps · avg ${st.avg}`);
-    out.push(bytes(st.bytes) + ' in the file');
-  }
-  if (nowKbps.value != null && br?.exact) out.push(`now ${nowKbps.value} kbps`);
-  if (playback.loop && playback.sel) out.push(`looped ${playback.loops}×`);
-  return out.join(' · ');
-});
-/** The loop's frames (only with a selection): which, how many, how big. */
-const passageFrames = computed(() => {
-  const f = timeline.bitrate?.frames, sel = playback.sel;
-  if (!f || !sel) return '';
-  const x = framesIn(f, sel.a, sel.b);
-  if (!x) return '';
-  const unit = f.unit === 'page' ? 'pages' : f.unit === 'sample' ? 'packets' : 'frames';
-  return `${unit} ${(x.first + 1).toLocaleString('en')}–${(x.last + 1).toLocaleString('en')} · ${x.count.toLocaleString('en')} ${unit} · ${x.min}–${x.max} B, avg ${x.avg} B`
-    + (f.offset[x.first] ? ` · bytes ${Math.round(f.offset[x.first]).toLocaleString('en')}–${Math.round(f.offset[x.last] + f.size[x.last]).toLocaleString('en')}` : '');
-});
-/** The frame under the playhead, live. */
-const frameNow = computed(() => {
-  const f = timeline.bitrate?.frames;
-  return f ? frameLine(f, frameAt(f, playback.t)) : '';
-});
 function loopRange(a: number, b: number): void {
   playback.beginSelection(); playback.updateSelection(a, b); playback.commitSelection();
   if (!playback.loop) playback.toggleLoop();
@@ -76,10 +44,12 @@ function loopRange(a: number, b: number): void {
       </div>
     </header>
     <BitrateLanes :bitrate="timeline.bitrate" :loud="loud" :range="range" :sel="playback.sel" :t="playback.t" :zoom="zoom" @seek="s => playback.clickSeek(s)" @loop="loopRange" />
-    <p class="line label">{{ line }}</p>
-    <p v-if="passageFrames" class="line frame label">this passage: {{ passageFrames }}</p>
-    <p v-if="frameNow" class="line frame label">now: {{ frameNow }}</p>
-    <NerdStats />
+    <!-- At a glance: the frame now, this passage, the file (NerdCards.vue). -->
+    <NerdCards :bitrate="timeline.bitrate" :t="playback.t" :range="range" :is-passage="!!playback.sel" />
+    <details class="details">
+      <summary>Details</summary>
+      <NerdStats />
+    </details>
   </section>
 </template>
 
@@ -91,7 +61,8 @@ function loopRange(a: number, b: number): void {
 .seg { display: flex; gap: 4px; }
 .seg button { height: 28px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-pill); background: none; color: var(--ink-sub); font: 13px var(--font-sans); cursor: pointer; }
 .seg button[aria-pressed='true'] { color: var(--ink); border-color: var(--ink-sub); }
-.line { margin: var(--space-2) 0 0 106px; color: var(--ink-sub); font-variant-numeric: tabular-nums; }
-.line.frame { margin-top: 2px; color: var(--ink-mute); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.details { margin-top: var(--space-3); }
+.details summary { cursor: pointer; color: var(--ink-sub); font-size: 13px; padding: 4px 0; }
+.details summary:hover { color: var(--ink); }
 @media (max-width: 600px) { .line { margin-left: 0; } }
 </style>

@@ -23,8 +23,15 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ seek: [sec: number]; loop: [a: number, b: number] }>();
 
-const ROWS = { rate: { y: 0, h: 96 }, loud: { y: 104, h: 34 }, axis: { y: 144, h: 14 } };
-const HEIGHT = 158;
+/**
+ * DECODER LANES - Blocks (long · start · short · stop per frame: shorts mark transients),
+ * Gain (the quantiser's global gain), and Reservoir (MP3 bit reservoir) or Shape (AAC window
+ * shape, KBD lit) sit between Bitrate and Loudness.
+ */
+const ROWS = { rate: { y: 0, h: 84 }, blocks: { y: 92, h: 14 }, gain: { y: 112, h: 30 }, third: { y: 148, h: 22 }, loud: { y: 178, h: 30 }, axis: { y: 214, h: 14 } };
+const HEIGHT = 228;
+/** Block colours by kind: long (quiet), start / stop (amber), short (accent). */
+const BLOCK_PRIORITY = [1, 2, 3, 2];
 const cv = ref<HTMLCanvasElement | null>(null);
 const width = ref(0);
 let ro: ResizeObserver | null = null;
@@ -95,6 +102,63 @@ function draw(): void {
     g.fillText(`avg ${br.avgKbps}`, w - 52, Y(br.avgKbps) - 3);
   }
 
+  // Decoder lanes: one value per screen pixel (the strongest block, the mean gain …).
+  const fr = br?.frames, dec = fr?.dec;
+  if (fr && dec) {
+    let i0 = Math.max(0, frameAt(fr, v0)), i1 = frameAt(fr, v1);
+    if (i1 < 0) i1 = fr.t.length - 1;
+    const cols = Math.ceil(w), blk = new Uint8Array(cols), gSum = new Float32Array(cols), gN = new Uint16Array(cols);
+    const tSum = new Float32Array(cols), tN = new Uint16Array(cols);
+    for (let i = i0; i <= i1; i++) {
+      const xa = Math.max(0, Math.floor(X(fr.t[i]))), xb = Math.min(cols - 1, Math.max(xa, Math.ceil(X(fr.t[i] + fr.dur[i])) - 1));
+      for (let x = xa; x <= xb; x++) {
+        if (dec.block[i] < 4) blk[x] = Math.max(blk[x], BLOCK_PRIORITY[dec.block[i]]);
+        if (dec.gain[i] !== 255) { gSum[x] += dec.gain[i]; gN[x]++; }
+        const third = dec.codec === 'mp3' ? dec.reservoir[i] : dec.shape[i] === 255 ? -1 : dec.shape[i];
+        if (third >= 0) { tSum[x] += third; tN[x]++; }
+      }
+    }
+    const B = ROWS.blocks;
+    for (let x = 0; x < cols; x++) {
+      if (!blk[x]) continue;
+      g.fillStyle = blk[x] === 3 ? C.accent : blk[x] === 2 ? '#c9a25a' : C.line;
+      g.fillRect(x, B.y + (blk[x] === 1 ? 5 : 0), 1, blk[x] === 1 ? 4 : B.h);
+    }
+    const curve = (row: { y: number; h: number }, sum: Float32Array, cnt: Uint16Array, color: string) => {
+      let lo = Infinity, hi = -Infinity;
+      for (let x = 0; x < cols; x++) if (cnt[x]) { const v = sum[x] / cnt[x]; lo = Math.min(lo, v); hi = Math.max(hi, v); }
+      if (!(hi > lo)) { hi = lo + 1; }
+      g.strokeStyle = color; g.lineWidth = 1.25; g.beginPath();
+      let started = false;
+      for (let x = 0; x < cols; x++) {
+        if (!cnt[x]) continue;
+        const yy = row.y + row.h - ((sum[x] / cnt[x] - lo) / (hi - lo)) * (row.h - 2) - 1;
+        if (!started) { g.moveTo(x, yy); started = true; } else g.lineTo(x, yy);
+      }
+      g.stroke(); g.lineWidth = 1;
+      return [lo, hi];
+    };
+    const [glo, ghi] = curve(ROWS.gain, gSum, gN, C.ink);
+    g.fillStyle = C.mute; g.fillText(`${Math.round(ghi)}`, 4, ROWS.gain.y + 9); g.fillText(`${Math.round(glo)}`, 4, ROWS.gain.y + ROWS.gain.h - 2);
+    const T = ROWS.third;
+    if (dec.codec === 'mp3') {
+      const [, rhi] = curve(T, tSum, tN, C.sub);
+      g.fillStyle = C.mute; g.fillText(`${Math.round(rhi)} B`, 4, T.y + 9);
+    } else {
+      // Window shape: KBD lit, sine dim (the share of KBD frames under each pixel).
+      for (let x = 0; x < cols; x++) {
+        if (!tN[x]) continue;
+        const kbd = tSum[x] / tN[x];
+        g.fillStyle = kbd > 0.5 ? C.accent : C.line; g.globalAlpha = kbd > 0.5 ? 0.35 + 0.65 * kbd : 1;
+        g.fillRect(x, T.y + 6, 1, T.h - 12);
+      }
+      g.globalAlpha = 1;
+    }
+  } else if (br) {
+    g.fillStyle = C.mute;
+    g.fillText(br.codec === 'MP3' || br.codec === 'AAC' ? 'Reading the bitstream…' : 'No decoder fields for ' + br.codec, 8, ROWS.gain.y + 18);
+  }
+
   const L = ROWS.loud, loud = props.loud;
   if (loud && loud.length > 2) {
     const lo = quantile(loud, 0.05), hi = quantile(loud, 0.995) || 1;
@@ -145,6 +209,9 @@ const drag = useTimeDrag(
       <div class="l" :style="{ top: ROWS.rate.y + 'px', height: ROWS.rate.h + 'px' }">
         <span>Bitrate<small v-if="bitrate">{{ bitrate.codec }} {{ bitrate.mode }}{{ bitrate.exact ? '' : ' · average' }}</small></span>
       </div>
+      <div class="l" :style="{ top: ROWS.blocks.y + 'px', height: ROWS.blocks.h + 'px' }"><span>Blocks</span></div>
+      <div class="l" :style="{ top: ROWS.gain.y + 'px', height: ROWS.gain.h + 'px' }"><span>Gain<small>global gain</small></span></div>
+      <div class="l" :style="{ top: ROWS.third.y + 'px', height: ROWS.third.h + 'px' }"><span>{{ bitrate?.frames?.dec?.codec === 'aac' ? 'Shape' : 'Reservoir' }}<small>{{ bitrate?.frames?.dec?.codec === 'aac' ? 'KBD lit · sine dim' : 'main_data_begin' }}</small></span></div>
       <div class="l" :style="{ top: ROWS.loud.y + 'px', height: ROWS.loud.h + 'px' }"><span>Loudness</span></div>
     </div>
     <canvas ref="cv" class="cv" :style="{ height: HEIGHT + 'px' }" aria-label="Bitrate and loudness over time. Click to jump, drag to loop." @pointerdown="drag.pointerdown" @pointermove="drag.pointermove" @pointerup="drag.pointerup" @pointercancel="drag.pointercancel"></canvas>

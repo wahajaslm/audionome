@@ -31,6 +31,10 @@ export interface BitrateInfo {
    * `kbps` is the MP3 header's own bitrate (0 for other codecs).
    */
   frames?: FrameTable;
+  /** AAC: profile from the AudioSpecificConfig (e.g. "HE-AAC (SBR)") and the declared bitrates. */
+  profile?: string;
+  declaredMaxKbps?: number;
+  declaredAvgKbps?: number;
 }
 
 export interface FrameTable {
@@ -45,6 +49,8 @@ export interface FrameTable {
    * Example: LAME delay 576 at 44.1 kHz → 1105 samples → 25.1 ms.
    */
   skipSec: number;
+  /** Decoder-level fields per frame (core/bitstream.ts): block / window, shape, gain, reservoir. */
+  dec?: DecoderFields;
 }
 
 /** Grows while parsing, then becomes typed arrays (a 13-min AAC: ~34 000 entries, ~1 MB). */
@@ -72,6 +78,13 @@ export function lameGapless(b: Uint8Array, xo: number): { delay: number; padding
   return { delay: (b[p] << 4) | (b[p + 1] >> 4), padding: ((b[p + 1] & 0x0f) << 8) | b[p + 2], encoder: enc.replace(/[^\x20-\x7e]/g, '').trim() };
 }
 
+/** Adds decoder fields to a frame table (a bad bitstream only loses these fields, not the rest). */
+function withDecoder(t: FrameTable | undefined, decode: (t: FrameTable) => DecoderFields): FrameTable | undefined {
+  if (!t) return t;
+  try { t.dec = decode(t); } catch (err) { console.warn('Decoder fields notice:', err); }
+  return t;
+}
+
 /** Index of the frame playing at `sec` (binary search), or -1. */
 export function frameAt(f: FrameTable, sec: number): number {
   let lo = 0, hi = f.t.length - 1;
@@ -89,6 +102,8 @@ export function frameSummary(f: FrameTable): { count: number; durMs: number; min
 }
 
 export const BIN_SEC = 0.5;
+
+import { decodeAac, decodeMp3, parseEsds, type DecoderFields } from './bitstream.ts';
 
 /** Collects (start time, duration, bytes) of frames into kbps bins. */
 class Bins {
@@ -168,7 +183,7 @@ function parseMp3(b: Uint8Array): BitrateInfo | null {
   }
   if (!bins.time) return null;
   return { codec: 'MP3', container: 'MP3', mode: rates.size > 1 ? 'VBR' : 'CBR', sampleRate: sr, channels: mono ? 1 : 2,
-    avgKbps: bins.avg(), kbps: bins.kbps(), binSec: BIN_SEC, durationSec: bins.time, exact: true, frames: log.table('frame', skip) };
+    avgKbps: bins.avg(), kbps: bins.kbps(), binSec: BIN_SEC, durationSec: bins.time, exact: true, frames: withDecoder(log.table('frame', skip), t => decodeMp3(b, t)) };
 }
 
 // ---- MP4 / M4A ---------------------------------------------------------------------------
@@ -203,11 +218,12 @@ function parseMp4(b: Uint8Array): BitrateInfo | null {
   const timescale = dv.getUint8(mdhd.body) === 1 ? dv.getUint32(mdhd.body + 20) : dv.getUint32(mdhd.body + 12);
   const trackId = (() => { const tk = child(dv, trak, 'tkhd'); return tk ? dv.getUint32(tk.body + (dv.getUint8(tk.body) === 1 ? 20 : 12)) : 1; })();
   const stsd = child(dv, stbl, 'stsd');
-  let codec = 'Audio', sr: number | undefined, ch: number | undefined;
+  let codec = 'Audio', sr: number | undefined, ch: number | undefined, esds: ReturnType<typeof parseEsds> = null;
   if (stsd) {
     const e = stsd.body + 8, four = ascii(b, e + 4, 4);
     codec = ({ mp4a: 'AAC', alac: 'ALAC', Opus: 'Opus', fLaC: 'FLAC', 'ac-3': 'AC-3', 'ec-3': 'E-AC-3' } as Record<string, string>)[four] ?? four;
     ch = dv.getUint16(e + 24); sr = dv.getUint32(e + 32) >>> 16;
+    if (four === 'mp4a') esds = parseEsds(b, e + 36, Math.min(stsd.end, e + dv.getUint32(e)));
   }
   const bins = new Bins(), sizes = new Set<number>(), log = new FrameLog();
   // Plain files: one size per sample (stsz) and runs of durations (stts).
@@ -293,7 +309,10 @@ function parseMp4(b: Uint8Array): BitrateInfo | null {
   }
   const lossless = codec === 'ALAC' || codec === 'FLAC';
   return { codec, container: 'M4A', mode: lossless ? 'lossless' : sizes.size > 1 ? 'VBR' : 'CBR', sampleRate: sr, channels: ch,
-    avgKbps: bins.avg(), kbps: bins.kbps(), binSec: BIN_SEC, durationSec: bins.time, exact: true, frames: log.table('sample', skip) };
+    avgKbps: bins.avg(), kbps: bins.kbps(), binSec: BIN_SEC, durationSec: bins.time, exact: true,
+    frames: codec === 'AAC' ? withDecoder(log.table('sample', skip), t => decodeAac(b, t)) : log.table('sample', skip),
+    profile: esds?.profile, declaredMaxKbps: esds?.maxBitrate ? Math.round(esds.maxBitrate / 1000) : undefined,
+    declaredAvgKbps: esds?.avgBitrate ? Math.round(esds.avgBitrate / 1000) : undefined };
 }
 
 // ---- OGG (Opus, Vorbis) --------------------------------------------------------------------

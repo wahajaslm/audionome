@@ -737,6 +737,45 @@ test('effects: DJ filter, width matrix, echo timing and tab dots', async () => {
   assert.equal(fx.withControl(p, 'chorus', 0).preset, 'off', 'back to neutral: Off');
 });
 
+test('transpose: pitch moves, tempo and level stay; 0 passes straight through (TRANSPOSE)', async () => {
+  const { PitchShifter, pitchRatio, PITCH_LATENCY } = await import('../src/core/pitchShift.ts');
+  const { fft } = await import('../src/core/spectrum.ts');
+  assert.ok(Math.abs(pitchRatio(-2) - 0.8909) < 1e-4);
+  assert.ok(Math.abs(pitchRatio(0, 30) - 1.0175) < 1e-4);
+  const sr = 44100, n = sr * 2, N = 32768;
+  const sine = new Float32Array(n);
+  for (let i = 0; i < n; i++) sine[i] = 0.5 * Math.sin(2 * Math.PI * 440 * i / sr);
+  const run = ratio => {
+    const y = new Float32Array(n), ps = new PitchShifter();
+    for (let o = 0; o < n; o += 128) ps.process(sine.subarray(o, o + 128), y.subarray(o, o + 128), ratio);
+    return y;
+  };
+  const peakHz = y => {
+    const re = Float32Array.from(y.subarray(n - N)), im = new Float32Array(N);
+    for (let i = 0; i < N; i++) re[i] *= 0.5 - 0.5 * Math.cos(2 * Math.PI * i / N);
+    fft(re, im);
+    let bk = 0, best = 0;
+    for (let k = 1; k < N / 2; k++) { const m = Math.hypot(re[k], im[k]); if (m > best) { best = m; bk = k; } }
+    return bk * sr / N;
+  };
+  const rms = y => Math.sqrt(y.subarray(n - N).reduce((s, v) => s + v * v, 0) / N);
+  for (const st of [-12, -2, 7]) {
+    const y = run(pitchRatio(st)), want = 440 * pitchRatio(st);
+    assert.ok(Math.abs(peakHz(y) - want) < 2, `${st} semitones: ${peakHz(y).toFixed(1)} Hz, want ${want.toFixed(1)}`);
+    assert.ok(Math.abs(20 * Math.log10(rms(y) / rms(sine))) < 1, `${st} semitones: level within 1 dB`);
+  }
+  assert.deepEqual(run(1), sine, 'ratio 1: untouched, no delay');
+  assert.ok(PITCH_LATENCY / sr < 0.04, 'shifting delays the sound by under 40 ms');
+  const fx = await import('../src/core/effects.ts');
+  assert.equal(fx.cleanEffects({ room: 0.2 }).transpose, 0, 'older saves load in the original key');
+  assert.equal(fx.cleanEffects({ transpose: 40, tune: -2.6 }).transpose, 12);
+  assert.equal(fx.cleanEffects({ transpose: 40, tune: -2.6 }).tune, -3, 'whole cents');
+  assert.equal(fx.groupActive(fx.withControl(fx.NEUTRAL, 'transpose', -2), 'tape'), true);
+  const tr = fx.GROUPS.find(g => g.id === 'tape').controls.find(c => c.key === 'transpose');
+  assert.equal(tr.show(-2), '−2 semitones');
+  assert.equal(tr.show(0), 'original key');
+});
+
 test('lanes: label spacing grows with the zoom so labels never collide (LABEL FIX)', async () => {
   const { labelStep, BAR_STEPS, TIME_STEPS } = await import('../src/core/timeline.ts');
   assert.equal(labelStep(40, BAR_STEPS, 34), 1, 'a short passage: every bar');
@@ -872,4 +911,58 @@ test('frames: timing and bytes match ffprobe; LAME priming skipped; loop frames 
   assert.ok(Math.abs(loop.count - Math.round(2 / 0.026122)) <= 1, 'about 77 frames in 2 s: ' + loop.count);
   assert.ok(loop.min >= 626 && loop.max <= 627);
   assert.equal(lameGapless(new Uint8Array(200), 0), null, 'no LAME tag: null');
+});
+
+test('decoder fields: MP3 side info on a real file follows the block grammar', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { parseBitrate } = await import('../src/core/bitrate.ts');
+  const { blockMix } = await import('../src/core/bitstream.ts');
+  const f = parseBitrate(readFileSync(new URL('../public/Naina-Moray-Coke-Studio-129-205.mp3', import.meta.url))).frames;
+  const d = f.dec;
+  assert.equal(d.codec, 'mp3');
+  const mix = blockMix(d, 0, d.block.length - 1);
+  assert.equal(mix.known, f.t.length, 'every frame read');
+  assert.ok(mix.long > 0.8 && mix.short > 0, 'mostly long blocks, some short ones');
+  // The reservoir is 9 bits (≤ 511 bytes) and a global gain is 8 bits.
+  assert.ok(Math.max(...d.reservoir) <= 511);
+  assert.ok([...d.gain].every(g => g <= 255));
+});
+
+test('decoder fields: an AAC CPE packet gives window sequence, shape, M/S and gain', async () => {
+  const { decodeAac, transients, sizeHistogram } = await import('../src/core/bitstream.ts');
+  // bits: id CPE(001) tag(0000) common(1) | ics: reserved(0) seq EIGHT_SHORT(10) shape KBD(1) max_sfb(1110) grouping(1111111)
+  //       | ms_mask_present all(10) | global_gain 150(10010110)
+  const bits = '001' + '0000' + '1' + '0' + '10' + '1' + '1110' + '1111111' + '10' + '10010110';
+  const bytes = new Uint8Array(Math.ceil(bits.length / 8) + 4);
+  for (let i = 0; i < bits.length; i++) if (bits[i] === '1') bytes[i >> 3] |= 0x80 >> (i & 7);
+  const buf = new Uint8Array(100); buf.set(bytes, 10);
+  const table = { unit: 'sample', t: new Float64Array([0]), dur: new Float32Array([0.023]), size: new Uint32Array([bytes.length]), offset: new Float64Array([10]), kbps: new Uint16Array(1), hdr: new Uint32Array(1), skipSec: 0 };
+  const d = decodeAac(buf, table);
+  assert.equal(d.element[0], 1, 'CPE');
+  assert.equal(d.block[0], 2, 'eight short');
+  assert.equal(d.shape[0], 1, 'KBD');
+  assert.equal(d.ms[0], 2, 'M/S on all bands');
+  assert.equal(d.gain[0], 150);
+  assert.equal(d.bits[0], 14, 'max_sfb');
+  assert.equal(transients({ block: Uint8Array.from([0, 1, 2, 2, 3, 0, 2, 0]) }, 0, 7), 2);
+  assert.deepEqual(sizeHistogram([10, 20, 20, 30], 0, 3, 2).counts, [1, 3]);
+});
+
+test('decoder fields: in a real AAC file every window overlaps its neighbour correctly', async () => {
+  const { existsSync, readFileSync } = await import('node:fs');
+  const p = new URL('../musicdna/service/audio_cache/06f0b181-a56f-4f88-acbd-9b186fb4c93d.m4a', import.meta.url);
+  if (!existsSync(p)) return; // the local service cache is not in every checkout
+  const { parseBitrate } = await import('../src/core/bitrate.ts');
+  const i = parseBitrate(readFileSync(p));
+  assert.equal(i.profile, 'AAC-LC');
+  const b = i.frames.dec.block;
+  let bad = 0;
+  // ISO 14496-3 overlap rule: a window ending in a short slope (START, SHORT) must be followed by
+  // one starting with a short slope (SHORT, STOP); a long ending (LONG, STOP) by LONG or START.
+  // (START → STOP directly is legal; encoders use it.)
+  for (let k = 1; k < b.length; k++) {
+    const shortEnd = b[k - 1] === 1 || b[k - 1] === 2, shortStart = b[k] === 2 || b[k] === 3;
+    if (shortEnd !== shortStart) bad++;
+  }
+  assert.equal(bad, 0, 'every packet overlaps its neighbour with matching slopes');
 });
