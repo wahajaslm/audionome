@@ -1006,3 +1006,40 @@ test('spectrum: two frames per FFT and the shared pass give the same pictures (S
   const odd = computeView(new Float32Array(SPEC_HOP * 4 + 1).fill(0.1), 'linear');
   assert.equal(odd.frames, 5);
 });
+
+test('frame inspector: MP3 side info obeys the bit reservoir in every frame of a real file', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { parseBitrate } = await import('../src/core/bitrate.ts');
+  const { mp3SideInfo, mp3HeaderFields, reservoirSource } = await import('../src/core/bitstream.ts');
+  const file = new Uint8Array(readFileSync(new URL('../public/Naina-Moray-Coke-Studio-129-205.mp3', import.meta.url)));
+  const f = parseBitrate(file).frames;
+  let over = 0, checked = 0;
+  for (let i = 0; i + 1 < f.t.length; i++) {
+    const a = mp3SideInfo(file.subarray(f.offset[i], f.offset[i] + f.size[i]), f.hdr[i]);
+    const b = mp3SideInfo(file.subarray(f.offset[i + 1], f.offset[i + 1] + f.size[i + 1]), f.hdr[i + 1]);
+    const mainBytes = f.size[i] - 4 - a.crcBytes - a.sideBytes;
+    const used = a.granules.flat().reduce((s, g) => s + g.part23, 0) / 8;
+    // bytes this frame can use = what it inherits + its own main data − what it leaves for the next
+    if (used > a.mainDataBegin + mainBytes - b.mainDataBegin + 1) over++;
+    checked++;
+  }
+  assert.equal(over, 0, `audio data fits the reservoir in all ${checked} frames`);
+  const k = 100, fields = mp3HeaderFields(f.hdr[k]);
+  assert.deepEqual(fields.map(x => x.bits).reduce((s, x) => s + x, 0), 32);
+  assert.equal(fields[0].text, 'frame sync');
+  assert.equal(fields.find(x => x.name === 'bitrate').text, '192 kbps');
+  const src = reservoirSource(f, k, mp3SideInfo(file.subarray(f.offset[k], f.offset[k] + f.size[k]), f.hdr[k]).mainDataBegin);
+  if (src) assert.ok(src.from <= src.to && src.to === k - 1);
+});
+
+test('frame inspector: AAC fields of a hand-made CPE packet, in order', async () => {
+  const { aacFields, aacPacket } = await import('../src/core/bitstream.ts');
+  const bits = '001' + '0000' + '1' + '0' + '10' + '1' + '1110' + '1011111' + '10' + '10010110';
+  const b = new Uint8Array(Math.ceil(bits.length / 8) + 2);
+  for (let i = 0; i < bits.length; i++) if (bits[i] === '1') b[i >> 3] |= 0x80 >> (i & 7);
+  const fields = aacFields(b);
+  assert.deepEqual(fields.map(x => x.name), ['id_syn_ele', 'element_tag', 'common_window', 'ics_reserved', 'window_sequence', 'window_shape', 'max_sfb', 'sf_grouping', 'ms_mask_present', 'global_gain']);
+  assert.equal(fields.find(x => x.name === 'global_gain').value, 150);
+  const p = aacPacket(b);
+  assert.equal(p.element, 'CPE'); assert.equal(p.channels[0].groups, 2, 'grouping 1011111: one 0 → two groups');
+});

@@ -109,6 +109,12 @@ function draw(): void {
     if (i1 < 0) i1 = fe.t.length - 1;
     g.fillStyle = 'rgba(255,255,255,0.10)';
     for (let i = i0; i <= i1; i++) g.fillRect(Math.round(X(fe.t[i])), W.y, 1, P.y + P.h - W.y);
+    // The frame you are on (the inspector's frame), outlined through every lane.
+    const cur = frameAt(fe, props.t);
+    if (cur >= 0) {
+      g.strokeStyle = C.ink; g.lineWidth = 1;
+      g.strokeRect(Math.round(X(fe.t[cur])) + 0.5, W.y + 0.5, Math.max(2, Math.round(X(fe.t[cur] + fe.dur[cur]) - X(fe.t[cur])) - 1), ROWS.third.y + ROWS.third.h - W.y - 1);
+    }
     // Short blocks / windows tint their frame across the waveform and spectrum.
     const d = fe.dec;
     if (d) for (let i = i0; i <= i1; i++) if (d.block[i] === 2) {

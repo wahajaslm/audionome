@@ -93,6 +93,21 @@ export const useTimelineStore = defineStore('timeline', () => {
     }
   }
 
+  /**
+   * Bytes of the loaded song's file, read on demand (the frame inspector reads one frame and
+   * the reservoir bytes before it). From the stored copy, else a range request to the service.
+   * Example: readBytes(10252751, 960) → that MP3 frame, header first.
+   */
+  async function readBytes(offset: number, length: number): Promise<Uint8Array> {
+    const t = trackId.value ? useLibraryStore().track(trackId.value) : undefined;
+    if (!t) return new Uint8Array();
+    const end = offset + Math.max(0, length);
+    if (t.audioBlob instanceof Blob && t.audioBlob.size > 0) return new Uint8Array(await t.audioBlob.slice(offset, end).arrayBuffer());
+    const r = await fetch(fallbackUrl(t), { headers: { Range: `bytes=${offset}-${end - 1}` } });
+    const buf = new Uint8Array(await r.arrayBuffer());
+    return r.status === 206 ? buf : buf.subarray(offset, end); // a server without ranges sends the whole file
+  }
+
   /** Views ready to show at once (the picker marks the others as being made). */
   const readyKinds = computed<SpectrumKind[]>(() => (spectrum.value ? ['mel', ...(Object.keys(views.value) as SpectrumKind[])] : []));
   // Draw-ready tiles for every finished view, made when the browser is idle (core/laneDraw.ts).
@@ -246,5 +261,5 @@ export const useTimelineStore = defineStore('timeline', () => {
     });
   }
 
-  return { trackId, timeline, spectrum, bitrate, envelope, readyKinds, spectrumState, spectrumKind, spectrumView, viewBusy, setSpectrumKind, serviceOff, quick, full, statusText, load, bind };
+  return { trackId, timeline, spectrum, bitrate, envelope, readyKinds, readBytes, spectrumState, spectrumKind, spectrumView, viewBusy, setSpectrumKind, serviceOff, quick, full, statusText, load, bind };
 });

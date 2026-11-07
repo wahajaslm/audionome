@@ -65,6 +65,27 @@ export const usePlaybackStore = defineStore('playback', () => {
   let fxFor: string | null = null;
   /** Bumped when a crossfade swaps decks, so the waveform follows the playing element. */
   const deck = ref(0);
+  /**
+   * AUDITION - plays a short stretch (one frame, with or without context) and comes back to
+   * `back`, paused, without touching the selection or the loop. Nerds' frame inspector uses it.
+   * Example: audition(255.049, 255.121, 255.073) → hears frames 10,699–10,701, playhead back on 10,700.
+   */
+  let auditionBack: number | null = null;
+  async function audition(a: number, b: number, back: number): Promise<void> {
+    const e = engineRef;
+    if (!e || region.loop) return;
+    auditionBack = back;
+    region.previewEnd = b; region.t = a; e.setTime(a);
+    try { await e.play(); } catch (err) { auditionBack = null; console.warn(err); }
+  }
+  /** Puts the playhead on `sec`, paused (frame stepping). */
+  function stepTo(sec: number): void {
+    const e = engineRef;
+    if (!e) return;
+    if (e.isPlaying()) e.pause();
+    auditionBack = null; region.previewEnd = null;
+    region.t = Math.max(0, Math.min(duration.value, sec)); e.setTime(region.t);
+  }
   /** Moment radio (core/radio.ts): on while it runs; `radioNow` is the passage playing. */
   const radio = ref(false);
   const radioNow = ref<RadioItem | null>(null);
@@ -105,6 +126,10 @@ export const usePlaybackStore = defineStore('playback', () => {
       log: { flushSpan: listening.flushSpan, emit: listening.emit, openSpan: listening.openSpan },
       isLoading: () => loading.value,
       onPreviewEnd: () => {
+        if (auditionBack !== null) { // a frame audition ended: back to where it started, paused
+          e.pause(); region.t = auditionBack; e.setTime(auditionBack); auditionBack = null;
+          return true;
+        }
         if (!queue.value.length && !radio.value) return false;
         if (radioBusy) return true; // the crossfade is on its way: keep playing into it
         playNext().catch(console.error);
@@ -786,7 +811,7 @@ export const usePlaybackStore = defineStore('playback', () => {
 
   return {
     ...toRefs(region), trackId, duration, playing, loading, volume, activeStem, queue, currentTrack,
-    rate, normalize, snapToBeat, practicing, setRate, fx, effects, effectsOn, rendering, applyPreset, setControl, resetFxGroup, listenTo, hasVersions, toggleOriginal, saveVersion, renameVersion, deleteVersion, downloadVersion, deck, radio, radioNow, startRadio, stopRadio, radioSkip, radioRestart, cycleRate, setNormalize, setSnapToBeat, onLoudnessMeasured,
+    rate, normalize, snapToBeat, practicing, setRate, fx, effects, effectsOn, rendering, applyPreset, setControl, resetFxGroup, listenTo, hasVersions, toggleOriginal, saveVersion, renameVersion, deleteVersion, downloadVersion, deck, audition, stepTo, radio, radioNow, startRadio, stopRadio, radioSkip, radioRestart, cycleRate, setNormalize, setSnapToBeat, onLoudnessMeasured,
     engine, attachEngine, onDuration, onFrame, checkRegionEnd, loadSettings, lastPlayed,
     selectTrack, changeTrack, openRange, playQueue, playNext, togglePlay, playSelection, seekBy, stepBy,
     clickSeek, beginSelection, updateSelection, commitSelection, resizeSelection, endResize, selectAroundPlayhead, clearSelection,

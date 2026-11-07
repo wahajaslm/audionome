@@ -212,3 +212,189 @@ export function sizeHistogram(size: ArrayLike<number>, i0: number, i1: number, b
   for (let i = i0; i <= i1; i++) counts[Math.min(bins - 1, Math.floor(((size[i] - lo) / span) * bins))]++;
   return { lo, hi, counts };
 }
+
+// ---- Frame inspector: every field of one frame -----------------------------------------------
+
+/** One field of a frame header, for the bit diagram. */
+export interface BitField { name: string; bits: number; value: number; text: string }
+
+const MP3_KBPS_V1L3 = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
+const MP3_KBPS_V2L3 = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
+
+/**
+ * The 32 header bits as named fields, in order (ISO 11172-3 §2.4.1.3).
+ * Example FF FB 94 64 → sync 2047 · MPEG-1 · Layer III · no CRC · 320 kbps … (MPEG-1 L3 at 48 kHz).
+ */
+export function mp3HeaderFields(h: number): BitField[] {
+  const f = (shift: number, bits: number) => (h >>> shift) & ((1 << bits) - 1);
+  const ver = f(19, 2), layer = f(17, 2), mode = f(6, 2), sri = f(10, 2), bri = f(12, 4);
+  const mpeg1 = ver === 3, l3 = layer === 1;
+  const sr = (mpeg1 ? [44100, 48000, 32000] : ver === 2 ? [22050, 24000, 16000] : [11025, 12000, 8000])[sri];
+  return [
+    { name: 'sync', bits: 11, value: f(21, 11), text: f(21, 11) === 0x7ff ? 'frame sync' : 'not a sync word' },
+    { name: 'version', bits: 2, value: ver, text: ['MPEG-2.5', 'reserved', 'MPEG-2', 'MPEG-1'][ver] },
+    { name: 'layer', bits: 2, value: layer, text: ['reserved', 'Layer III', 'Layer II', 'Layer I'][layer] },
+    { name: 'protection', bits: 1, value: f(16, 1), text: f(16, 1) ? 'no CRC' : 'CRC follows' },
+    { name: 'bitrate', bits: 4, value: bri, text: l3 ? `${(mpeg1 ? MP3_KBPS_V1L3 : MP3_KBPS_V2L3)[bri] ?? '?'} kbps` : `index ${bri}` },
+    { name: 'sample rate', bits: 2, value: sri, text: sr ? `${sr / 1000} kHz` : 'reserved' },
+    { name: 'padding', bits: 1, value: f(9, 1), text: f(9, 1) ? '+1 byte' : 'none' },
+    { name: 'private', bits: 1, value: f(8, 1), text: String(f(8, 1)) },
+    { name: 'mode', bits: 2, value: mode, text: ['stereo', 'joint stereo', 'dual channel', 'mono'][mode] },
+    { name: 'mode ext', bits: 2, value: f(4, 2), text: mode !== 1 ? 'unused' : l3 ? ['L/R', 'intensity', 'M/S', 'M/S + intensity'][f(4, 2)] : `bands ${4 * f(4, 2) + 4}–31` },
+    { name: 'copyright', bits: 1, value: f(3, 1), text: f(3, 1) ? 'yes' : 'no' },
+    { name: 'original', bits: 1, value: f(2, 1), text: f(2, 1) ? 'original' : 'copy' },
+    { name: 'emphasis', bits: 2, value: f(0, 2), text: ['none', '50/15 µs', 'reserved', 'CCITT J.17'][f(0, 2)] },
+  ];
+}
+
+export interface Mp3Granule {
+  part23: number; bigValues: number; globalGain: number; scalefacCompress: number; windowSwitching: boolean;
+  blockType: number; mixed: boolean; tableSelect: number[]; subblockGain: number[]; region0: number; region1: number;
+  preflag: number | null; scalefacScale: number; count1table: number;
+}
+export interface Mp3SideInfo {
+  mainDataBegin: number; privateBits: number; scfsi: number[][]; granules: Mp3Granule[][];
+  /** Byte layout of the frame: header, CRC (0 or 2), side info. */
+  headerBytes: 4; crcBytes: number; sideBytes: number;
+}
+
+/** Every side-info field of one MP3 frame; `b` starts at the frame's first byte. */
+export function mp3SideInfo(b: Uint8Array, h: number): Mp3SideInfo | null {
+  const b1 = (h >>> 16) & 0xff, b3 = h & 0xff;
+  if (((b1 >> 1) & 3) !== 1) return null; // Layer III only
+  const mpeg1 = ((b1 >> 3) & 3) === 3, crc = !(b1 & 1), nch = (b3 >> 6) === 3 ? 1 : 2;
+  const sideBytes = mpeg1 ? (nch === 1 ? 17 : 32) : (nch === 1 ? 9 : 17), crcBytes = crc ? 2 : 0;
+  if (b.length < 4 + crcBytes + sideBytes) return null;
+  const r = new Bits(b, 4 + crcBytes, 4 + crcBytes + sideBytes);
+  const mainDataBegin = r.read(mpeg1 ? 9 : 8), privateBits = r.read(mpeg1 ? (nch === 1 ? 5 : 3) : (nch === 1 ? 1 : 2));
+  const scfsi = Array.from({ length: nch }, () => (mpeg1 ? [r.read(1), r.read(1), r.read(1), r.read(1)] : []));
+  const granules: Mp3Granule[][] = [];
+  for (let gr = 0; gr < (mpeg1 ? 2 : 1); gr++) {
+    const chans: Mp3Granule[] = [];
+    for (let ch = 0; ch < nch; ch++) {
+      const part23 = r.read(12), bigValues = r.read(9), globalGain = r.read(8), scalefacCompress = r.read(mpeg1 ? 4 : 9);
+      const windowSwitching = !!r.read(1);
+      let blockType = 0, mixed = false, tableSelect: number[], subblockGain: number[] = [], region0: number, region1: number;
+      if (windowSwitching) {
+        blockType = r.read(2); mixed = !!r.read(1);
+        tableSelect = [r.read(5), r.read(5)]; subblockGain = [r.read(3), r.read(3), r.read(3)];
+        // Implicit region counts (ISO 11172-3 §2.4.2.7): region0 = 8 for short non-mixed blocks,
+        // else 7; region1 = 36, i.e. "the rest of the spectrum".
+        region0 = blockType === 2 && !mixed ? 8 : 7; region1 = 36;
+      } else {
+        tableSelect = [r.read(5), r.read(5), r.read(5)]; region0 = r.read(4); region1 = r.read(3);
+      }
+      const preflag = mpeg1 ? r.read(1) : null;
+      chans.push({ part23, bigValues, globalGain, scalefacCompress, windowSwitching, blockType, mixed, tableSelect, subblockGain, region0, region1,
+        preflag, scalefacScale: r.read(1), count1table: r.read(1) });
+    }
+    granules.push(chans);
+  }
+  return { mainDataBegin, privateBits, scfsi, granules, headerBytes: 4, crcBytes, sideBytes };
+}
+
+/**
+ * The bit reservoir, frame by frame: main_data_begin points this many bytes back into the main
+ * data of earlier frames. Returns which earlier frames hold the borrowed bytes.
+ * Example: 503 B back, previous frames each have 924 B of main data → all from frame i − 1.
+ */
+export function reservoirSource(f: FrameTable, i: number, back: number): { from: number; to: number } | null {
+  if (!back || !f.hdr[i]) return null;
+  let need = back, k = i - 1;
+  for (; k >= 0 && need > 0; k--) {
+    const h = f.hdr[k], b1 = (h >>> 16) & 0xff, b3 = h & 0xff, mpeg1 = ((b1 >> 3) & 3) === 3, mono = (b3 >> 6) === 3;
+    const side = mpeg1 ? (mono ? 17 : 32) : (mono ? 9 : 17);
+    need -= f.size[k] - 4 - (b1 & 1 ? 0 : 2) - side;
+  }
+  return { from: k + 1, to: i - 1 };
+}
+
+export interface AacChannel { globalGain: number | null; windowSequence: number; windowShape: number; maxSfb: number; groups: number; grouping: number | null }
+export interface AacPacketInfo {
+  element: 'SCE' | 'CPE' | 'LFE' | string; tag: number; commonWindow: boolean | null; msMaskPresent: number | null;
+  channels: AacChannel[];
+  /** Bits read from the start of the packet (the rest is section, scalefactor and spectral data). */
+  bitsRead: number;
+}
+const ELEMENT = ['SCE', 'CPE', 'CCE', 'LFE', 'DSE', 'PCE', 'FIL', 'END'];
+
+/** The first channel element of one AAC packet, field by field; `b` starts at the packet. */
+export function aacPacket(b: Uint8Array): AacPacketInfo | null {
+  if (b.length < 3) return null;
+  const r = new Bits(b, 0, b.length);
+  const id = r.read(3), tag = r.read(4);
+  if (id !== 0 && id !== 1 && id !== 3) return { element: ELEMENT[id], tag, commonWindow: null, msMaskPresent: null, channels: [], bitsRead: 7 };
+  const ics = (): AacChannel => {
+    r.skip(1);
+    const windowSequence = r.read(2), windowShape = r.read(1);
+    if (windowSequence === 2) {
+      const maxSfb = r.read(4), grouping = r.read(7);
+      let groups = 1;
+      for (let k = 6; k >= 0; k--) if (!((grouping >> k) & 1)) groups++;
+      return { globalGain: null, windowSequence, windowShape, maxSfb, groups, grouping };
+    }
+    const maxSfb = r.read(6); r.skip(1);
+    return { globalGain: null, windowSequence, windowShape, maxSfb, groups: 1, grouping: null };
+  };
+  let commonWindow: boolean | null = null, ms: number | null = null;
+  const channels: AacChannel[] = [];
+  if (id === 1) {
+    commonWindow = !!r.read(1);
+    if (commonWindow) {
+      const info = ics();
+      ms = r.read(2);
+      if (ms === 1) r.skip(info.groups * info.maxSfb);
+      info.globalGain = r.read(8);
+      channels.push(info, { ...info, globalGain: null }); // channel 2 shares the window; its gain sits after channel 1's data
+    } else {
+      const g = r.read(8), info = ics();
+      channels.push({ ...info, globalGain: g });
+    }
+  } else {
+    const g = r.read(8), info = ics();
+    channels.push({ ...info, globalGain: g });
+  }
+  return { element: ELEMENT[id], tag, commonWindow, msMaskPresent: ms, channels, bitsRead: 0 };
+}
+
+/**
+ * The first fields of an AAC packet as named bit fields (ISO 14496-3 §4.4.2), up to channel 1's
+ * global gain. What follows (section data, scalefactors, spectral data) needs a full decoder.
+ * Example CPE, common window, long: id 1 · tag 0 · common 1 · seq 0 · shape 1 · max_sfb 49 … gain 156.
+ */
+export function aacFields(b: Uint8Array): BitField[] {
+  if (b.length < 3) return [];
+  const r = new Bits(b, 0, b.length), out: BitField[] = [];
+  const take = (name: string, bits: number, text: (v: number) => string) => { const v = r.read(bits); out.push({ name, bits, value: v, text: text(v) }); return v; };
+  const id = take('id_syn_ele', 3, v => ELEMENT[v]);
+  take('element_tag', 4, v => String(v));
+  if (id !== 0 && id !== 1 && id !== 3) return out;
+  const ics = () => {
+    take('ics_reserved', 1, v => String(v));
+    const seq = take('window_sequence', 2, v => ['only long', 'long start', 'eight short', 'long stop'][v]);
+    take('window_shape', 1, v => (v ? 'KBD' : 'sine'));
+    if (seq === 2) {
+      const sfb = take('max_sfb', 4, v => String(v));
+      const g = take('sf_grouping', 7, v => v.toString(2).padStart(7, '0'));
+      let groups = 1;
+      for (let k = 6; k >= 0; k--) if (!((g >> k) & 1)) groups++;
+      return { sfb, groups };
+    }
+    const sfb = take('max_sfb', 6, v => String(v));
+    take('predictor', 1, v => (v ? 'on' : 'off'));
+    return { sfb, groups: 1 };
+  };
+  if (id === 1) {
+    const common = take('common_window', 1, v => (v ? 'shared' : 'separate'));
+    if (common) {
+      const info = ics();
+      const ms = take('ms_mask_present', 2, v => ['off', 'per band', 'all bands', 'reserved'][v]);
+      if (ms === 1 && info.groups * info.sfb > 0) { const n = info.groups * info.sfb; r.skip(n); out.push({ name: 'ms_used', bits: n, value: 0, text: `${n} band flags` }); }
+      take('global_gain', 8, v => String(v));
+      return out;
+    }
+  }
+  take('global_gain', 8, v => String(v));
+  ics();
+  return out;
+}

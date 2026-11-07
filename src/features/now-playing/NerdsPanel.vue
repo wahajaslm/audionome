@@ -18,6 +18,7 @@ import { useTimelineStore } from '../../stores/timeline';
 import BitrateLanes from './BitrateLanes.vue';
 import NerdStats from './NerdStats.vue';
 import NerdCards from './NerdCards.vue';
+import NerdFrameInspector from './NerdFrameInspector.vue';
 
 const playback = usePlaybackStore();
 const timeline = useTimelineStore();
@@ -58,8 +59,12 @@ const onPan = (d: number) => { zoom.value = panBy(zoom.value, range.value, audib
 const onCenter = (c: number) => { if (!fitted.value) zoom.value = { ...zoom.value, follow: false, center: c }; };
 // A new passage starts at Fit.
 watch(() => [range.value.a, range.value.b], () => { zoom.value = { ...zoom.value, span: null }; });
+const inspector = ref<InstanceType<typeof NerdFrameInspector> | null>(null);
 function onKey(e: KeyboardEvent): void {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
+  // Frame by frame: ← / → one frame (Shift: 10), Enter plays the frame.
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); inspector.value?.step((e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 10 : 1)); return; }
+  if (e.key === 'Enter') { e.preventDefault(); inspector.value?.play(0); return; }
   const act: Record<string, () => void> = { '+': zoomIn, '=': zoomIn, '-': zoomOut, _: zoomOut, '0': fit, f: toggleFollow, F: toggleFollow };
   const fn = act[e.key];
   if (fn) { e.preventDefault(); fn(); }
@@ -87,12 +92,21 @@ function loopRange(a: number, b: number): void {
       </div>
     </header>
     <NerdOverview v-if="!fitted" class="over" :envelope="timeline.envelope" :range="range" :win="win" :t="audibleT" @center="onCenter" />
-    <div class="lanes-wrap" tabindex="0" aria-label="Lanes. + and − zoom, 0 fits, F follows the playhead" @keydown="onKey">
+    <div class="lanes-wrap" tabindex="0" aria-label="Lanes. + and − zoom, 0 fits, F follows the playhead, ← → step frames, Enter plays the frame" @keydown="onKey">
     <BitrateLanes :bitrate="timeline.bitrate" :envelope="timeline.envelope" :view="timeline.spectrumView" :win="win" :spectrum-kind="timeline.spectrumKind" :ready-kinds="timeline.readyKinds" @kind="k => timeline.setSpectrumKind(k)" :loud="loud" :range="range" :sel="playback.sel" :t="audibleT" @seek="s => playback.clickSeek(s)" @loop="loopRange" @zoom="onZoom" @pan="onPan" />
     </div>
-    <p class="hint">Pinch or ⌘-scroll to zoom · ⇧-scroll or swipe to pan · drag to loop · frame bars at 3 s and less</p>
+    <p class="hint">Pinch or ⌘-scroll to zoom · ⇧-scroll or swipe to pan · drag to loop · ← → step frames · Enter plays the frame</p>
     <!-- At a glance: the frame now, this passage, the file (NerdCards.vue). -->
     <NerdCards :bitrate="timeline.bitrate" :t="audibleT" :alignment="alignment" :range="range" :is-passage="!!playback.sel" />
+    <NerdFrameInspector
+      ref="inspector"
+      :bitrate="timeline.bitrate"
+      :t="audibleT"
+      :playing="playback.playing"
+      :read-bytes="timeline.readBytes"
+      @step="s => playback.stepTo(s)"
+      @audition="(a, b, back) => playback.audition(a, b, back)"
+    />
     <details class="details">
       <summary>Details</summary>
       <NerdStats />
