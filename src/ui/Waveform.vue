@@ -118,7 +118,19 @@ function syncSelection(): void {
     if (Math.abs(r.start - sel.a) > 0.01 || Math.abs(r.end - sel.b) > 0.01) r.setOptions({ start: sel.a, end: sel.b });
     return;
   }
-  regions.addRegion({ id: SEL_ID, start: sel.a, end: sel.b, color: colors.selection, drag: true, resize: true });
+  // NEW LOOP FIX - drag: false. With drag on, a drag that started inside the selection moved
+  // the old loop instead of marking a new one. Example: loop 0:14–0:44, drag from 0:23 to 1:26
+  // → before: the old loop slid to 1:18–1:48; now: a new loop 0:23–1:26. The edges still resize.
+  const reg = regions.addRegion({ id: SEL_ID, start: sel.a, end: sel.b, color: colors.selection, drag: false, resize: true });
+  // Presses on the selection's body pass through to the waveform (a new drag = a new loop);
+  // only its two edge handles catch the pointer, for resizing.
+  const passThrough = () => {
+    const el = reg.element;
+    if (!el) return;
+    el.style.pointerEvents = 'none';
+    for (const h of el.querySelectorAll<HTMLElement>('[part*="region-handle"]')) h.style.pointerEvents = 'auto';
+  };
+  if (reg.element) passThrough(); else reg.once('render', passThrough);
 }
 
 /** Store -> waveform: saved moments as fixed regions the pointer passes through. */
@@ -258,7 +270,21 @@ watch(() => props.media, (el, old) => {
 
 // A click is a press and release in nearly the same place; a drag (selection) is not.
 let downX: number | null = null;
-function onPointerDown(e: PointerEvent): void { downX = e.clientX; }
+/**
+ * WHOLE-WAVE HIGHLIGHT FIX - a drag could start the browser's own text selection, which paints
+ * a uniform blue box over the waveform (it lives in a shadow root, so user-select on the host
+ * did not reach it). Selection is now cleared on press and blocked until release.
+ */
+function blockSelect(e: Event): void { e.preventDefault(); }
+function onPointerDown(e: PointerEvent): void {
+  downX = e.clientX;
+  window.getSelection()?.removeAllRanges();
+  document.addEventListener('selectstart', blockSelect);
+  window.addEventListener('pointerup', () => {
+    document.removeEventListener('selectstart', blockSelect);
+    window.getSelection()?.removeAllRanges();
+  }, { once: true });
+}
 function onClick(e: MouseEvent): void {
   if (downX === null || Math.abs(e.clientX - downX) > 5 || !host.value || !(props.duration > 0)) return;
   downX = null;
@@ -290,6 +316,7 @@ function onKey(e: KeyboardEvent): void {
     :aria-valuetext="formatTime(currentTime) + ' of ' + formatTime(duration)"
     @keydown="onKey"
     @pointerdown="onPointerDown"
+    @dragstart.prevent
     @click="onClick"
   ></div>
 </template>
@@ -315,4 +342,8 @@ function onKey(e: KeyboardEvent): void {
   border-width: 3px !important;
 }
 .mdna-wave ::part(hover-label) { font-family: var(--font-sans); border-radius: var(--radius-sm); }
+/* Nothing inside the waveform can be text-selected (WHOLE-WAVE HIGHLIGHT FIX). */
+.mdna-wave ::part(scroll), .mdna-wave ::part(wrapper), .mdna-wave ::part(canvases), .mdna-wave ::part(progress),
+.mdna-wave ::part(cursor), .mdna-wave ::part(region) { -webkit-user-select: none; user-select: none; }
+.mdna-wave ::selection { background: transparent; }
 </style>
