@@ -33,16 +33,43 @@ export interface BitrateInfo {
   frames?: FrameTable;
 }
 
-export interface FrameTable { unit: 'frame' | 'sample' | 'page'; t: Float64Array; dur: Float32Array; size: Uint32Array; offset: Float64Array; kbps: Uint16Array }
+export interface FrameTable {
+  unit: 'frame' | 'sample' | 'page';
+  /** Start on the playback clock: the encoder's priming (skipSec) is already taken off. */
+  t: Float64Array; dur: Float32Array; size: Uint32Array; offset: Float64Array; kbps: Uint16Array;
+  /** MP3: the 4 header bytes of each frame (mode, padding, CRC …); 0 for other codecs. */
+  hdr: Uint32Array;
+  /**
+   * TIMING FIX - priming the player skips at the start (MP3: LAME encoder delay + 529 decoder
+   * samples; M4A: the edit list). Frame times used to ignore it and ran ~25–50 ms early.
+   * Example: LAME delay 576 at 44.1 kHz → 1105 samples → 25.1 ms.
+   */
+  skipSec: number;
+}
 
 /** Grows while parsing, then becomes typed arrays (a 13-min AAC: ~34 000 entries, ~1 MB). */
 class FrameLog {
-  t: number[] = []; dur: number[] = []; size: number[] = []; offset: number[] = []; kbps: number[] = [];
-  add(t: number, dur: number, size: number, offset = 0, kbps = 0): void { this.t.push(t); this.dur.push(dur); this.size.push(size); this.offset.push(offset); this.kbps.push(kbps); }
-  table(unit: FrameTable['unit']): FrameTable | undefined {
-    return this.t.length ? { unit, t: Float64Array.from(this.t), dur: Float32Array.from(this.dur), size: Uint32Array.from(this.size),
-      offset: Float64Array.from(this.offset), kbps: Uint16Array.from(this.kbps) } : undefined;
+  t: number[] = []; dur: number[] = []; size: number[] = []; offset: number[] = []; kbps: number[] = []; hdr: number[] = [];
+  add(t: number, dur: number, size: number, offset = 0, kbps = 0, hdr = 0): void {
+    this.t.push(t); this.dur.push(dur); this.size.push(size); this.offset.push(offset); this.kbps.push(kbps); this.hdr.push(hdr);
   }
+  table(unit: FrameTable['unit'], skipSec = 0): FrameTable | undefined {
+    return this.t.length ? { unit, t: Float64Array.from(this.t, x => x - skipSec), dur: Float32Array.from(this.dur), size: Uint32Array.from(this.size),
+      offset: Float64Array.from(this.offset), kbps: Uint16Array.from(this.kbps), hdr: Uint32Array.from(this.hdr), skipSec } : undefined;
+  }
+}
+
+/**
+ * The LAME/Lavc tag inside an MP3's Xing/Info frame: encoder delay and end padding (samples).
+ * `xo` = where 'Xing'/'Info' starts. Null when the tag is not there.
+ */
+export function lameGapless(b: Uint8Array, xo: number): { delay: number; padding: number; encoder: string } | null {
+  const flags = (b[xo + 4] << 24 | b[xo + 5] << 16 | b[xo + 6] << 8 | b[xo + 7]) >>> 0;
+  const lo = xo + 8 + (flags & 1 ? 4 : 0) + (flags & 2 ? 4 : 0) + (flags & 4 ? 100 : 0) + (flags & 8 ? 4 : 0);
+  const enc = ascii(b, lo, 9);
+  if (!/^(LAME|Lavc|Lavf|GOGO)/.test(enc)) return null;
+  const p = lo + 21;
+  return { delay: (b[p] << 4) | (b[p + 1] >> 4), padding: ((b[p + 1] & 0x0f) << 8) | b[p + 2], encoder: enc.replace(/[^\x20-\x7e]/g, '').trim() };
 }
 
 /** Index of the frame playing at `sec` (binary search), or -1. */
@@ -122,21 +149,26 @@ function parseMp3(b: Uint8Array): BitrateInfo | null {
     if (f && mp3Frame(b, o + f.len)) break;
   }
   const bins = new Bins(), rates = new Set<number>(), log = new FrameLog();
-  let t = 0, sr = 0, mono = false, frames = 0;
+  let t = 0, sr = 0, mono = false, frames = 0, skip = 0;
   while (o < b.length) {
     const f = mp3Frame(b, o);
     if (!f) { o++; continue; } // resync after junk
     // A Xing/Info frame describes the file; it is not audio.
     const tag = ascii(b, o + (f.mono ? 21 : 36), 4);
-    if (frames === 0 && (tag === 'Xing' || tag === 'Info')) { o += f.len; frames++; continue; }
+    if (frames === 0 && (tag === 'Xing' || tag === 'Info')) {
+      // Gapless info: the player skips encoder delay + 529 decoder samples (TIMING FIX).
+      const g = lameGapless(b, o + (f.mono ? 21 : 36));
+      if (g) skip = (g.delay + 529) / f.sr;
+      o += f.len; frames++; continue;
+    }
     const dur = f.spf / f.sr, size = Math.min(f.len, b.length - o);
     bins.add(t, dur, size);
-    log.add(t, dur, size, o, f.kbps);
+    log.add(t, dur, size, o, f.kbps, ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0);
     rates.add(f.kbps); t += dur; sr = f.sr; mono = f.mono; o += f.len; frames++;
   }
   if (!bins.time) return null;
   return { codec: 'MP3', container: 'MP3', mode: rates.size > 1 ? 'VBR' : 'CBR', sampleRate: sr, channels: mono ? 1 : 2,
-    avgKbps: bins.avg(), kbps: bins.kbps(), binSec: BIN_SEC, durationSec: bins.time, exact: true, frames: log.table('frame') };
+    avgKbps: bins.avg(), kbps: bins.kbps(), binSec: BIN_SEC, durationSec: bins.time, exact: true, frames: log.table('frame', skip) };
 }
 
 // ---- MP4 / M4A ---------------------------------------------------------------------------
@@ -182,13 +214,30 @@ function parseMp4(b: Uint8Array): BitrateInfo | null {
   const stsz = child(dv, stbl, 'stsz'), stts = child(dv, stbl, 'stts');
   if (stsz && stts && dv.getUint32(stsz.body + 8) > 0) {
     const fixed = dv.getUint32(stsz.body + 4), count = dv.getUint32(stsz.body + 8);
+    const sizeOf = (s: number) => fixed || dv.getUint32(stsz.body + 12 + s * 4);
+    // Byte offset of every sample: chunk offsets (stco / co64) and samples per chunk (stsc).
+    const offsets = new Float64Array(count);
+    const stco = child(dv, stbl, 'stco'), co64 = child(dv, stbl, 'co64'), stsc = child(dv, stbl, 'stsc');
+    if ((stco || co64) && stsc) {
+      const nChunks = dv.getUint32((stco ?? co64)!.body + 4), nRuns = dv.getUint32(stsc.body + 4);
+      const chunkAt = (c: number) => (stco ? dv.getUint32(stco.body + 8 + c * 4) : Number(dv.getBigUint64(co64!.body + 8 + c * 8)));
+      let s = 0;
+      for (let r = 0; r < nRuns && s < count; r++) {
+        const first = dv.getUint32(stsc.body + 8 + r * 12) - 1, per = dv.getUint32(stsc.body + 12 + r * 12);
+        const next = r + 1 < nRuns ? dv.getUint32(stsc.body + 8 + (r + 1) * 12) - 1 : nChunks;
+        for (let c = first; c < next && s < count; c++) {
+          let off = chunkAt(c);
+          for (let k = 0; k < per && s < count; k++, s++) { offsets[s] = off; off += sizeOf(s); }
+        }
+      }
+    }
     let s = 0, t = 0;
     const runs = dv.getUint32(stts.body + 4);
     for (let r = 0; r < runs; r++) {
       const n = dv.getUint32(stts.body + 8 + r * 8), delta = dv.getUint32(stts.body + 12 + r * 8) / timescale;
       for (let k = 0; k < n && s < count; k++, s++) {
-        const size = fixed || dv.getUint32(stsz.body + 12 + s * 4);
-        bins.add(t, delta, size); log.add(t, delta, size); sizes.add(size); t += delta;
+        const size = sizeOf(s);
+        bins.add(t, delta, size); log.add(t, delta, size, offsets[s]); sizes.add(size); t += delta;
       }
     }
   } else {
@@ -205,30 +254,46 @@ function parseMp4(b: Uint8Array): BitrateInfo | null {
         if (!tfhd || dv.getUint32(tfhd.body + 4) !== trackId) continue;
         const tf = dv.getUint32(tfhd.body) & 0xffffff;
         let o = tfhd.body + 8, dDur = defDur, dSize = defSize;
-        if (tf & 0x1) o += 8; if (tf & 0x2) o += 4;
+        // Sample bytes start at the base data offset (or the moof box) plus trun's data offset.
+        let base = moof.start;
+        if (tf & 0x1) { base = Number(dv.getBigUint64(o)); o += 8; }
+        if (tf & 0x2) o += 4;
         if (tf & 0x8) { dDur = dv.getUint32(o); o += 4; }
         if (tf & 0x10) { dSize = dv.getUint32(o); o += 4; }
         const tfdt = child(dv, traf, 'tfdt');
         if (tfdt) t = (dv.getUint8(tfdt.body) === 1 ? Number(dv.getBigUint64(tfdt.body + 4)) : dv.getUint32(tfdt.body + 4)) / timescale;
         for (const trun of boxes(dv, traf.body, traf.end).filter(x => x.type === 'trun')) {
           const fl = dv.getUint32(trun.body) & 0xffffff, n = dv.getUint32(trun.body + 4);
-          let p = trun.body + 8;
-          if (fl & 0x1) p += 4; if (fl & 0x4) p += 4;
+          let p = trun.body + 8, off = base;
+          if (fl & 0x1) { off = base + dv.getInt32(p); p += 4; }
+          if (fl & 0x4) p += 4;
           for (let k = 0; k < n; k++) {
             let dur = dDur, size = dSize;
             if (fl & 0x100) { dur = dv.getUint32(p); p += 4; }
             if (fl & 0x200) { size = dv.getUint32(p); p += 4; }
             if (fl & 0x400) p += 4; if (fl & 0x800) p += 4;
-            bins.add(t, dur / timescale, size); log.add(t, dur / timescale, size); sizes.add(size); t += dur / timescale;
+            bins.add(t, dur / timescale, size); log.add(t, dur / timescale, size, off); sizes.add(size); t += dur / timescale; off += size;
           }
         }
       }
     }
   }
   if (!bins.time) return null;
+  // TIMING FIX - the edit list says where playback starts in the samples (AAC priming, often
+  // 1024–2112 samples); the player starts there, so frame times move back by that much.
+  let skip = 0;
+  const elst = path(dv, trak, 'edts', 'elst');
+  if (elst) {
+    const v = dv.getUint8(elst.body), n = dv.getUint32(elst.body + 4), step = v === 1 ? 20 : 12;
+    for (let e = 0; e < n; e++) {
+      const at = elst.body + 8 + e * step + (v === 1 ? 8 : 4);
+      const mediaTime = v === 1 ? Number(dv.getBigInt64(at)) : dv.getInt32(at);
+      if (mediaTime >= 0) { skip = mediaTime / timescale; break; }
+    }
+  }
   const lossless = codec === 'ALAC' || codec === 'FLAC';
   return { codec, container: 'M4A', mode: lossless ? 'lossless' : sizes.size > 1 ? 'VBR' : 'CBR', sampleRate: sr, channels: ch,
-    avgKbps: bins.avg(), kbps: bins.kbps(), binSec: BIN_SEC, durationSec: bins.time, exact: true, frames: log.table('sample') };
+    avgKbps: bins.avg(), kbps: bins.kbps(), binSec: BIN_SEC, durationSec: bins.time, exact: true, frames: log.table('sample', skip) };
 }
 
 // ---- OGG (Opus, Vorbis) --------------------------------------------------------------------
@@ -328,16 +393,57 @@ export function rangeStats(i: BitrateInfo, a: number, b: number): { min: number;
 }
 
 /**
+ * An MP3 frame header, field by field (ISO 11172-3). Example for FF FB 92 64:
+ * { version: 'MPEG-1', layer: 'Layer III', kbps: 128, sampleRate: 44100, padding: true, crc: false,
+ *   mode: 'joint stereo', modeExt: 'M/S stereo', copyright: false, original: true, emphasis: 'none' }.
+ */
+export function mp3Header(h: number): Record<string, string | number | boolean> {
+  const b1 = (h >>> 16) & 0xff, b2 = (h >>> 8) & 0xff, b3 = h & 0xff, ver = (b1 >> 3) & 3, layer = 4 - ((b1 >> 1) & 3);
+  const mode = b3 >> 6, ext = (b3 >> 4) & 3, f = mp3Frame(new Uint8Array([0xff, b1, b2, b3]), 0);
+  return {
+    version: ver === 3 ? 'MPEG-1' : ver === 2 ? 'MPEG-2' : 'MPEG-2.5', layer: ['', 'Layer I', 'Layer II', 'Layer III'][layer],
+    kbps: f?.kbps ?? 0, sampleRate: f?.sr ?? 0, padding: !!((b2 >> 1) & 1), crc: !(b1 & 1),
+    mode: ['stereo', 'joint stereo', 'dual channel', 'mono'][mode],
+    modeExt: mode !== 1 ? '' : layer === 3 ? ['L/R', 'intensity', 'M/S', 'M/S + intensity'][ext] : `bands ${4 * ext + 4}–31`,
+    copyright: !!((b3 >> 3) & 1), original: !!((b3 >> 2) & 1), emphasis: ['none', '50/15 µs', 'reserved', 'CCITT J.17'][b3 & 3],
+  };
+}
+
+/**
+ * The frames of a passage (the loop): which ones, how many, how big.
+ * Example: 1:10–1:22 of a 128 kbps AAC → { first 3015, last 3531, count 517, bytes 192 400, min 6, max 579, avg 372 }.
+ */
+export function framesIn(f: FrameTable, a: number, b: number): { first: number; last: number; count: number; bytes: number; min: number; max: number; avg: number } | null {
+  let first = Math.max(0, frameAt(f, a));
+  if (f.t[first] + f.dur[first] <= a) first++;
+  let last = frameAt(f, b);
+  if (last >= 0 && f.t[last] >= b) last--;
+  if (last < first || first >= f.t.length) return null;
+  let bytes = 0, min = Infinity, max = 0;
+  for (let i = first; i <= last; i++) { bytes += f.size[i]; min = Math.min(min, f.size[i]); max = Math.max(max, f.size[i]); }
+  const count = last - first + 1;
+  return { first, last, count, bytes, min, max, avg: Math.round(bytes / count) };
+}
+
+/**
  * The frame under the playhead, in words (Nerds view, live).
- * Example: "frame 4,123 of 3,276 · 418 B · 128 kbps in its header · 26.12 ms · byte 1,712,034 · 192 kbps over this frame".
+ * Example: "frame 383 of 2,912 · starts 9.987 s · 627 B · 192 kbps in its header · 26.12 ms · byte 240,830 ·
+ *           joint stereo (M/S) · padded · no CRC".
  */
 export function frameLine(f: FrameTable, i: number): string {
   if (i < 0 || i >= f.t.length) return '';
   const name = f.unit === 'page' ? 'page' : f.unit === 'sample' ? 'packet' : 'frame';
-  const out = [`${name} ${(i + 1).toLocaleString('en')} of ${f.t.length.toLocaleString('en')}`, `${f.size[i]} B`];
+  const out = [`${name} ${(i + 1).toLocaleString('en')} of ${f.t.length.toLocaleString('en')}`, `starts ${f.t[i].toFixed(3)} s`, `${f.size[i]} B`];
   if (f.kbps[i]) out.push(`${f.kbps[i]} kbps in its header`);
   out.push(`${(f.dur[i] * 1000).toFixed(2)} ms`);
   if (f.offset[i]) out.push(`byte ${Math.round(f.offset[i]).toLocaleString('en')}`);
   if (!f.kbps[i] && f.dur[i] > 0) out.push(`${Math.round(f.size[i] * 8 / f.dur[i] / 1000)} kbps over this ${name}`);
+  if (f.hdr[i]) {
+    const h = mp3Header(f.hdr[i]);
+    out.push(String(h.mode) + (h.modeExt ? ' (' + h.modeExt + ')' : ''));
+    if (h.padding) out.push('padded');
+    out.push(h.crc ? 'CRC' : 'no CRC');
+    if (h.emphasis !== 'none') out.push('emphasis ' + h.emphasis);
+  }
   return out.join(' · ');
 }

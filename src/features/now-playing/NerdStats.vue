@@ -6,7 +6,7 @@
  * which source it came from (frames · MediaInfo · ffprobe).
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { analysisRows, fetchProbe, fileRows, playbackRows, readMediaInfo, type MediaInfoFacts, type ProbeInfo } from '../../core/nerdStats';
+import { allFields, analysisRows, fetchProbe, fileRows, playbackRows, readMediaInfo, type MediaInfoFacts, type ProbeInfo } from '../../core/nerdStats';
 import { fallbackUrl } from '../../core/library';
 import { SERVICE_URL } from '../../core/service';
 import { PRESETS } from '../../core/effects';
@@ -66,6 +66,11 @@ const groups = computed(() => {
     { title: 'Analysis', rows: analysisRows(timeline.timeline) },
   ];
 });
+/** MediaInfo's full output, for the fold under the columns. */
+const miAll = computed(() => (mi.value ? [
+  { title: 'Audio', rows: allFields(mi.value.audio) },
+  { title: 'General', rows: allFields(mi.value.general) },
+] : []));
 const sourcesNote = computed(() => state.value === 'loading' ? 'Reading MediaInfo and ffprobe…'
   : state.value === 'done' ? [mi.value ? 'MediaInfo ✓' : 'MediaInfo —', probe.value ? 'ffprobe ✓' : 'ffprobe — (service off or file not cached)'].join(' · ') : '');
 </script>
@@ -85,6 +90,17 @@ const sourcesNote = computed(() => state.value === 'loading' ? 'Reading MediaInf
         </dl>
       </div>
     </div>
+    <details v-if="miAll.length" class="all">
+      <summary>All decoder fields (MediaInfo, {{ miAll.reduce((n, g) => n + g.rows.length, 0) }})</summary>
+      <div class="all-grid">
+        <div v-for="g in miAll" :key="g.title" class="col">
+          <h3 class="gt">{{ g.title }}</h3>
+          <dl>
+            <template v-for="r in g.rows" :key="r[0]"><dt>{{ r[0] }}</dt><dd>{{ r[1] }}</dd></template>
+          </dl>
+        </div>
+      </div>
+    </details>
   </section>
 </template>
 
@@ -100,5 +116,9 @@ const sourcesNote = computed(() => state.value === 'loading' ? 'Reading MediaInf
 dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
 dt { color: var(--ink-mute); }
 dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-@media (max-width: 900px) { .grid { grid-template-columns: 1fr; gap: var(--space-4); } }
+.all { margin-top: var(--space-2); border-top: 1px solid var(--line); padding-top: var(--space-2); }
+.all summary { cursor: pointer; color: var(--ink-sub); font-size: 13px; padding: 4px 0; }
+.all summary:hover { color: var(--ink); }
+.all-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-6); padding: var(--space-2) 0; }
+@media (max-width: 900px) { .grid, .all-grid { grid-template-columns: 1fr; gap: var(--space-4); } }
 </style>

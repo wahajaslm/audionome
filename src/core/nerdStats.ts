@@ -33,7 +33,8 @@ export async function readMediaInfo(blob: Blob): Promise<MediaInfoFacts | null> 
     import('mediainfo.js'),
     import('mediainfo.js/MediaInfoModule.wasm?url'),
   ]);
-  const mi = await mediaInfoFactory({ format: 'object', locateFile: () => wasmUrl });
+  // full: every field MediaInfo knows (decoder settings, gapless delay, frame counts …).
+  const mi = await mediaInfoFactory({ format: 'object', full: true, locateFile: () => wasmUrl });
   try {
     const res = await mi.analyzeData(blob.size, async (size: number, offset: number) =>
       new Uint8Array(await blob.slice(offset, offset + size).arrayBuffer()));
@@ -65,6 +66,22 @@ export const clock = (sec: unknown) => {
   if (!(s >= 0)) return '';
   return Math.floor(s / 60) + ':' + (s % 60).toFixed(2).padStart(5, '0');
 };
+
+/**
+ * Every MediaInfo field of a track, for the "All decoder fields" list: plain key → value,
+ * nested 'extra' fields flattened, empty and internal (@…) keys left out, sorted by name.
+ * Example: [["BitRate_Mode", "CBR"], ["Encoded_Library_Settings", "-m j -V 0"], ["extra.LAME_delay", "576"], …].
+ */
+export function allFields(track: Record<string, unknown>): [string, string][] {
+  const out: [string, string][] = [];
+  for (const [k, v] of Object.entries(track)) {
+    if (k.startsWith('@') || v === null || v === undefined || v === '') continue;
+    if (k === 'extra' && typeof v === 'object') { for (const [ek, ev] of Object.entries(v as Record<string, unknown>)) out.push(['extra.' + ek, String(ev)]); continue; }
+    if (typeof v === 'object') continue;
+    out.push([k, String(v)]);
+  }
+  return out.sort((x, y) => x[0].localeCompare(y[0]));
+}
 
 /** First non-empty value, with its source's name. */
 function first(...c: [unknown, string][]): [string, string] | null {

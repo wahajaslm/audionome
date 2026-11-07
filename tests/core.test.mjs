@@ -854,5 +854,22 @@ test('frames: every MP3 frame is kept, found by time, and described (FRAME FIX)'
   assert.equal(frameAt(f, -1), -1);
   const s = frameSummary(f);
   assert.ok(Math.abs(s.durMs - 26.12) < 0.01 && s.minBytes >= 626 && s.maxBytes <= 627, JSON.stringify(s));
-  assert.match(frameLine(f, k), /^frame [\d,]+ of [\d,]+ · 62[67] B · 192 kbps in its header · 26\.12 ms · byte [\d,]+$/);
+  assert.match(frameLine(f, k), /^frame [\d,]+ of [\d,]+ · starts [\d.]+ s · 62[67] B · 192 kbps in its header · 26\.12 ms · byte [\d,]+ · joint stereo \([^)]+\)( · padded)? · no CRC$/);
+});
+
+test('frames: timing and bytes match ffprobe; LAME priming skipped; loop frames (TIMING FIX)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { parseBitrate, frameAt, framesIn, mp3Header, lameGapless } = await import('../src/core/bitrate.ts');
+  const f = parseBitrate(readFileSync(new URL('../public/Naina-Moray-Coke-Studio-129-205.mp3', import.meta.url))).frames;
+  // ffprobe: first packet pos 670 size 626; packet at pts 76.042449 → pos 1825688 (container clock).
+  assert.equal(f.offset[0], 670); assert.equal(f.size[0], 626);
+  assert.ok(Math.abs(f.skipSec * 44100 - (576 + 529)) < 1, 'LAME delay 576 + 529 decoder samples');
+  const k = frameAt(f, 76.042449 - f.skipSec + 0.001);
+  assert.equal(f.offset[k], 1825688, 'same frame as ffprobe, on the player clock');
+  const h = mp3Header(f.hdr[k]);
+  assert.equal(h.version, 'MPEG-1'); assert.equal(h.layer, 'Layer III'); assert.equal(h.kbps, 192); assert.equal(h.sampleRate, 44100);
+  const loop = framesIn(f, 10, 12);
+  assert.ok(Math.abs(loop.count - Math.round(2 / 0.026122)) <= 1, 'about 77 frames in 2 s: ' + loop.count);
+  assert.ok(loop.min >= 626 && loop.max <= 627);
+  assert.equal(lameGapless(new Uint8Array(200), 0), null, 'no LAME tag: null');
 });

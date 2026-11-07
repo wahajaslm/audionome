@@ -8,7 +8,7 @@
  *   columns     File · Playback · Analysis (NerdStats.vue)
  */
 import { computed, ref } from 'vue';
-import { frameAt, frameLine, rangeStats } from '../../core/bitrate';
+import { frameAt, frameLine, framesIn, rangeStats } from '../../core/bitrate';
 import { bytes } from '../../core/nerdStats';
 import { formatTime } from '../../ui/format';
 import { usePlaybackStore } from '../../stores/playback';
@@ -41,6 +41,16 @@ const line = computed(() => {
   if (playback.loop && playback.sel) out.push(`looped ${playback.loops}×`);
   return out.join(' · ');
 });
+/** The loop's frames (only with a selection): which, how many, how big. */
+const passageFrames = computed(() => {
+  const f = timeline.bitrate?.frames, sel = playback.sel;
+  if (!f || !sel) return '';
+  const x = framesIn(f, sel.a, sel.b);
+  if (!x) return '';
+  const unit = f.unit === 'page' ? 'pages' : f.unit === 'sample' ? 'packets' : 'frames';
+  return `${unit} ${(x.first + 1).toLocaleString('en')}–${(x.last + 1).toLocaleString('en')} · ${x.count.toLocaleString('en')} ${unit} · ${x.min}–${x.max} B, avg ${x.avg} B`
+    + (f.offset[x.first] ? ` · bytes ${Math.round(f.offset[x.first]).toLocaleString('en')}–${Math.round(f.offset[x.last] + f.size[x.last]).toLocaleString('en')}` : '');
+});
 /** The frame under the playhead, live. */
 const frameNow = computed(() => {
   const f = timeline.bitrate?.frames;
@@ -67,7 +77,8 @@ function loopRange(a: number, b: number): void {
     </header>
     <BitrateLanes :bitrate="timeline.bitrate" :loud="loud" :range="range" :sel="playback.sel" :t="playback.t" :zoom="zoom" @seek="s => playback.clickSeek(s)" @loop="loopRange" />
     <p class="line label">{{ line }}</p>
-    <p v-if="frameNow" class="line frame label">{{ frameNow }}</p>
+    <p v-if="passageFrames" class="line frame label">this passage: {{ passageFrames }}</p>
+    <p v-if="frameNow" class="line frame label">now: {{ frameNow }}</p>
     <NerdStats />
   </section>
 </template>
