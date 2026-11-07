@@ -20,6 +20,9 @@ import NerdStats from './NerdStats.vue';
 import NerdCards from './NerdCards.vue';
 import NerdFrameInspector from './NerdFrameInspector.vue';
 import NerdFrameTable from './NerdFrameTable.vue';
+import Fold from '../../ui/Fold.vue';
+import { allOpen, setAllFolds, useFold } from '../../composables/useFolds';
+import { frameAt } from '../../core/bitrate';
 
 const playback = usePlaybackStore();
 const timeline = useTimelineStore();
@@ -61,6 +64,17 @@ const onCenter = (c: number) => { if (!fitted.value) zoom.value = { ...zoom.valu
 // A new passage starts at Fit.
 watch(() => [range.value.a, range.value.b], () => { zoom.value = { ...zoom.value, span: null }; });
 const inspector = ref<InstanceType<typeof NerdFrameInspector> | null>(null);
+const curvesOpen = useFold('nerds.curves');
+const everyOpen = allOpen('nerds');
+/** "Frame 10,700 · 960 B · short" for the folded headers. */
+const frameSummaryText = computed(() => {
+  const f = timeline.bitrate?.frames;
+  if (!f) return 'reading the file';
+  const i = frameAt(f, audibleT.value);
+  if (i < 0) return '—';
+  const kind = f.dec && f.dec.block[i] < 4 ? ' · ' + ['long', 'start', 'short', 'stop'][f.dec.block[i]] : '';
+  return `${f.unit === 'sample' ? 'Packet' : 'Frame'} ${(i + 1).toLocaleString('en')} · ${f.size[i]} B${kind}`;
+});
 
 /**
  * CONTEXT STRIP - once the big lanes scroll out of view (you are reading the panel, the
@@ -77,6 +91,8 @@ onMounted(() => {
   io = new IntersectionObserver(([e]) => { lanesHidden.value = !e.isIntersecting && e.boundingClientRect.top < 0; place(); }, { threshold: 0 });
   if (lanesEl.value) io.observe(lanesEl.value);
   window.addEventListener('resize', place);
+  // The lanes leave and return with their fold: observe the new element each time.
+  watch(lanesEl, (el, old) => { if (old) io?.unobserve(old); if (el) io?.observe(el); else lanesHidden.value = false; });
 });
 onBeforeUnmount(() => { io?.disconnect(); window.removeEventListener('resize', place); });
 function onKey(e: KeyboardEvent): void {
@@ -108,37 +124,50 @@ function loopRange(a: number, b: number): void {
         <button type="button" class="zb" aria-label="Zoom in" title="Zoom in (+)" @click="zoomIn">+</button>
         <button type="button" class="zt" :aria-pressed="fitted" title="See the whole passage (0)" @click="fit">Fit</button>
         <button type="button" class="zt" :aria-pressed="zoom.follow" title="Keep the playhead in the middle (F)" @click="toggleFollow">Follow</button>
+        <button type="button" class="zt all" @click="setAllFolds('nerds', !everyOpen)">{{ everyOpen ? 'Collapse all' : 'Expand all' }}</button>
       </div>
     </header>
-    <NerdOverview v-if="!fitted" class="over" :envelope="timeline.envelope" :range="range" :win="win" :t="audibleT" @center="onCenter" />
-    <div ref="lanesEl" class="lanes-wrap" tabindex="0" aria-label="Lanes. + and − zoom, 0 fits, F follows the playhead, ← → step frames, Enter plays the frame" @keydown="onKey">
-    <BitrateLanes :bitrate="timeline.bitrate" :envelope="timeline.envelope" :view="timeline.spectrumView" :win="win" :spectrum-kind="timeline.spectrumKind" :ready-kinds="timeline.readyKinds" @kind="k => timeline.setSpectrumKind(k)" :loud="loud" :range="range" :sel="playback.sel" :t="audibleT" @seek="s => playback.clickSeek(s)" @loop="loopRange" @zoom="onZoom" @pan="onPan" />
+    <!-- FOLDS - every part can be opened or closed (ui/Fold.vue); the choice is remembered. -->
+    <Fold id="nerds.curves" title="Curves" :summary="(fitted ? 'Fit' : spanText) + ' · waveform · spectrum · bitrate · blocks · gain'">
+      <NerdOverview v-if="!fitted" class="over" :envelope="timeline.envelope" :range="range" :win="win" :t="audibleT" @center="onCenter" />
+      <div ref="lanesEl" class="lanes-wrap" tabindex="0" aria-label="Lanes. + and − zoom, 0 fits, F follows the playhead, ← → step frames, Enter plays the frame" @keydown="onKey">
+        <BitrateLanes :bitrate="timeline.bitrate" :envelope="timeline.envelope" :view="timeline.spectrumView" :win="win" :spectrum-kind="timeline.spectrumKind" :ready-kinds="timeline.readyKinds" @kind="k => timeline.setSpectrumKind(k)" :loud="loud" :range="range" :sel="playback.sel" :t="audibleT" @seek="s => playback.clickSeek(s)" @loop="loopRange" @zoom="onZoom" @pan="onPan" />
+      </div>
+      <p class="hint">Pinch or ⌘-scroll to zoom · ⇧-scroll or swipe to pan · drag to loop · ← → step frames · Enter plays the frame</p>
+    </Fold>
+    <!-- Curves folded away: the compact signal strip takes their place, so the context stays. -->
+    <div v-if="!curvesOpen" class="ctx-inline" tabindex="0" @keydown="onKey">
+      <BitrateLanes compact :bitrate="timeline.bitrate" :envelope="timeline.envelope" :view="timeline.spectrumView" :win="win" :spectrum-kind="timeline.spectrumKind" :ready-kinds="timeline.readyKinds"
+        :loud="null" :range="range" :sel="playback.sel" :t="audibleT" @seek="s => playback.clickSeek(s)" @loop="loopRange" @zoom="onZoom" @pan="onPan" />
     </div>
-    <p class="hint">Pinch or ⌘-scroll to zoom · ⇧-scroll or swipe to pan · drag to loop · ← → step frames · Enter plays the frame</p>
     <!-- Sticky context strip (no height of its own, so nothing below moves when it appears). -->
     <div class="ctx-pin">
-      <div v-if="lanesHidden" class="ctx" aria-label="Signal context" :style="{ left: pin.left + 'px', width: pin.width + 'px' }">
+      <div v-if="curvesOpen && lanesHidden" class="ctx" aria-label="Signal context" :style="{ left: pin.left + 'px', width: pin.width + 'px' }">
         <BitrateLanes compact :bitrate="timeline.bitrate" :envelope="timeline.envelope" :view="timeline.spectrumView" :win="win" :spectrum-kind="timeline.spectrumKind" :ready-kinds="timeline.readyKinds"
           :loud="null" :range="range" :sel="playback.sel" :t="audibleT" @seek="s => playback.clickSeek(s)" @loop="loopRange" @zoom="onZoom" @pan="onPan" />
       </div>
     </div>
-    <!-- At a glance: the frame now, this passage, the file (NerdCards.vue). -->
-    <NerdCards :bitrate="timeline.bitrate" :t="audibleT" :alignment="alignment" :range="range" :is-passage="!!playback.sel" />
-    <NerdFrameInspector
-      ref="inspector"
-      :bitrate="timeline.bitrate"
-      :t="audibleT"
-      :playing="playback.playing"
-      :read-bytes="timeline.readBytes"
-      :view="timeline.spectrumView"
-      @step="s => playback.stepTo(s)"
-      @audition="(a, b, back) => playback.audition(a, b, back)"
-    />
-    <NerdFrameTable :bitrate="timeline.bitrate" :t="audibleT" :range="range" @go="s => playback.stepTo(s)" />
-    <details class="details">
-      <summary>Details</summary>
+    <Fold id="nerds.glance" title="At a glance" :summary="frameSummaryText + ' · this passage · file · alignment'">
+      <NerdCards :bitrate="timeline.bitrate" :t="audibleT" :alignment="alignment" :range="range" :is-passage="!!playback.sel" />
+    </Fold>
+    <Fold id="nerds.inspector" title="Frame inspector" :summary="frameSummaryText + ' · bytes · bits · fields · coded spectrum · hex'">
+      <NerdFrameInspector
+        ref="inspector"
+        :bitrate="timeline.bitrate"
+        :t="audibleT"
+        :playing="playback.playing"
+        :read-bytes="timeline.readBytes"
+        :view="timeline.spectrumView"
+        @step="s => playback.stepTo(s)"
+        @audition="(a, b, back) => playback.audition(a, b, back)"
+      />
+    </Fold>
+    <Fold id="nerds.table" title="Frames" summary="every frame of the passage · filter · sort">
+      <NerdFrameTable :bitrate="timeline.bitrate" :t="audibleT" :range="range" @go="s => playback.stepTo(s)" />
+    </Fold>
+    <Fold id="nerds.details" title="Details" summary="MediaInfo · ffprobe · playback · analysis" :open="false">
       <NerdStats />
-    </details>
+    </Fold>
   </section>
 </template>
 
@@ -161,8 +190,7 @@ function loopRange(a: number, b: number): void {
 .ctx { position: fixed; top: 0; z-index: 40; padding: 8px 0 6px; background: var(--bg-panel); border-bottom: 1px solid var(--line); box-shadow: 0 6px 12px -8px rgba(0, 0, 0, 0.6); }
 .lanes-wrap:focus-visible { box-shadow: 0 0 0 1px var(--accent); border-radius: 2px; }
 .hint { margin: 6px 0 0 106px; font-size: 11px; color: var(--ink-mute); }
-.details { margin-top: var(--space-3); }
-.details summary { cursor: pointer; color: var(--ink-sub); font-size: 13px; padding: 4px 0; }
-.details summary:hover { color: var(--ink); }
+.ctx-inline { outline: none; padding: 4px 0 8px; border-top: 1px solid var(--line); }
+.zt.all { margin-left: 10px; }
 @media (max-width: 600px) { .line { margin-left: 0; } }
 </style>

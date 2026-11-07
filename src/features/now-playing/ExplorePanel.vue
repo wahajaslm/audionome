@@ -24,6 +24,8 @@ import { grooveDetails, harmonyDetails, similarPassages, teaser, voiceDetails } 
 import { useLibraryStore } from '../../stores/library';
 import LiveLanes from './LiveLanes.vue';
 import { useAudibleTime } from '../../composables/useAudibleTime';
+import Fold from '../../ui/Fold.vue';
+import { allOpen, setAllFolds } from '../../composables/useFolds';
 import NerdOverview from './NerdOverview.vue';
 import { panBy, spanLabel, stepZoom, viewOf, zoomAt, type ZoomState } from '../../core/zoom';
 import { formatTime } from '../../ui/format';
@@ -68,6 +70,7 @@ const zoom = ref<ZoomState>({ ...ZOOM_START });
 const whole = computed(() => range.value ?? { a: 0, b: 1 });
 // DELAY FIX: the lanes, overview and Follow use the moment you hear (composables/useAudibleTime.ts).
 const { audibleT } = useAudibleTime();
+const everyOpen = allOpen('explore');
 const win = computed(() => viewOf(zoom.value, whole.value, audibleT.value));
 const fitted = computed(() => zoom.value.span === null || zoom.value.span >= whole.value.b - whole.value.a);
 const zoomIn = () => { zoom.value = stepZoom(zoom.value, whole.value, audibleT.value, -1); };
@@ -214,63 +217,66 @@ const measurements = computed(() => {
           <button type="button" class="zb" aria-label="Zoom in" title="Zoom in (+)" @click="zoomIn">+</button>
           <button type="button" class="zt" :aria-pressed="fitted" title="See the whole passage (0)" @click="fit">Fit</button>
           <button type="button" class="zt" :aria-pressed="zoom.follow" title="Keep the playhead in the middle (F)" @click="toggleFollow">Follow</button>
+          <button type="button" class="zt all" @click="setAllFolds('explore', !everyOpen)">{{ everyOpen ? 'Collapse all' : 'Expand all' }}</button>
         </div>
       </div>
     </header>
 
 
-    <div class="moments">
-      <button v-for="m in moments" :key="m.at + m.text" type="button" class="mo" @click="jump(m.at)">
-        <span class="mt">{{ formatTime(m.at) }}</span><span>{{ m.text }}</span>
-      </button>
-      <div v-for="w in waitingMoments" :key="w" class="mo wait"><span class="mt">…</span><span>{{ w }}</span></div>
-    </div>
-
-    <NerdOverview v-if="!fitted" class="over" :envelope="timelineStore.envelope" :range="range" :win="win" :t="audibleT" @center="onCenter" />
-    <div class="lanes-wrap" tabindex="0" aria-label="Lanes. + and − zoom, 0 fits, F follows the playhead" @keydown="onKey">
-    <LiveLanes
-      :timeline="timeline"
-      :spectrum="spectrum"
-      :view="spectrumView"
-      :range="range"
-      :t="audibleT"
-      :win="win"
-      :active-stem="activeStem"
-      :waiting-text="waitingText"
-      :spectrum-kind="spectrumKind"
-      :ready-kinds="timelineStore.readyKinds"
-      @kind="k => timelineStore.setSpectrumKind(k)"
-      @seek="s => playback.clickSeek(s)"
-      @loop="setLoop"
-      @solo="solo"
-      @mute="mute"
-      @zoom="onZoom"
-      @pan="onPan"
-    />
-    </div>
-    <div class="hint caption">S plays one stem alone, M plays the song without it. Click to jump, drag to loop · pinch or ⌘-scroll to zoom, ⇧-scroll or swipe to pan.</div>
-
-    <div class="rails">
-      <div class="rhead caption"><span>Right now, compared with the whole song</span><span>dot = last second · band = this passage</span></div>
-      <template v-for="(r, i) in rails" :key="r.k">
-        <span class="rk caption">{{ r.k }}</span>
-        <div class="track" :class="{ off: !r.ready }" :title="railNow[i]?.title">
-          <span class="rail"></span>
-          <span v-if="r.ready" class="band" :style="{ left: r.b0 * 100 + '%', width: (r.b1 - r.b0) * 100 + '%' }"></span>
-          <span v-if="r.ready" class="dot" :style="{ left: railNow[i]?.left + '%' }"></span>
-        </div>
-      </template>
-    </div>
-
-    <details v-for="d in details" :key="d.k" class="fold">
-      <summary>{{ d.title }}<span v-if="d.teaser" class="teaser"> · {{ d.teaser }}</span></summary>
+    <!-- FOLDS - each part opens and closes on its own (ui/Fold.vue); remembered. -->
+    <Fold id="explore.moments" title="Moments" :summary="moments.length + ' in this passage'">
+      <div class="moments">
+        <button v-for="m in moments" :key="m.at + m.text" type="button" class="mo" @click="jump(m.at)">
+          <span class="mt">{{ formatTime(m.at) }}</span><span>{{ m.text }}</span>
+        </button>
+        <div v-for="w in waitingMoments" :key="w" class="mo wait"><span class="mt">…</span><span>{{ w }}</span></div>
+      </div>
+    </Fold>
+    <Fold id="explore.lanes" title="Lanes" :summary="(fitted ? 'Fit' : spanLabel(win[1] - win[0])) + ' · spectrum · chords · melody · stems · loudness'">
+      <NerdOverview v-if="!fitted" class="over" :envelope="timelineStore.envelope" :range="range" :win="win" :t="audibleT" @center="onCenter" />
+      <div class="lanes-wrap" tabindex="0" aria-label="Lanes. + and − zoom, 0 fits, F follows the playhead" @keydown="onKey">
+      <LiveLanes
+        :timeline="timeline"
+        :spectrum="spectrum"
+        :view="spectrumView"
+        :range="range"
+        :t="audibleT"
+        :win="win"
+        :active-stem="activeStem"
+        :waiting-text="waitingText"
+        :spectrum-kind="spectrumKind"
+        :ready-kinds="timelineStore.readyKinds"
+        @kind="k => timelineStore.setSpectrumKind(k)"
+        @seek="s => playback.clickSeek(s)"
+        @loop="setLoop"
+        @solo="solo"
+        @mute="mute"
+        @zoom="onZoom"
+        @pan="onPan"
+      />
+      </div>
+      <div class="hint caption">S plays one stem alone, M plays the song without it. Click to jump, drag to loop · pinch or ⌘-scroll to zoom, ⇧-scroll or swipe to pan.</div>
+    </Fold>
+    <Fold id="explore.now" title="Right now" summary="compared with the whole song">
+      <div class="rails">
+        <div class="rhead caption"><span>Right now, compared with the whole song</span><span>dot = last second · band = this passage</span></div>
+        <template v-for="(r, i) in rails" :key="r.k">
+          <span class="rk caption">{{ r.k }}</span>
+          <div class="track" :class="{ off: !r.ready }" :title="railNow[i]?.title">
+            <span class="rail"></span>
+            <span v-if="r.ready" class="band" :style="{ left: r.b0 * 100 + '%', width: (r.b1 - r.b0) * 100 + '%' }"></span>
+            <span v-if="r.ready" class="dot" :style="{ left: railNow[i]?.left + '%' }"></span>
+          </div>
+        </template>
+      </div>
+    </Fold>
+    <Fold v-for="d in details" :id="'explore.' + d.k" :key="d.k" :title="d.title" :summary="d.teaser" :open="false">
       <p v-if="d.wait && !d.rows.length" class="caption sub">{{ d.wait }}</p>
       <dl class="drows">
         <template v-for="row in d.rows" :key="row.k"><dt class="caption" :title="row.hint">{{ row.k }}</dt><dd :title="row.hint">{{ row.v }}</dd></template>
       </dl>
-    </details>
-    <details class="fold">
-      <summary>Similar passages<span v-if="similar.length" class="teaser"> · {{ similar.length }} found</span></summary>
+    </Fold>
+    <Fold id="explore.similar" title="Similar passages" :summary="similar.length ? similar.length + ' found' : 'needs the similarity analysis'" :open="false">
       <p v-if="!similar.length" class="caption sub">Needs the similarity analysis (Song anatomy → Run similarity analysis) on this and other songs.</p>
       <div class="sims">
         <button v-for="h in similar" :key="h.trackId + h.a" type="button" class="sim" @click="playSimilar(h.trackId, h.a, h.b)">
@@ -279,16 +285,15 @@ const measurements = computed(() => {
           <span class="caption pct">{{ Math.round(h.sim * 100) }}% alike</span>
         </button>
       </div>
-    </details>
-    <details class="fold">
-      <summary>Measurements</summary>
+    </Fold>
+    <Fold id="explore.measurements" title="Measurements" summary="every value, its meaning and source" :open="false">
       <div class="tbl">
         <table>
           <tr><th>Measure</th><th>Value</th><th>Meaning</th><th>Source</th></tr>
           <tr v-for="row in measurements" :key="row[0]"><td>{{ row[0] }}</td><td class="v">{{ row[1] }}</td><td class="d">{{ row[2] }}</td><td class="d">{{ row[3] }}</td></tr>
         </table>
       </div>
-    </details>
+    </Fold>
   </section>
 </template>
 
@@ -342,9 +347,6 @@ const measurements = computed(() => {
 .band { position: absolute; top: 3px; height: 8px; border-radius: 4px; background: var(--accent-fill); border: 1px solid var(--accent-line); }
 .dot { position: absolute; top: 2px; width: 10px; height: 10px; margin-left: -5px; border-radius: 50%; background: var(--ink); transition: left .12s linear; }
 
-.fold { border-top: 1px solid var(--line); padding-top: 10px; }
-.fold summary { cursor: pointer; color: var(--ink-sub); font-size: 13px; }
-.fold[open] summary { margin-bottom: 8px; }
 .teaser { color: var(--ink-mute); }
 .drows { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 6px var(--space-3); margin: 0; }
 .drows dt { color: var(--ink-mute); cursor: help; }

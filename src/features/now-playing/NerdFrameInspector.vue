@@ -18,6 +18,7 @@ import { frameAt, type BitrateInfo } from '../../core/bitrate';
 import { decodeAacPacket, type Channel } from '../../core/aacDecode';
 import type { SpectrumView } from '../../core/spectrum';
 import CodedSpectrum from './CodedSpectrum.vue';
+import Fold from '../../ui/Fold.vue';
 import { aacFields, aacPacket, BLOCK_NAMES, mp3HeaderFields, mp3SideInfo, reservoirSource, type BitField } from '../../core/bitstream';
 
 const props = defineProps<{ bitrate: BitrateInfo | null; t: number; playing: boolean; readBytes: (offset: number, length: number) => Promise<Uint8Array>;
@@ -212,7 +213,7 @@ defineExpose({ step, play });
 </script>
 
 <template>
-  <section class="insp" aria-label="Frame inspector">
+  <section class="insp" aria-label="Frame details">
     <header class="top">
       <div v-if="frame" class="id">
         <span class="t">{{ unit }}</span> <b>{{ n(frame.i + 1) }}</b> <span class="mute">of {{ n(frame.of) }}</span>
@@ -230,94 +231,106 @@ defineExpose({ step, play });
       </div>
     </header>
 
-    <div v-if="map" class="block">
-      <div class="lbl">Bytes</div>
-      <div class="bytes">
-        <div class="bar"><i v-for="(p, k) in map.parts" :key="k" :class="p.cls" :style="{ width: p.w + '%' }" :title="p.label"></i></div>
-        <div class="legend"><span v-for="(p, k) in map.parts" :key="k"><i :class="p.cls"></i>{{ p.label }}</span></div>
-        <div v-if="map.data" class="span" :style="{ marginLeft: map.data.left + '%', width: map.data.width + '%' }"><span>{{ map.data.label }}</span></div>
-      </div>
-    </div>
-
-    <div v-if="fields.length" class="block">
-      <div class="lbl">Bits<small>{{ codec === 'aac' ? 'first ' + fieldBits + ' bits' : '32-bit header' }}</small></div>
-      <div>
-        <!-- The bits themselves, grouped by field (hover a field to find it in the table). -->
-        <div class="strip" role="img" :aria-label="fieldBits + ' bits'">
-          <span v-for="(x, k) in fields" :key="k" class="grp" :class="{ alt: k % 2, on: hot === k }" @mouseenter="hot = k" @mouseleave="hot = -1">
-            <sup>{{ k + 1 }}</sup>
-            <template v-if="x.bits <= 16"><i v-for="(c, j) in x.value.toString(2).padStart(x.bits, '0')" :key="j">{{ c }}</i></template>
-            <i v-else class="many">{{ x.bits }} bits</i>
-          </span>
+    <Fold v-if="map" :id="'nerds.inspector.bytes'" title="Bytes" :level="2" :summary="map ? map.parts.map(p => p.label.split(' ').slice(-2).join(' ')).join(' · ') : ''">
+      <div class="block">
+        <div class="lbl"></div>
+        <div class="bytes">
+          <div class="bar"><i v-for="(p, k) in map.parts" :key="k" :class="p.cls" :style="{ width: p.w + '%' }" :title="p.label"></i></div>
+          <div class="legend"><span v-for="(p, k) in map.parts" :key="k"><i :class="p.cls"></i>{{ p.label }}</span></div>
+          <div v-if="map.data" class="span" :style="{ marginLeft: map.data.left + '%', width: map.data.width + '%' }"><span>{{ map.data.label }}</span></div>
         </div>
-        <table class="ftbl">
-          <tbody>
-            <tr v-for="(x, k) in fields" :key="k" :class="{ on: hot === k }" @mouseenter="hot = k" @mouseleave="hot = -1">
-              <td class="mute">{{ k + 1 }}</td><td>{{ x.name }}</td><td class="mute">{{ x.bits }} bit{{ x.bits === 1 ? '' : 's' }}</td><td>{{ x.value }}</td><td class="mean">{{ x.text }}</td>
-            </tr>
-          </tbody>
-        </table>
       </div>
-    </div>
+    </Fold>
 
-    <div v-if="granuleRows.length" class="block">
-      <div class="lbl">Side info<small>main_data_begin {{ side?.mainDataBegin }} B</small></div>
-      <table class="tbl">
-        <thead><tr><th></th><th>block</th><th>gain</th><th>bits</th><th>big_values</th><th>sf_compress</th><th>tables</th><th>regions</th><th>subblock gain</th><th>pre · scale · c1</th></tr></thead>
-        <tbody>
-          <tr v-for="g in granuleRows" :key="g.key">
-            <td class="mute">{{ g.where }}</td><td><i class="sq" :class="'b-' + g.kind"></i>{{ g.block }}</td><td>{{ g.gain }}</td><td>{{ n(g.bits) }}</td>
-            <td>{{ g.big }}</td><td>{{ g.sfc }}</td><td>{{ g.tables }}</td><td>{{ g.regions }}</td><td>{{ g.sub }}</td><td>{{ g.flags }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <Fold v-if="fields.length" :id="'nerds.inspector.bits'" title="Bits" :level="2" :summary="fields.length + ' fields · ' + fieldBits + ' bits'">
+      <div class="block">
+        <div class="lbl"><small>{{ codec === 'aac' ? 'first ' + fieldBits + ' bits' : '32-bit header' }}</small></div>
+        <div>
+          <!-- The bits themselves, grouped by field (hover a field to find it in the table). -->
+          <div class="strip" role="img" :aria-label="fieldBits + ' bits'">
+            <span v-for="(x, k) in fields" :key="k" class="grp" :class="{ alt: k % 2, on: hot === k }" @mouseenter="hot = k" @mouseleave="hot = -1">
+              <sup>{{ k + 1 }}</sup>
+              <template v-if="x.bits <= 16"><i v-for="(c, j) in x.value.toString(2).padStart(x.bits, '0')" :key="j">{{ c }}</i></template>
+              <i v-else class="many">{{ x.bits }} bits</i>
+            </span>
+          </div>
+          <table class="ftbl">
+            <tbody>
+              <tr v-for="(x, k) in fields" :key="k" :class="{ on: hot === k }" @mouseenter="hot = k" @mouseleave="hot = -1">
+                <td class="mute">{{ k + 1 }}</td><td>{{ x.name }}</td><td class="mute">{{ x.bits }} bit{{ x.bits === 1 ? '' : 's' }}</td><td>{{ x.value }}</td><td class="mean">{{ x.text }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </Fold>
 
-    <div v-if="aacRows.length" class="block">
-      <div class="lbl">Channels<small>{{ aac?.element }}{{ aac?.commonWindow ? ' · common window' : '' }}{{ aac?.msMaskPresent !== null ? ' · M/S ' + ['off', 'per band', 'all bands', '—'][aac!.msMaskPresent!] : '' }}</small></div>
-      <div>
+    <Fold v-if="granuleRows.length" :id="'nerds.inspector.side'" title="Side info" :level="2" :summary="granuleRows.map(g => g.where + ' ' + g.block).join(' · ')">
+      <div class="block">
+        <div class="lbl"><small>main_data_begin {{ side?.mainDataBegin }} B</small></div>
         <table class="tbl">
-          <thead><tr><th></th><th>window sequence</th><th>shape</th><th>max_sfb</th><th>groups</th><th>gain</th><th>sections</th><th>codebooks</th><th>non-zero lines</th><th>max |q|</th><th>TNS</th><th>pulses</th></tr></thead>
+          <thead><tr><th></th><th>block</th><th>gain</th><th>bits</th><th>big_values</th><th>sf_compress</th><th>tables</th><th>regions</th><th>subblock gain</th><th>pre · scale · c1</th></tr></thead>
           <tbody>
-            <tr v-for="c in aacRows" :key="c.key" :class="{ sel: cpe && c.key === chSel }" @click="chSel = c.key">
-              <td class="mute">{{ c.ch }}</td><td><i class="sq" :class="'b-' + c.kind"></i>{{ c.win }}</td><td>{{ c.shape }}</td><td>{{ c.sfb }}</td><td>{{ c.groups }}</td><td>{{ c.gain }}</td>
-              <td>{{ c.sections }}</td><td>{{ c.books }}</td><td>{{ c.nz }}</td><td>{{ c.maxQ }}</td><td>{{ c.tns }}</td><td>{{ c.pulse }}</td>
+            <tr v-for="g in granuleRows" :key="g.key">
+              <td class="mute">{{ g.where }}</td><td><i class="sq" :class="'b-' + g.kind"></i>{{ g.block }}</td><td>{{ g.gain }}</td><td>{{ n(g.bits) }}</td>
+              <td>{{ g.big }}</td><td>{{ g.sfc }}</td><td>{{ g.tables }}</td><td>{{ g.regions }}</td><td>{{ g.sub }}</td><td>{{ g.flags }}</td>
             </tr>
           </tbody>
         </table>
-        <div v-if="shortGroups" class="groups" aria-label="eight short windows and their groups">
-          <span v-for="(g, k) in shortGroups" :key="k" class="w" :class="'g' + (g % 4)">{{ k + 1 }}</span>
-          <span class="cap">8 short windows · {{ new Set(shortGroups).size }} groups</span>
+      </div>
+    </Fold>
+
+    <Fold v-if="aacRows.length" :id="'nerds.inspector.channels'" title="Channels" :level="2" :summary="aacRows.map(c => c.ch + ' ' + c.win).join(' · ')">
+      <div class="block">
+        <div class="lbl"><small>{{ aac?.element }}{{ aac?.commonWindow ? ' · common window' : '' }}{{ aac?.msMaskPresent !== null ? ' · M/S ' + ['off', 'per band', 'all bands', '—'][aac!.msMaskPresent!] : '' }}</small></div>
+        <div>
+          <table class="tbl">
+            <thead><tr><th></th><th>window sequence</th><th>shape</th><th>max_sfb</th><th>groups</th><th>gain</th><th>sections</th><th>codebooks</th><th>non-zero lines</th><th>max |q|</th><th>TNS</th><th>pulses</th></tr></thead>
+            <tbody>
+              <tr v-for="c in aacRows" :key="c.key" :class="{ sel: cpe && c.key === chSel }" @click="chSel = c.key">
+                <td class="mute">{{ c.ch }}</td><td><i class="sq" :class="'b-' + c.kind"></i>{{ c.win }}</td><td>{{ c.shape }}</td><td>{{ c.sfb }}</td><td>{{ c.groups }}</td><td>{{ c.gain }}</td>
+                <td>{{ c.sections }}</td><td>{{ c.books }}</td><td>{{ c.nz }}</td><td>{{ c.maxQ }}</td><td>{{ c.tns }}</td><td>{{ c.pulse }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-if="shortGroups" class="groups" aria-label="eight short windows and their groups">
+            <span v-for="(g, k) in shortGroups" :key="k" class="w" :class="'g' + (g % 4)">{{ k + 1 }}</span>
+            <span class="cap">8 short windows · {{ new Set(shortGroups).size }} groups</span>
+          </div>
         </div>
       </div>
-    </div>
+    </Fold>
 
     <!-- The relationship to the signal: what the encoder coded vs the spectrum at this moment. -->
-    <div v-if="chan" class="block">
-      <div class="lbl">Coded spectrum<small>{{ chNames[chSel] }} · teal line = signal{{ view ? ' (' + (view.kind === 'mel' ? 'Mel' : view.kind === 'cqt' ? 'CQT' : 'Linear') + ', to ' + Math.round(view.fmax / 1000) + ' kHz)' : '' }}</small></div>
-      <div>
-        <div class="chsw">
-          <div class="seg2" role="radiogroup" aria-label="Channel">
-            <button v-for="(nm, k) in chNames" :key="k" type="button" role="radio" :aria-checked="chSel === k" @click="chSel = k">{{ nm }}</button>
+    <Fold v-if="chan" :id="'nerds.inspector.coded'" title="Coded spectrum" :level="2" :summary="chNames[chSel] + ' · what the encoder kept vs the signal'">
+      <div class="block">
+        <div class="lbl"><small>{{ chNames[chSel] }} · teal line = signal{{ view ? ' (' + (view.kind === 'mel' ? 'Mel' : view.kind === 'cqt' ? 'CQT' : 'Linear') + ', to ' + Math.round(view.fmax / 1000) + ' kHz)' : '' }}</small></div>
+        <div>
+          <div class="chsw">
+            <div class="seg2" role="radiogroup" aria-label="Channel">
+              <button v-for="(nm, k) in chNames" :key="k" type="button" role="radio" :aria-checked="chSel === k" @click="chSel = k">{{ nm }}</button>
+            </div>
+            <div v-if="chan.info.windowSequence === 2" class="seg2" role="radiogroup" aria-label="Short window">
+              <button v-for="w in 8" :key="w" type="button" role="radio" :aria-checked="shortWin === w - 1" @click="shortWin = w - 1">{{ w }}</button>
+            </div>
           </div>
-          <div v-if="chan.info.windowSequence === 2" class="seg2" role="radiogroup" aria-label="Short window">
-            <button v-for="w in 8" :key="w" type="button" role="radio" :aria-checked="shortWin === w - 1" @click="shortWin = w - 1">{{ w }}</button>
+          <CodedSpectrum :ch="chan" :sample-rate="bitrate?.sampleRate || 44100" :view="view ?? null" :t="frame ? frame.t + frame.dur / 2 : 0" :window="shortWin" />
+          <div class="bandstrip" aria-label="scalefactor per band; hatched = coded as zero">
+            <i v-for="b in bands" :key="b.k" :class="{ zero: !b.cb, special: b.cb >= 13, above: b.above }" :style="{ flexGrow: b.w, height: (b.above ? 100 : b.cb ? Math.max(8, b.h * 100) : 100) + '%' }" :title="b.above ? 'above max_sfb: not coded' : 'band ' + b.k + ' · codebook ' + b.cb + (b.cb && b.cb < 13 ? ' · scalefactor ' + b.sf : b.cb === 13 ? ' · noise' : b.cb >= 14 ? ' · intensity' : ' · zero')"></i>
           </div>
+          <div class="cap2">scalefactor per band (taller = coarser quantiser) · hatched = band coded as zero · grey area = above max_sfb, not coded</div>
         </div>
-        <CodedSpectrum :ch="chan" :sample-rate="bitrate?.sampleRate || 44100" :view="view ?? null" :t="frame ? frame.t + frame.dur / 2 : 0" :window="shortWin" />
-        <div class="bandstrip" aria-label="scalefactor per band; hatched = coded as zero">
-          <i v-for="b in bands" :key="b.k" :class="{ zero: !b.cb, special: b.cb >= 13, above: b.above }" :style="{ flexGrow: b.w, height: (b.above ? 100 : b.cb ? Math.max(8, b.h * 100) : 100) + '%' }" :title="b.above ? 'above max_sfb: not coded' : 'band ' + b.k + ' · codebook ' + b.cb + (b.cb && b.cb < 13 ? ' · scalefactor ' + b.sf : b.cb === 13 ? ' · noise' : b.cb >= 14 ? ' · intensity' : ' · zero')"></i>
-        </div>
-        <div class="cap2">scalefactor per band (taller = coarser quantiser) · hatched = band coded as zero · grey area = above max_sfb, not coded</div>
       </div>
-    </div>
+    </Fold>
 
-    <div v-if="hex.length" class="block">
-      <div class="lbl">Hex<small>first {{ Math.min(64, bytes?.length ?? 0) }} B</small></div>
-      <div class="hex">
-        <div v-for="r in hex" :key="r.off" class="hr"><span class="off">{{ r.off }}</span><span v-for="(c, k) in r.cells" :key="k" :class="c.c">{{ c.v }}</span></div>
+    <Fold v-if="hex.length" :id="'nerds.inspector.hex'" title="Hex" :level="2" :summary="'first ' + Math.min(64, bytes?.length ?? 0) + ' B'">
+      <div class="block">
+        <div class="lbl"><small>first {{ Math.min(64, bytes?.length ?? 0) }} B</small></div>
+        <div class="hex">
+          <div v-for="r in hex" :key="r.off" class="hr"><span class="off">{{ r.off }}</span><span v-for="(c, k) in r.cells" :key="k" :class="c.c">{{ c.v }}</span></div>
+        </div>
       </div>
-    </div>
+    </Fold>
   </section>
 </template>
 
@@ -336,6 +349,13 @@ defineExpose({ step, play });
 .block { display: grid; grid-template-columns: 96px 1fr; gap: 10px; align-items: start; }
 .lbl { font-size: 13px; color: var(--ink-sub); }
 .lbl small { display: block; font-size: 10px; color: var(--ink-mute); margin-top: 2px; }
+.lbl:empty { display: none; }
+/* A block without a side label (its title is the fold's header) uses the full width. */
+.lbl:empty + * { grid-column: 1 / -1; }
+/* Wide tables scroll sideways inside their block instead of being cut off. */
+.block > div:has(> .tbl) { overflow-x: auto; min-width: 0; }
+.block { min-width: 0; }
+.block > * { min-width: 0; }
 .bar { display: flex; height: 14px; border-radius: 2px; overflow: hidden; background: var(--line); }
 .bar i { display: block; height: 100%; }
 .bar i + i { border-left: 1px solid var(--bg-panel); }
