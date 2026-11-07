@@ -44,7 +44,7 @@ const emit = defineEmits<{ play: []; loop: []; explore: []; nerds: []; save: [];
       <div class="ctl">
         <button v-if="range" type="button" class="b ic" :aria-label="playing ? 'Pause' : 'Play this passage'" @click="emit('play')"><Icon :name="playing ? 'pause' : 'play'" :size="16" /></button>
         <button type="button" class="b" :aria-pressed="loop" :title="range ? 'Loop this passage' : 'Loop the bars around the playhead'" @click="emit('loop')"><Icon name="loop" :size="16" /><span class="t">Loop</span></button>
-        <button type="button" class="b" :aria-pressed="exploring" :title="range ? 'Explore this passage' : 'Explore the whole song'" @click="emit('explore')"><Icon name="sparkle" :size="16" /><span class="t">Explore</span></button>
+        <button type="button" class="b" :aria-pressed="exploring" :title="range ? 'Explore this passage' : 'Explore the whole song'" @click="emit('explore')"><Icon name="note" :size="16" /><span class="t">Explore</span></button>
         <button type="button" class="b" :aria-pressed="!!nerds" title="Stats for nerds: codec, bitrate curve, playback" @click="emit('nerds')"><Icon name="stats" :size="16" /><span class="t">Nerds</span></button>
         <button type="button" class="b" :class="{ saved }" :aria-pressed="!!saving" :title="range ? 'Save this passage and say why' : 'Save the last 20 seconds'" @click="emit('save')"><Icon name="heart" :size="16" /><span class="t">{{ saved ? 'Saved' : 'Save' }}</span></button>
         <button type="button" class="b" :class="{ on: effectsOn }" :aria-pressed="effects" title="Effects for this song" @click="emit('effects')"><Icon name="fx" :size="16" /><span class="t">Effects</span></button>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * Explore this passage: one caption line of facts, up to three one-line moments you can jump
- * to, the live lanes (spectrum, chords, melody, stems — S / M on the stem labels), "right now
+ * to, the live lanes (spectrum, chords, melody, stems — S / M on the stem labels; zoom as in Nerds), "right now
  * vs the whole song" rails, and the measurements and Describe strip folded away.
  *
  * EXPLORE REDESIGN - the panel used to be static: passage averages as bars, 40+ chord chips in
@@ -24,6 +24,8 @@ import { grooveDetails, harmonyDetails, similarPassages, teaser, voiceDetails } 
 import { useLibraryStore } from '../../stores/library';
 import SpectrumSwitch from '../../ui/SpectrumSwitch.vue';
 import LiveLanes from './LiveLanes.vue';
+import NerdOverview from './NerdOverview.vue';
+import { panBy, spanLabel, stepZoom, viewOf, zoomAt, type ZoomState } from '../../core/zoom';
 import { formatTime } from '../../ui/format';
 
 const playback = usePlaybackStore();
@@ -54,7 +56,33 @@ const range = computed(() => {
 });
 const { timeline, spectrum, spectrumState, spectrumView, spectrumKind, viewBusy, serviceOff } = storeToRefs(timelineStore);
 
-const zoom = ref<'live' | 'all'>('live');
+/**
+ * ZOOM - the same zoom as Nerds (core/zoom.ts): − / + steps, Fit, pinch or ⌘-scroll around the
+ * pointer, ⇧-scroll or swipe to pan, Follow to stay on the playhead, keys + − 0 F on the lanes,
+ * and the overview box when zoomed in. Before, there were only two views (12 s around the
+ * playhead, or the whole passage). Explore opens at 10 s following the playhead, as before.
+ * Example: a 4:31 song → 10 s view on the playhead; − → 20 s; Fit → 0:00–4:31.
+ */
+const ZOOM_START: ZoomState = { span: 10, center: 0, follow: true };
+const zoom = ref<ZoomState>({ ...ZOOM_START });
+const whole = computed(() => range.value ?? { a: 0, b: 1 });
+const win = computed(() => viewOf(zoom.value, whole.value, t.value));
+const fitted = computed(() => zoom.value.span === null || zoom.value.span >= whole.value.b - whole.value.a);
+const zoomIn = () => { zoom.value = stepZoom(zoom.value, whole.value, t.value, -1); };
+const zoomOut = () => { zoom.value = stepZoom(zoom.value, whole.value, t.value, 1); };
+const fit = () => { zoom.value = { ...zoom.value, span: null }; };
+const toggleFollow = () => { const [v0, v1] = win.value; zoom.value = { ...zoom.value, follow: !zoom.value.follow, center: (v0 + v1) / 2 }; };
+const onZoom = (factor: number, at: number) => { zoom.value = zoomAt(zoom.value, whole.value, t.value, factor, at); };
+const onPan = (d: number) => { zoom.value = panBy(zoom.value, whole.value, t.value, d); };
+const onCenter = (c: number) => { if (!fitted.value) zoom.value = { ...zoom.value, follow: false, center: c }; };
+// A new passage starts at the opening view again.
+watch(() => [range.value?.a, range.value?.b], () => { zoom.value = { ...ZOOM_START }; });
+function onKey(e: KeyboardEvent): void {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const act: Record<string, () => void> = { '+': zoomIn, '=': zoomIn, '-': zoomOut, _: zoomOut, '0': fit, f: toggleFollow, F: toggleFollow };
+  const fn = act[e.key];
+  if (fn) { e.preventDefault(); fn(); }
+}
 
 // Exact analysis of a saved moment (PASSAGE FIX), still used for the key and the measurements.
 const saved = computed(() => (sel.value ? momentsStore.savedMatch(sel.value) : undefined));
@@ -179,9 +207,12 @@ const measurements = computed(() => {
       </div>
       <div class="tools">
         <SpectrumSwitch :kind="spectrumKind" :busy="viewBusy" @select="k => timelineStore.setSpectrumKind(k)" />
-        <div class="seg" role="group" aria-label="Lane zoom">
-          <button type="button" :aria-pressed="zoom === 'live'" @click="zoom = 'live'">Follow playhead</button>
-          <button type="button" :aria-pressed="zoom === 'all'" @click="zoom = 'all'">Whole passage</button>
+        <div class="zoom" role="group" aria-label="Zoom">
+          <button type="button" class="zb" aria-label="Zoom out" title="Zoom out (−)" :disabled="fitted" @click="zoomOut">−</button>
+          <span class="span" aria-live="polite">{{ fitted ? 'Fit' : spanLabel(win[1] - win[0]) }}</span>
+          <button type="button" class="zb" aria-label="Zoom in" title="Zoom in (+)" @click="zoomIn">+</button>
+          <button type="button" class="zt" :aria-pressed="fitted" title="See the whole passage (0)" @click="fit">Fit</button>
+          <button type="button" class="zt" :aria-pressed="zoom.follow" title="Keep the playhead in the middle (F)" @click="toggleFollow">Follow</button>
         </div>
       </div>
     </header>
@@ -194,22 +225,26 @@ const measurements = computed(() => {
       <div v-for="w in waitingMoments" :key="w" class="mo wait"><span class="mt">…</span><span>{{ w }}</span></div>
     </div>
 
+    <NerdOverview v-if="!fitted" class="over" :envelope="timelineStore.envelope" :range="range" :win="win" :t="t" @center="onCenter" />
+    <div class="lanes-wrap" tabindex="0" aria-label="Lanes. + and − zoom, 0 fits, F follows the playhead" @keydown="onKey">
     <LiveLanes
       :timeline="timeline"
       :spectrum="spectrum"
-      :bitrate="timelineStore.bitrate"
       :view="spectrumView"
       :range="range"
       :t="t"
-      :zoom="zoom"
+      :win="win"
       :active-stem="activeStem"
       :waiting-text="waitingText"
       @seek="s => playback.clickSeek(s)"
       @loop="setLoop"
       @solo="solo"
       @mute="mute"
+      @zoom="onZoom"
+      @pan="onPan"
     />
-    <div class="hint caption">S plays one stem alone, M plays the song without it. Click a lane to jump there, drag across it to loop that part.</div>
+    </div>
+    <div class="hint caption">S plays one stem alone, M plays the song without it. Click to jump, drag to loop · pinch or ⌘-scroll to zoom, ⇧-scroll or swipe to pan.</div>
 
     <div class="rails">
       <div class="rhead caption"><span>Right now, compared with the whole song</span><span>dot = last second · band = this passage</span></div>
@@ -268,13 +303,18 @@ const measurements = computed(() => {
 .head h2 { margin: 0; color: var(--ink); }
 .sub { color: var(--ink-mute); font-variant-numeric: tabular-nums; }
 .tools { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
-.seg { display: flex; gap: 4px; }
-.seg button {
-  height: 26px; padding: 0 10px; font-size: 12px; border-radius: var(--radius-pill);
-  border: 1px solid var(--line-strong); background: none; color: var(--ink-sub); cursor: pointer; font-family: var(--font-sans);
-}
-.seg button[aria-pressed='true'] { background: var(--chip-on); border-color: var(--chip-on-line); color: var(--ink); }
-.seg button:focus-visible, .mo:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.zoom { display: flex; align-items: center; gap: 2px; font-variant-numeric: tabular-nums; }
+.zb { width: 28px; height: 28px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: none; color: var(--ink); font: 16px/1 var(--font-sans); cursor: pointer; }
+.zb:disabled { color: var(--ink-mute); cursor: default; }
+.zb:hover:not(:disabled) { background: var(--bg-raise); }
+.span { min-width: 56px; text-align: center; font-size: 13px; color: var(--ink); }
+.zt { height: 28px; padding: 0 10px; margin-left: 6px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: none; color: var(--ink-sub); font: 13px var(--font-sans); cursor: pointer; }
+.zt + .zt { margin-left: 2px; }
+.zt[aria-pressed='true'] { color: var(--ink); border-color: var(--ink-sub); background: var(--bg-raise); }
+.over { margin: 0 0 -6px 112px; width: calc(100% - 112px); }
+.lanes-wrap { outline: none; }
+.lanes-wrap:focus-visible { box-shadow: 0 0 0 1px var(--accent); border-radius: 2px; }
+.zb:focus-visible, .zt:focus-visible, .mo:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .moments { display: flex; flex-direction: column; border-top: 1px solid var(--line); }
 .mo {
@@ -318,6 +358,7 @@ td { color: var(--ink); }
 td.v { font-variant-numeric: tabular-nums; white-space: nowrap; }
 td.d { color: var(--ink-sub); }
 @media (max-width: 600px) {
+  .over { margin-left: 72px; width: calc(100% - 72px); }
   .rails { grid-template-columns: 72px minmax(0, 1fr); }
   .mo { grid-template-columns: 64px minmax(0, 1fr); }
 }

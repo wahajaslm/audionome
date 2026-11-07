@@ -1,13 +1,13 @@
 <script setup lang="ts">
 /**
  * Live lanes: bar ruler, spectrogram, chords, vocal melody, one lane per stem and loudness, on
- * one time axis that follows the playhead (4 s behind, 8 s ahead) or shows the whole passage.
+ * one time axis. The panel owns zoom and pan (core/zoom.ts, as in Nerds) and passes the view.
+ * The bitrate lane lives in Nerds only: it is about the file, not the music.
  * Each lane draws as soon as its tier has arrived and says what it is waiting for until then.
  * The stem labels carry S (solo) and M (mute), so the lanes are also the mixer.
  * Click a lane to move the playhead there.
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import type { BitrateInfo } from '../../core/bitrate';
 import { BAR_STEPS, labelStep, noteName, quantile, STEM_NAMES, TIME_STEPS, type StemName, type Timeline } from '../../core/timeline';
 import { bandForHz, spectrumLabels, spectrumTiles, SPEC_TILE, type Spectrum, type SpectrumView } from '../../core/spectrum';
 import { useTimeDrag } from '../../composables/useTimeDrag';
@@ -20,16 +20,15 @@ const props = defineProps<{
   view: SpectrumView | null;
   range: { a: number; b: number };
   t: number;
-  zoom: 'live' | 'all';
+  /** The visible [start, end] in seconds (ExplorePanel's zoom). */
+  win: [number, number];
   /** 'all', a stem (solo) or 'no_<stem>' (mute): what is playing. */
   activeStem: string;
-  /** Codec and bitrate over time (core/bitrate.ts); null until the file is read. */
-  bitrate: BitrateInfo | null;
   waitingText: { quick: string; full: string; spectrum: string };
 }>();
-const emit = defineEmits<{ seek: [sec: number]; loop: [a: number, b: number]; solo: [stem: StemName]; mute: [stem: StemName] }>();
+const emit = defineEmits<{ seek: [sec: number]; loop: [a: number, b: number]; solo: [stem: StemName]; mute: [stem: StemName]; zoom: [factor: number, atSec: number]; pan: [deltaSec: number] }>();
 
-type Row = { k: 'bar' | 'spec' | 'chord' | 'melody' | 'stem' | 'loud' | 'rate' | 'axis'; h: number; gap?: number; name: string; s?: StemName; y?: number };
+type Row = { k: 'bar' | 'spec' | 'chord' | 'melody' | 'stem' | 'loud' | 'axis'; h: number; gap?: number; name: string; s?: StemName; y?: number };
 const ROWS: Row[] = [
   { k: 'bar', h: 22, name: 'Bar' },
   { k: 'spec', h: 150, name: 'Spectrum', gap: 6 },
@@ -37,7 +36,6 @@ const ROWS: Row[] = [
   { k: 'melody', h: 54, name: 'Melody', gap: 6 },
   ...STEM_NAMES.map(s => ({ k: 'stem' as const, s, h: 28, name: s.charAt(0).toUpperCase() + s.slice(1), gap: 4 })),
   { k: 'loud', h: 30, name: 'Loudness', gap: 6 },
-  { k: 'rate', h: 30, name: 'Bitrate', gap: 6 },
   { k: 'axis', h: 14, name: '' },
 ];
 let y = 0;
@@ -54,24 +52,11 @@ const soloed = computed(() => (STEM_NAMES as readonly string[]).includes(props.a
 const mutedStem = computed(() => props.activeStem.startsWith('no_') ? props.activeStem.slice(3) : null);
 const audible = (s: string) => (!soloed.value || soloed.value === s) && mutedStem.value !== s;
 
-/**
- * Visible time span. Follow = 4 s behind and 8 s ahead of the playhead.
- * FOLLOW CLAMP FIX - with the playhead outside the passage (or near 0:00) the view used to
- * show the wrong part of the song, or a blank third of negative time.
- * Example: passage 1:35–2:41, playhead at 0:00 → view 1:35–1:47, not -0:04–0:08.
- */
 /** While dragging a new loop the axis is frozen, so it does not move under the pointer. */
 const frozen = ref<[number, number] | null>(null);
 /** The range being dragged, drawn over the lanes until release. */
 const dragRange = ref<[number, number] | null>(null);
-const view = computed<[number, number]>(() => {
-  if (frozen.value) return frozen.value;
-  if (props.zoom === 'all') return [props.range.a, props.range.b];
-  const inside = props.t >= props.range.a && props.t <= props.range.b;
-  const c = inside ? props.t : props.range.a + 4;
-  const a = Math.max(0, c - 4);
-  return [a, a + 12];
-});
+const view = computed<[number, number]>(() => frozen.value ?? props.win);
 
 /** Melody scale: the passage's own range, so the line uses the lane's height. */
 const melodyRange = computed(() => {
@@ -186,29 +171,6 @@ function draw(): void {
         if (first) { g.moveTo(X(i / 10), yy); first = false; } else g.lineTo(X(i / 10), yy);
       }
       g.stroke(); g.lineWidth = 1;
-    } else if (r.k === 'rate') {
-      // BITRATE LANE - kbps the encoder spent per half second (core/bitrate.ts). The scale is
-      // the song's own min…max, so VBR swings show; CBR is a flat line mid-lane.
-      // Example: AAC 88–139 kbps → dips in sparse passages, peaks in dense ones.
-      const br = props.bitrate;
-      if (!br) { pend(r, props.waitingText.spectrum); continue; }
-      const k = br.kbps, vals = k.filter(v => v > 0);
-      let lo = Math.min(...vals), hi = Math.max(...vals);
-      if (hi - lo < 1) { lo -= 1; hi += 1; } else { const pad = (hi - lo) * 0.1; lo -= pad; hi += pad; }
-      const Yk = (v: number) => ry + r.h - ((v - lo) / (hi - lo)) * (r.h - 2) - 1;
-      g.strokeStyle = C.sub; g.lineWidth = 1.25;
-      if (!br.exact) g.setLineDash([4, 3]);
-      g.beginPath();
-      const i0 = Math.max(0, Math.floor(v0 / br.binSec)), i1 = Math.min(k.length - 1, Math.ceil(v1 / br.binSec));
-      for (let i = i0; i <= i1; i++) {
-        const x0 = X(i * br.binSec), x1 = X((i + 1) * br.binSec), yy = Yk(k[i] || lo);
-        if (i === i0) g.moveTo(x0, yy); else g.lineTo(x0, yy);
-        g.lineTo(x1, yy);
-      }
-      g.stroke(); g.setLineDash([]); g.lineWidth = 1;
-      const cur = k[Math.min(k.length - 1, Math.max(0, Math.floor(t / br.binSec)))];
-      g.fillStyle = C.mute; g.font = '10px ' + font;
-      g.fillText(br.exact ? `${cur} kbps now · ${Math.round(Math.min(...vals))}–${Math.round(Math.max(...vals))}` : `${br.avgKbps} kbps average`, 6, ry + 10);
     } else if (r.k === 'axis') {
       g.fillStyle = C.mute; g.font = '10px ' + font;
       const tick = labelStep(w / Math.max(1e-6, v1 - v0), TIME_STEPS, 60);
@@ -226,12 +188,31 @@ function draw(): void {
   }
 }
 
-watch(() => [props.t, props.zoom, props.timeline, props.spectrum, props.bitrate, props.view, props.activeStem, props.range.a, props.range.b, dragRange.value], () => requestAnimationFrame(draw));
+watch(() => [props.t, props.win[0], props.win[1], props.timeline, props.spectrum, props.view, props.activeStem, props.range.a, props.range.b, dragRange.value], () => requestAnimationFrame(draw));
 onMounted(() => {
   ro = new ResizeObserver(([e]) => { width.value = e.contentRect.width; draw(); });
   if (cv.value) ro.observe(cv.value);
 });
 onBeforeUnmount(() => ro?.disconnect());
+
+/**
+ * Pinch (macOS sends it as ctrl + wheel) or ⌘ / ctrl + scroll: zoom around the pointer.
+ * Shift + scroll or a sideways swipe: pan. A plain vertical scroll still scrolls the page.
+ */
+function onWheel(e: WheelEvent): void {
+  const c = cv.value;
+  if (!c) return;
+  const r = c.getBoundingClientRect(), [v0, v1] = view.value;
+  const at = v0 + ((e.clientX - r.left) / Math.max(1, r.width)) * (v1 - v0);
+  if (e.ctrlKey || e.metaKey) {
+    e.preventDefault();
+    emit('zoom', Math.exp(e.deltaY * (e.ctrlKey && !e.metaKey ? 0.012 : 0.004)), at);
+  } else if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+    e.preventDefault();
+    const d = e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX;
+    emit('pan', (d / Math.max(1, r.width)) * (v1 - v0));
+  }
+}
 
 // Click a lane: seek there. Drag across the lanes: that range becomes the loop (LOOP ANYWHERE FIX).
 const drag = useTimeDrag(
@@ -253,14 +234,14 @@ const stemsReady = computed(() => !!props.timeline?.stems);
     <div class="lbl" :style="{ height: HEIGHT + 'px' }">
       <div v-for="r in ROWS.filter(x => x.name)" :key="r.name" class="l" :style="{ top: r.y + 'px', height: r.h + 'px' }">
         <span v-if="r.s" class="sw" :style="{ background: 'var(--stem-' + r.s + ')' }"></span>
-        <span>{{ r.name }}<small v-if="r.k === 'rate' && $props.bitrate" class="kindl">{{ $props.bitrate.codec }} {{ $props.bitrate.mode }}</small><small v-if="r.k === 'spec' && $props.view" class="kindl">{{ $props.view.kind === 'cqt' ? 'CQT' : $props.view.kind === 'linear' ? 'Linear' : 'Mel' }}</small></span>
+        <span>{{ r.name }}<small v-if="r.k === 'spec' && $props.view" class="kindl">{{ $props.view.kind === 'cqt' ? 'CQT' : $props.view.kind === 'linear' ? 'Linear' : 'Mel' }}</small></span>
         <template v-if="r.s">
           <button type="button" class="sm" :aria-pressed="soloed === r.s" :disabled="!stemsReady" :aria-label="'Solo ' + r.s" @click="emit('solo', r.s)">S</button>
           <button type="button" class="sm" :aria-pressed="mutedStem === r.s" :disabled="!stemsReady" :aria-label="'Mute ' + r.s" @click="emit('mute', r.s)">M</button>
         </template>
       </div>
     </div>
-    <canvas ref="cv" class="cv" :style="{ height: HEIGHT + 'px' }" aria-label="Bars, spectrum, chords, vocal melody, stem loudness and loudness around the playhead" @pointerdown="drag.pointerdown" @pointermove="drag.pointermove" @pointerup="drag.pointerup" @pointercancel="drag.pointercancel"></canvas>
+    <canvas ref="cv" class="cv" :style="{ height: HEIGHT + 'px' }" aria-label="Bars, spectrum, chords, vocal melody, stem loudness and loudness around the playhead" @pointerdown="drag.pointerdown" @pointermove="drag.pointermove" @pointerup="drag.pointerup" @pointercancel="drag.pointercancel" @wheel="onWheel"></canvas>
   </div>
 </template>
 
