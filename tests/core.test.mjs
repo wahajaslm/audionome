@@ -744,3 +744,42 @@ test('lanes: label spacing grows with the zoom so labels never collide (LABEL FI
   assert.equal(labelStep(1640 / 271, TIME_STEPS, 60), 10, '4:31 on 1640 px: every 10 s');
   assert.equal(labelStep(1640 / 793, TIME_STEPS, 60), 30, '13 min on 1640 px: every 30 s');
 });
+
+test('effects per song: Original A/B keeps the mix; versions; cleaning (PER-SONG FIX)', async () => {
+  const fx = await import('../src/core/effects.ts');
+  const s = fx.emptyFx();
+  assert.equal(s.listen, 'original');
+  assert.deepEqual(fx.effectiveParams(s), fx.NEUTRAL, 'a new song plays as recorded');
+  const mix = { ...fx.PRESETS.slowed.params };
+  const withMix = { ...s, mix, listen: 'mix' };
+  assert.equal(fx.effectiveParams(withMix).tape, 0.85);
+  assert.equal(fx.effectiveParams({ ...withMix, listen: 'original' }).tape, 1, 'Original: nothing applied…');
+  assert.equal({ ...withMix, listen: 'original' }.mix.tape, 0.85, '…and the mix is kept');
+  const v = { id: 'v1', name: 'Late drive', params: fx.PRESETS.hall.params, at: 1 };
+  const withV = { ...withMix, versions: [v], listen: 'v1' };
+  assert.equal(fx.effectiveParams(withV).room, 0.5);
+  assert.equal(fx.cleanFxState(JSON.parse(JSON.stringify(withV))).listen, 'v1', 'survives a save and reload');
+  assert.equal(fx.cleanFxState({ ...withV, listen: 'gone' }).listen, 'original', 'a deleted version falls back to Original');
+  assert.equal(fx.nextVersionName([]), 'My version');
+  assert.equal(fx.nextVersionName([{ name: 'My version' }, { name: 'My version 2' }]), 'My version 3');
+  const g = fx.resetGroup({ ...fx.NEUTRAL, room: 0.5, bass: 4, preset: 'custom' }, 'space');
+  assert.equal(g.room, 0); assert.equal(g.bass, 4, 'other groups untouched');
+  const bass = fx.GROUPS.find(x => x.id === 'tone').controls.find(c => c.key === 'bass');
+  assert.deepEqual(fx.sliderFill(bass, 6), [0.5, 0.75], 'bipolar: fills from the middle');
+});
+
+test('download: WAV header and peak fitting', async () => {
+  const { wavFromBuffer, fitPeak } = await import('../src/core/effectsRender.ts');
+  const ch = [new Float32Array([0, 0.5, -0.5, 1]), new Float32Array([0, 0.25, -0.25, -1])];
+  const wav = wavFromBuffer({ numberOfChannels: 2, sampleRate: 44100, length: 4, getChannelData: c => ch[c] });
+  const b = new DataView(await wav.arrayBuffer());
+  assert.equal(wav.size, 44 + 4 * 2 * 2);
+  assert.equal(String.fromCharCode(b.getUint8(0), b.getUint8(1), b.getUint8(2), b.getUint8(3)), 'RIFF');
+  assert.equal(b.getUint32(24, true), 44100);
+  assert.equal(b.getInt16(44 + 2 * 2, true), Math.trunc(0.5 * 0x7fff), 'left sample 1');
+  const loud = [new Float32Array([0, 2, -1])];
+  const g = fitPeak(loud);
+  assert.ok(Math.abs(Math.max(...loud[0].map(Math.abs)) - 10 ** (-1 / 20)) < 1e-6, 'peak brought to -1 dBFS');
+  assert.ok(g < 1);
+  assert.equal(fitPeak([new Float32Array([0.1])]), 1, 'quiet renders untouched');
+});

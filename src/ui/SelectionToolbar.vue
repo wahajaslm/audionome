@@ -10,8 +10,9 @@
  *   Selection:     D#m → G# · bar 21.1 · part A │ 1:10 – 1:22 · …   ▶ · Loop · Explore · ♡ · Effects · ✕
  * Effects opens a drawer under the same strip (the `drawer` slot); nothing pops up.
  * Props: range (null = whole song); loop; playing; exploring; saved; effects (drawer open);
- *        effectsOn (an effect is active: the button is tinted).
- * Emits: play, loop, explore, save, effects, clear.
+ *        effectsOn (an effect is active: the button is tinted); compare / original (the A/B
+ *        button: shown when the song has a mix or version; pressed while Original plays).
+ * Emits: play, loop, explore, save, effects, original, clear.
  */
 import Icon from './Icon.vue';
 import { formatTime } from './format';
@@ -19,8 +20,12 @@ import { formatTime } from './format';
 defineProps<{
   range: { a: number; b: number } | null; loop: boolean; playing: boolean; exploring: boolean; saved: boolean;
   effects: boolean; effectsOn: boolean;
+  /** The song has a mix or a saved version: show the Original A/B button. */
+  compare?: boolean;
+  /** The untouched song is playing (the Original button is pressed). */
+  original?: boolean;
 }>();
-const emit = defineEmits<{ play: []; loop: []; explore: []; save: []; effects: []; clear: [] }>();
+const emit = defineEmits<{ play: []; loop: []; explore: []; save: []; effects: []; original: []; clear: [] }>();
 </script>
 
 <template>
@@ -37,7 +42,8 @@ const emit = defineEmits<{ play: []; loop: []; explore: []; save: []; effects: [
         <button type="button" class="b" :aria-pressed="loop" :title="range ? 'Loop this passage' : 'Loop the bars around the playhead'" @click="emit('loop')"><Icon name="loop" :size="16" /><span class="t">Loop</span></button>
         <button type="button" class="b" :aria-pressed="exploring" :title="range ? 'Explore this passage' : 'Explore the whole song'" @click="emit('explore')"><Icon name="sparkle" :size="16" /><span class="t">Explore</span></button>
         <button type="button" class="b" :class="{ saved }" :title="range ? 'Save this passage' : 'Save the last 20 seconds'" @click="emit('save')"><Icon name="heart" :size="16" /><span class="t">{{ saved ? 'Saved' : 'Save' }}</span></button>
-        <button type="button" class="b" :class="{ on: effectsOn }" :aria-pressed="effects" title="Effects: space, room, tone" @click="emit('effects')"><Icon name="fx" :size="16" /><span class="t">Effects</span></button>
+        <button type="button" class="b" :class="{ on: effectsOn }" :aria-pressed="effects" title="Effects for this song" @click="emit('effects')"><Icon name="fx" :size="16" /><span class="t">Effects</span></button>
+        <button v-if="compare" type="button" class="b ab" :aria-pressed="original" title="Hear the song without your effects; press again to go back" @click="emit('original')">Original</button>
         <button v-if="range" type="button" class="x" aria-label="Clear selection" @click="emit('clear')"><Icon name="close" :size="14" /></button>
       </div>
     </div>
@@ -60,6 +66,7 @@ const emit = defineEmits<{ play: []; loop: []; explore: []; save: []; effects: [
 .b:hover { background: var(--bg-raise); }
 .b.ic { width: 34px; padding: 0; justify-content: center; }
 .b.saved, .b.on { color: var(--accent); }
+.b.ab { font-size: 13px; border: 1px solid var(--line-strong); height: 28px; margin-left: 2px; }
 .b[aria-pressed='true'] { background: var(--bg-raise); color: var(--accent); }
 .x { width: 30px; height: 34px; border: 0; background: none; color: var(--ink-mute); border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; cursor: pointer; }
 .x:hover { background: var(--bg-raise); color: var(--ink); }

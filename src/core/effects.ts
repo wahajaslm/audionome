@@ -351,3 +351,62 @@ export class EffectsChain {
     this.to(this.p('crackleGain', 'gain'), this.playingNow ? p.crackle * 0.5 : 0);
   }
 }
+
+/**
+ * PER-SONG FIX - effects were one global setting, so a mix made for one song played on every
+ * song after it. Now each song has its own state:
+ *   mix       what you are building (presets and controls change it)
+ *   versions  mixes you saved and named ("My version", "Late drive" …)
+ *   listen    what plays: 'original' (no effects), 'mix', or a version id
+ * "Original" is an A/B switch: your mix is kept, one tap brings it back.
+ * Example: song A has "Slowed + reverb"; song B starts as Original; back on A it is still slowed.
+ */
+export interface FxVersion { id: string; name: string; params: EffectParams; at: number }
+export interface FxState { mix: EffectParams; versions: FxVersion[]; listen: string }
+
+export const emptyFx = (): FxState => ({ mix: { ...NEUTRAL }, versions: [], listen: 'original' });
+
+/** What plays for a song's state. */
+export function effectiveParams(s: FxState): EffectParams {
+  if (s.listen === 'mix') return s.mix;
+  const v = s.versions.find(x => x.id === s.listen);
+  return v ? v.params : NEUTRAL;
+}
+
+/** Stored state, cleaned; anything unreadable becomes a fresh Original. */
+export function cleanFxState(v: unknown): FxState {
+  const x = (v && typeof v === 'object' ? v : {}) as Partial<FxState>;
+  const versions = (Array.isArray(x.versions) ? x.versions : [])
+    .filter((r): r is FxVersion => !!r && typeof r.id === 'string' && typeof r.name === 'string')
+    .map(r => ({ id: r.id, name: r.name.slice(0, 40) || 'My version', params: cleanEffects(r.params), at: Number(r.at) || 0 }));
+  const listen = x.listen === 'mix' || versions.some(r => r.id === x.listen) ? String(x.listen) : 'original';
+  return { mix: cleanEffects(x.mix), versions, listen };
+}
+
+/** The next free default name. Example: "My version", "My version 2", … */
+export function nextVersionName(versions: { name: string }[]): string {
+  const taken = new Set(versions.map(v => v.name));
+  if (!taken.has('My version')) return 'My version';
+  for (let i = 2; ; i++) if (!taken.has('My version ' + i)) return 'My version ' + i;
+}
+
+/** One group back to neutral (its ↺). */
+export function resetGroup(p: EffectParams, g: EffectGroup): EffectParams {
+  const def = GROUPS.find(x => x.id === g)!;
+  const next: EffectParams = { ...p };
+  for (const c of def.controls) (next as unknown as Record<string, unknown>)[c.key] = NEUTRAL[c.key];
+  for (const t of def.toggles) next[t] = NEUTRAL[t];
+  if (g === 'tape') next.stem = NEUTRAL.stem;
+  return { ...next, preset: effectsActive(next) ? 'custom' : 'off' };
+}
+
+/**
+ * How far a slider's fill reaches, as [from, to] in 0..1 of its track: from the neutral point to
+ * the value, so a bipolar control (pan, EQ, filter) fills from the middle.
+ * Example: bass +6 dB on −12…12 → [0.5, 0.75].
+ */
+export function sliderFill(c: Control, v: number): [number, number] {
+  const at = (x: number) => (x - c.min) / (c.max - c.min);
+  const n = at(NEUTRAL[c.key]), x = at(v);
+  return [Math.min(n, x), Math.max(n, x)];
+}

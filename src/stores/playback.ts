@@ -9,7 +9,11 @@ import {
 import { normalizationGainDb } from '../core/audioGraph';
 import { practicingNow } from '../core/practice';
 import { radioKey, radioQueue, type RadioItem } from '../core/radio';
-import { cleanEffects, effectsActive, GROUPS, NEUTRAL, PRESETS, withControl, type EffectGroup, type EffectParams, type PresetName, type StemMode } from '../core/effects';
+import {
+  cleanFxState, effectiveParams, effectsActive, emptyFx, nextVersionName, PRESETS, resetGroup, withControl,
+  type EffectGroup, type EffectParams, type FxState, type PresetName, type StemMode,
+} from '../core/effects';
+import { renderWithEffects } from '../core/effectsRender';
 import { putSetting, getSetting } from '../core/repository';
 import { useLibraryStore } from './library';
 import { useListeningStore } from './listening';
@@ -48,13 +52,19 @@ export const usePlaybackStore = defineStore('playback', () => {
   const normalize = ref(true);
   /** Settings: selection edges move to the beat. */
   const snapToBeat = ref(true);
-  /** Effects on what you hear (core/effects.ts), remembered between visits. */
-  const effects = ref<EffectParams>({ ...NEUTRAL });
+  /**
+   * Effects of the loaded song (core/effects.ts, PER-SONG FIX): its mix, saved versions and what
+   * plays. Stored per song ('fx:<trackId>'); a song never touched starts as Original.
+   */
+  const fx = ref<FxState>(emptyFx());
+  /** What plays now: Original (nothing), the mix, or a saved version. */
+  const effects = computed<EffectParams>(() => effectiveParams(fx.value));
   const effectsOn = computed(() => effectsActive(effects.value));
-  /** The Effects drawer under the strip is open, and which group it shows (remembered). */
+  /** The Effects drawer under the strip is open. */
   const effectsOpen = ref(false);
-  const effectsTab = ref<EffectGroup>('space');
-  function setEffectsTab(g: EffectGroup): void { effectsTab.value = g; putSetting('effectsTab', g).catch(() => { }); }
+  /** A version is being rendered for download. */
+  const rendering = ref(false);
+  let fxFor: string | null = null;
   /** Bumped when a crossfade swaps decks, so the waveform follows the playing element. */
   const deck = ref(0);
   /** Moment radio (core/radio.ts): on while it runs; `radioNow` is the passage playing. */
@@ -108,9 +118,10 @@ export const usePlaybackStore = defineStore('playback', () => {
     applyEffects();
     // Echo repeats on the beat: re-time it when a song's tempo arrives.
     watch(() => useTimelineStore().timeline?.tempoBpm, applyEffects);
-    // A stem mode (Karaoke, A cappella, No drums) carries over to the next song once its stems
-    // exist, without a toast each time.
-    watch(() => [trackId.value, useTimelineStore().full] as const, ([, full]) => {
+    // Each song brings its own effects (PER-SONG FIX).
+    watch(trackId, id => { if (id !== fxFor) loadFx(id).catch(console.warn); });
+    // A song's stem mode (Karaoke …) starts once its stems exist, without a toast each time.
+    watch(() => useTimelineStore().full, full => {
       const want = stemFor(effects.value.stem);
       if (want !== 'all' && full && activeStem.value !== want) switchStem(want, true).catch(console.warn);
     });
@@ -270,10 +281,7 @@ export const usePlaybackStore = defineStore('playback', () => {
     if (typeof n === 'boolean') normalize.value = n;
     const snap = await getSetting<boolean>('snapToBeat');
     if (typeof snap === 'boolean') snapToBeat.value = snap;
-    try { effects.value = cleanEffects(JSON.parse((await getSetting<string>('effects')) || 'null')); } catch { effects.value = { ...NEUTRAL }; }
-    const tab = await getSetting<string>('effectsTab');
-    if (GROUPS.some(g => g.id === tab)) effectsTab.value = tab as EffectGroup;
-    applyEffects();
+    await loadFx(trackId.value);
     applyLoudness(0);
   }
 
@@ -325,21 +333,101 @@ export const usePlaybackStore = defineStore('playback', () => {
   /** The stem source for a stem mode: Karaoke = without vocals, A cappella = vocals only. */
   const stemFor = (m: StemMode) => (m === 'mix' ? 'all' : m);
 
-  /**
-   * Sets the effects (a preset or one moved control), remembers them, and handles Karaoke,
-   * which plays the song without its vocal stem.
-   * Example: setEffects(PRESETS.hall.params) → a large room; withControl(p, 'pan', -0.5) → custom.
-   */
-  async function setEffects(p: EffectParams): Promise<void> {
-    const prevStem = effects.value.stem;
-    effects.value = p;
-    applyEffects();
-    putSetting('effects', JSON.stringify(p)).catch(() => { });
-    if (p.stem !== prevStem && activeStem.value !== stemFor(p.stem)) await switchStem(stemFor(p.stem));
+  /** Loads a song's effects (Original when it has none) and applies them. */
+  async function loadFx(id: string | null): Promise<void> {
+    fxFor = id;
+    let next = emptyFx();
+    if (id) { try { next = cleanFxState(JSON.parse((await getSetting<string>('fx:' + id)) || 'null')); } catch { /* fresh */ } }
+    if (fxFor !== id) return; // another song was loaded meanwhile
+    await commitFx(next, false);
   }
-  const applyPreset = (name: Exclude<PresetName, 'custom'>) => setEffects({ ...PRESETS[name].params });
+
+  /**
+   * Makes `next` the song's effects state: applies it, stores it for this song, and switches the
+   * stem source when the stem mode changed (Karaoke, A cappella, No drums).
+   */
+  async function commitFx(next: FxState, save = true): Promise<void> {
+    const before = effects.value.stem;
+    fx.value = next;
+    applyEffects();
+    if (save && fxFor) putSetting('fx:' + fxFor, JSON.stringify(next)).catch(() => { });
+    const want = stemFor(effects.value.stem);
+    if ((effects.value.stem !== before || want !== 'all') && activeStem.value !== want) await switchStem(want, !save);
+  }
+
+  /** A preset or a moved control changes the mix, and the mix is what plays. */
+  const applyPreset = (name: Exclude<PresetName, 'custom'>) => commitFx({ ...fx.value, mix: { ...PRESETS[name].params }, listen: 'mix' });
   function setControl<K extends keyof EffectParams>(key: K, value: EffectParams[K]): Promise<void> {
-    return setEffects(withControl(effects.value, key, value));
+    return commitFx({ ...fx.value, mix: withControl(effects.value, key, value), listen: 'mix' });
+  }
+  /** ↺ on a group: that group back to neutral. */
+  const resetFxGroup = (g: EffectGroup) => commitFx({ ...fx.value, mix: resetGroup(effects.value, g), listen: 'mix' });
+  /**
+   * A/B: 'original' (no effects; the mix is kept), 'mix', or a saved version's id.
+   * Example: building a mix → Original → hear the song as it is → My mix → back.
+   */
+  const listenTo = (which: string) => commitFx({ ...fx.value, listen: which });
+  /** The song has something to compare with Original (a mix or a saved version). */
+  const hasVersions = computed(() => effectsActive(fx.value.mix) || fx.value.versions.length > 0);
+  let lastListen = 'mix';
+  /**
+   * The strip's Original button: one tap to the untouched song, one tap back to what played.
+   * Example: "Late drive" plays → Original → the song as it is → Original again → "Late drive".
+   */
+  function toggleOriginal(): Promise<void> {
+    if (fx.value.listen !== 'original') { lastListen = fx.value.listen; return listenTo('original'); }
+    const back = lastListen === 'mix' || fx.value.versions.some(v => v.id === lastListen) ? lastListen
+      : fx.value.versions[0]?.id ?? 'mix';
+    return listenTo(back);
+  }
+
+  /** Saves what plays now as a named version of this song and plays it. */
+  function saveVersion(name?: string): Promise<void> {
+    const params = { ...effects.value };
+    const id = 'v' + Date.now().toString(36);
+    const v = { id, name: (name || '').trim().slice(0, 40) || nextVersionName(fx.value.versions), params, at: Date.now() };
+    useUiStore().notify('Saved "' + v.name + '" for this song.');
+    return commitFx({ ...fx.value, versions: [...fx.value.versions, v], listen: id });
+  }
+  function renameVersion(id: string, name: string): Promise<void> {
+    const n = name.trim().slice(0, 40);
+    if (!n) return Promise.resolve();
+    return commitFx({ ...fx.value, versions: fx.value.versions.map(v => (v.id === id ? { ...v, name: n } : v)) });
+  }
+  function deleteVersion(id: string): Promise<void> {
+    const listen = fx.value.listen === id ? 'original' : fx.value.listen;
+    return commitFx({ ...fx.value, versions: fx.value.versions.filter(v => v.id !== id), listen });
+  }
+
+  /**
+   * Downloads what plays now as a WAV file ("Song title (My version).wav"), rendered with the
+   * same effects and stem mode. Only for your own listening: it is your copy of your audio.
+   */
+  async function downloadVersion(): Promise<void> {
+    const t = currentTrack.value, ui = useUiStore();
+    if (!t || rendering.value) return;
+    const p = { ...effects.value };
+    const name = fx.value.listen === 'original' ? 'Original' : fx.value.listen === 'mix' ? 'My mix'
+      : fx.value.versions.find(v => v.id === fx.value.listen)?.name ?? 'My version';
+    rendering.value = true;
+    ui.notify('Rendering "' + name + '"…');
+    try {
+      const want = stemFor(p.stem);
+      const bytes = want !== 'all'
+        ? await fetch(stemUrl(t.id, want)).then(r => { if (!r.ok) throw new Error('stem ' + r.status); return r.arrayBuffer(); })
+        : t.audioBlob instanceof Blob && t.audioBlob.size > 0 ? await t.audioBlob.arrayBuffer()
+          : await fetch((await resolveTrackSource(t)).srcUrl).then(r => r.arrayBuffer());
+      const wav = await renderWithEffects(bytes, p, useTimelineStore().timeline?.tempoBpm ?? null);
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(wav);
+      a.download = (t.title || 'song').replace(/[\\/:*?"<>|]+/g, ' ').trim() + ' (' + name + ').wav';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      ui.notify('"' + name + '" downloaded as WAV.');
+    } catch (err) {
+      console.warn('Render notice:', err);
+      ui.notify('Could not render this version. ' + (p.stem !== 'mix' ? 'Its stems may not be separated yet.' : 'Try again.'));
+    } finally { rendering.value = false; }
   }
 
   /** The selection on the beat (when the setting is on and the song has beats). */
@@ -699,7 +787,7 @@ export const usePlaybackStore = defineStore('playback', () => {
 
   return {
     ...toRefs(region), trackId, duration, playing, loading, volume, activeStem, queue, currentTrack,
-    rate, normalize, snapToBeat, practicing, setRate, effects, effectsOn, effectsOpen, effectsTab, setEffectsTab, setEffects, applyPreset, setControl, deck, radio, radioNow, startRadio, stopRadio, radioSkip, radioRestart, cycleRate, setNormalize, setSnapToBeat, onLoudnessMeasured,
+    rate, normalize, snapToBeat, practicing, setRate, fx, effects, effectsOn, effectsOpen, rendering, applyPreset, setControl, resetFxGroup, listenTo, hasVersions, toggleOriginal, saveVersion, renameVersion, deleteVersion, downloadVersion, deck, radio, radioNow, startRadio, stopRadio, radioSkip, radioRestart, cycleRate, setNormalize, setSnapToBeat, onLoudnessMeasured,
     engine, attachEngine, onDuration, onFrame, checkRegionEnd, loadSettings, lastPlayed,
     selectTrack, changeTrack, openRange, playQueue, playNext, togglePlay, playSelection, seekBy, stepBy,
     clickSeek, beginSelection, updateSelection, commitSelection, resizeSelection, endResize, selectAroundPlayhead, clearSelection,
