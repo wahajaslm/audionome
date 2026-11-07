@@ -25,6 +25,7 @@ import { useLibraryStore } from '../../stores/library';
 import DescribeStrip from '../../ui/DescribeStrip.vue';
 import AskRow from '../../ui/AskRow.vue';
 import SpectrumSwitch from '../../ui/SpectrumSwitch.vue';
+import NerdStats from './NerdStats.vue';
 import LiveLanes from './LiveLanes.vue';
 import { formatTime } from '../../ui/format';
 
@@ -205,6 +206,7 @@ const measurements = computed(() => {
     <LiveLanes
       :timeline="timeline"
       :spectrum="spectrum"
+      :bitrate="timelineStore.bitrate"
       :view="spectrumView"
       :range="range"
       :t="t"
@@ -274,6 +276,8 @@ const measurements = computed(() => {
         @done="flow.finishDescribe()"
       />
     </details>
+    <!-- Stats for nerds: codec, encoder, bitrate, device, analysis (closed by default). -->
+    <NerdStats />
   </section>
 </template>
 

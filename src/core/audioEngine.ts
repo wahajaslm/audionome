@@ -287,6 +287,27 @@ export class NativeAudioEngine {
   /** False only when the browser has no Web Audio (checked after the first play). */
   hasEffects(): boolean { return !this.graphTried || !!this.graph; }
 
+  /**
+   * Live numbers for Stats for nerds: which deck plays, how much is buffered ahead, the media
+   * element's states, the real playback rate, and the audio device.
+   * Example: { deck: 'B', bufferedAhead: 41.2, readyState: 4, rate: 0.85, pitchKept: false, … }
+   */
+  stats(): {
+    deck: 'A' | 'B'; bufferedAhead: number; readyState: number; networkState: number; rate: number; pitchKept: boolean;
+    crossfading: boolean; loudnessDb: number; webAudio: boolean;
+    device: { sampleRate: number; baseLatency: number; outputLatency: number; state: string } | null;
+  } {
+    const el = this.el as MediaElementLike & Partial<Pick<HTMLMediaElement, 'buffered' | 'networkState'>>;
+    let ahead = 0;
+    const b = el.buffered, now = el.currentTime || 0;
+    if (b) for (let i = 0; i < b.length; i++) if (b.start(i) <= now + 0.1 && b.end(i) >= now) ahead = Math.max(ahead, b.end(i) - now);
+    return {
+      deck: this.active === 0 ? 'A' : 'B', bufferedAhead: ahead, readyState: el.readyState, networkState: el.networkState ?? 0,
+      rate: el.playbackRate ?? 1, pitchKept: el.preservesPitch !== false, crossfading: !!this.crossfading, loudnessDb: this.normDb,
+      webAudio: !!this.graph, device: this.graph?.info?.() ?? null,
+    };
+  }
+
   /** True when crossfade() can run: two decks routed through the graph. */
   canCrossfade(): boolean { return this.decks.length > 1 && this.gains.length === this.decks.length; }
 

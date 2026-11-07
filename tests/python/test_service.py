@@ -367,3 +367,18 @@ def test_corpus_titles_name_songs_by_video_id() -> None:
     assert isinstance(titles, dict)
     for value in list(titles.values())[:5]:
         assert set(value) == {'title', 'artist'}
+
+
+def test_probe_summary_picks_the_audio_stream_and_tags() -> None:
+    """Stats for nerds: ffprobe JSON -> the fields the panel shows."""
+    from musicdna.service.probe_api import summarize_probe
+    raw = {'format': {'format_long_name': 'MP2/3 (MPEG audio layer 2/3)', 'duration': '76.068571', 'size': '1826315',
+                      'bit_rate': '192070', 'tags': {'TITLE': 'Naina', 'encoder': 'LAME3.100'}},
+           'streams': [{'codec_type': 'audio', 'codec_name': 'mp3', 'codec_long_name': 'MP3 (MPEG audio layer 3)',
+                        'profile': 'unknown', 'sample_fmt': 'fltp', 'sample_rate': '44100', 'channels': 2,
+                        'channel_layout': 'stereo', 'bit_rate': '192000'},
+                       {'codec_type': 'video', 'disposition': {'attached_pic': 1}}]}
+    s = summarize_probe(raw)
+    assert s['codec'] == 'MP3 (MPEG audio layer 3)' and s['profile'] is None
+    assert s['sampleRate'] == 44100 and s['channelLayout'] == 'stereo' and s['bitRate'] == 192000.0
+    assert s['encoder'] == 'LAME3.100' and s['pictures'] == 1 and s['tags']['title'] == 'Naina'

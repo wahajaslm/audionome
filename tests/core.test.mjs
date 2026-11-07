@@ -783,3 +783,53 @@ test('download: WAV header and peak fitting', async () => {
   assert.ok(g < 1);
   assert.equal(fitPeak([new Float32Array([0.1])]), 1, 'quiet renders untouched');
 });
+
+test('bitrate: real MP3 and WAV match their known codec, rate and length', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { parseBitrate, bitrateSummary } = await import('../src/core/bitrate.ts');
+  const mp3 = parseBitrate(readFileSync(new URL('../public/Naina-Moray-Coke-Studio-129-205.mp3', import.meta.url)));
+  assert.equal(mp3.codec, 'MP3'); assert.equal(mp3.mode, 'CBR'); assert.equal(mp3.avgKbps, 192); assert.equal(mp3.sampleRate, 44100);
+  assert.ok(Math.abs(mp3.durationSec - 76.07) < 0.2, 'ffprobe says 76.07 s, got ' + mp3.durationSec);
+  const wav = parseBitrate(readFileSync(new URL('../public/demo.wav', import.meta.url)));
+  assert.equal(wav.mode, 'PCM'); assert.ok(Math.abs(wav.durationSec - 32) < 0.1);
+  assert.match(bitrateSummary(mp3), /^MP3 · CBR · avg 192 kbps · 44\.1 kHz · stereo$/);
+});
+
+test('bitrate: a VBR MP3 is seen as VBR with its curve; an OGG/Opus page stream is read', async () => {
+  const { parseBitrate, mp3Frame } = await import('../src/core/bitrate.ts');
+  // MPEG-1 Layer III, 44.1 kHz: header FF FB <bitrate idx << 4 | 0x00> C0. 128 kbps → 417 B, 320 kbps → 1044 B.
+  const frame = idx => { const f = mp3Frame(new Uint8Array([0xff, 0xfb, idx << 4, 0xc0]), 0); const b = new Uint8Array(f.len); b.set([0xff, 0xfb, idx << 4, 0xc0]); return b; };
+  const parts = [...Array(40).fill(9), ...Array(40).fill(14)].map(frame); // 40 × 128 kbps, then 40 × 320 kbps
+  const all = new Uint8Array(parts.reduce((n, p) => n + p.length, 0)); let o = 0; for (const p of parts) { all.set(p, o); o += p.length; }
+  const v = parseBitrate(all);
+  assert.equal(v.mode, 'VBR');
+  assert.ok(Math.abs(v.kbps[0] - 128) <= 1 && Math.abs(v.kbps.at(-1) - 320) <= 2, JSON.stringify(v.kbps));
+  // Ogg: an OpusHead page, then two pages of 1000 bytes each 0.5 s apart (granule at 48 kHz).
+  const page = (gran, payload) => { const p = new Uint8Array(27 + 1 + payload.length); p.set([79, 103, 103, 83]); new DataView(p.buffer).setBigInt64(6, BigInt(gran), true); p[26] = 1; p[27] = payload.length; p.set(payload, 28); return p; };
+  const head = new Uint8Array(19); head.set([...'OpusHead'].map(c => c.charCodeAt(0))); head[9] = 2;
+  const ogg = [page(0, head), page(24000, new Uint8Array(200)), page(48000, new Uint8Array(200))];
+  const buf = new Uint8Array(ogg.reduce((n, p) => n + p.length, 0)); o = 0; for (const p of ogg) { buf.set(p, o); o += p.length; }
+  const op = parseBitrate(buf);
+  assert.equal(op.codec, 'Opus'); assert.equal(op.channels, 2); assert.ok(Math.abs(op.durationSec - 1) < 1e-6);
+  assert.equal(op.kbps[0], Math.round(228 * 8 / 0.5 / 1000), '228-byte page per ½ s');
+  assert.equal(parseBitrate(new Uint8Array([1, 2, 3])), null, 'unknown bytes: null');
+});
+
+test('stats for nerds: each row takes the first source that knows it', async () => {
+  const { fileRows, playbackRows, analysisRows } = await import('../src/core/nerdStats.ts');
+  const br = { codec: 'AAC', container: 'M4A', mode: 'VBR', sampleRate: 44100, channels: 2, avgKbps: 128, kbps: [120, 139], binSec: 0.5, durationSec: 1, exact: true };
+  const rows = Object.fromEntries(fileRows(br, null, { profile: 'LC', codec: 'AAC (Advanced Audio Coding)', encoder: 'Lavf61.7.100', sampleFormat: 'fltp' }, 139).map(r => [r[0], r.slice(1)]));
+  assert.deepEqual(rows['Codec'], ['AAC (Advanced Audio Coding) · LC', 'ffprobe']);
+  assert.deepEqual(rows['Bitrate'], ['avg 128 kbps · now 139 kbps', 'frames']);
+  assert.deepEqual(rows['Encoder'], ['Lavf61.7.100', 'ffprobe']);
+  const mi = { general: { Format: 'MPEG Audio' }, audio: { Format: 'MPEG Audio', Format_Version: '1', Format_Profile: 'Layer 3', Encoded_Library_Settings: '-m j -V 0' } };
+  const r2 = Object.fromEntries(fileRows(br, mi, null, null).map(r => [r[0], r.slice(1)]));
+  assert.deepEqual(r2['Codec'], ['MPEG Audio 1 Layer 3', 'MediaInfo'], 'MediaInfo wins when present');
+  assert.deepEqual(r2['Encoder settings'], ['-m j -V 0', 'MediaInfo']);
+  const pb = Object.fromEntries(playbackRows({ deck: 'B', bufferedAhead: 41.24, readyState: 4, networkState: 1, rate: 0.85, pitchKept: false, crossfading: true, loudnessDb: -3, webAudio: true,
+    device: { sampleRate: 48000, baseLatency: 0.01, outputLatency: 0.02, state: 'running' } }, { source: 'this device', stem: 'all', practiceRate: 1, effects: 'My mix', lufs: -14.2, peakDb: -0.5 }));
+  assert.equal(pb['Deck'], 'B · crossfading');
+  assert.equal(pb['Speed'], '0.85× · pitch moves (tape)');
+  assert.equal(pb['Audio device'], '48 kHz · running · latency 10 ms + output 20 ms');
+  assert.match(analysisRows(null)[0][1], /not available/);
+});

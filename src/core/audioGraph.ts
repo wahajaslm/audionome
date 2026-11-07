@@ -130,6 +130,8 @@ export interface AudioGraphLike {
   setEffects(p: EffectParams, bpm: number | null): void;
   /** Playing or paused (vinyl crackle only plays under the music). */
   setPlaying(on: boolean): void;
+  /** The audio device as the browser runs it (Stats for nerds). */
+  info?(): { sampleRate: number; baseLatency: number; outputLatency: number; state: string };
   close(): void;
 }
 
@@ -156,6 +158,9 @@ export class AudioGraph implements AudioGraphLike {
 
   setEffects(p: EffectParams, bpm: number | null): void { this.fx.set(p, bpm); }
   setPlaying(on: boolean): void { this.fx.setPlaying(on); }
+  info(): { sampleRate: number; baseLatency: number; outputLatency: number; state: string } {
+    return { sampleRate: this.ctx.sampleRate, baseLatency: this.ctx.baseLatency ?? 0, outputLatency: this.ctx.outputLatency ?? 0, state: this.ctx.state };
+  }
 
   resume(): void {
     if (this.ctx.state !== 'running') this.ctx.resume().catch(() => { });

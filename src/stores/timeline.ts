@@ -5,6 +5,7 @@ import { SPEC_SR, type Spectrum, type SpectrumKind, type SpectrumView } from '..
 import { getSetting, putSetting } from '../core/repository';
 import { fallbackUrl } from '../core/library';
 import { measureLoudness } from '../core/audioGraph';
+import { parseBitrate, type BitrateInfo } from '../core/bitrate';
 import { useLibraryStore } from './library';
 import { usePlaybackStore } from './playback';
 
@@ -21,6 +22,8 @@ export const useTimelineStore = defineStore('timeline', () => {
   /** The mel view and the instant curves (loudness, brightness). */
   const spectrum = shallowRef<Spectrum | null>(null);
   const spectrumState = ref<'idle' | 'decoding' | 'done' | 'error'>('idle');
+  /** Codec and bitrate over time, read from the file's frames (core/bitrate.ts). */
+  const bitrate = shallowRef<BitrateInfo | null>(null);
   /** Which spectrum view is drawn (SPECTRUM VIEWS), remembered across songs and reloads. */
   const spectrumKind = ref<SpectrumKind>('mel');
   getSetting<string>('spectrumKind').then(k => { if (k === 'mel' || k === 'cqt' || k === 'linear') spectrumKind.value = k; }).catch(() => { });
@@ -148,6 +151,8 @@ export const useTimelineStore = defineStore('timeline', () => {
         try {
           const bytes = await read();
           if (!bytes.byteLength) throw new Error('empty audio');
+          // Before decoding: decodeAudioData empties the buffer. A few ms, no second read.
+          if (mySeq === seq) bitrate.value = parseBitrate(bytes);
           buf = await decode(bytes);
           break;
         } catch (err) { lastErr = err; }
@@ -184,6 +189,7 @@ export const useTimelineStore = defineStore('timeline', () => {
     trackId.value = id;
     timeline.value = null;
     spectrum.value = null;
+    bitrate.value = null;
     views.value = {};
     spectrumState.value = 'idle';
     serviceOff.value = false;
@@ -215,5 +221,5 @@ export const useTimelineStore = defineStore('timeline', () => {
     });
   }
 
-  return { trackId, timeline, spectrum, spectrumState, spectrumKind, spectrumView, viewBusy, setSpectrumKind, serviceOff, quick, full, statusText, load, bind };
+  return { trackId, timeline, spectrum, bitrate, spectrumState, spectrumKind, spectrumView, viewBusy, setSpectrumKind, serviceOff, quick, full, statusText, load, bind };
 });
