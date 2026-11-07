@@ -7,9 +7,10 @@
  * same fixes, moved here so the Vue player and the classic page cannot drift apart.
  */
 
-import { dbToGain, type AudioGraphLike } from './audioGraph.ts';
+import { dbToGain, type AudioGraphLike, type DeckGainLike } from './audioGraph.ts';
 
-export type EngineEvent = 'timeupdate' | 'play' | 'pause' | 'finish' | 'playing' | 'waiting';
+/** 'swap': a crossfade made the other deck the playing one (the waveform follows it). */
+export type EngineEvent = 'timeupdate' | 'play' | 'pause' | 'finish' | 'playing' | 'waiting' | 'swap';
 type Listener = (value?: number) => void;
 
 /** The parts of HTMLAudioElement the engine uses. Tests pass a small fake with these fields. */
@@ -30,13 +31,25 @@ export interface AudioEngineHooks {
    * Builds the Web Audio graph on the first play (browsers only start audio inside a click).
    * Omitted in tests and old browsers: the element then plays directly.
    */
-  createGraph?(el: MediaElementLike): AudioGraphLike | null;
+  createGraph?(): AudioGraphLike | null;
 }
 
+/**
+ * CROSSFADE FIX - two decks (two <audio> elements). One plays; a crossfade starts the next
+ * passage on the other and the two overlap, then the other becomes the playing deck. Every
+ * event, time and control below follows the playing deck (`el`); the fading deck is ignored.
+ * Tests pass one element: one deck, and crossfade() reports false.
+ */
 export class NativeAudioEngine {
-  readonly el: MediaElementLike;
+  private readonly decks: MediaElementLike[];
+  private gains: (DeckGainLike | null)[] = [];
+  private active = 0;
+  private crossfading: { from: number; timer: ReturnType<typeof setTimeout> } | null = null;
+  /** The playing deck. */
+  get el(): MediaElementLike { return this.decks[this.active]; }
+  private get gain(): DeckGainLike | null { return this.gains[this.active] ?? null; }
   private readonly listeners: Record<EngineEvent, Listener[]> = {
-    timeupdate: [], play: [], pause: [], finish: [], playing: [], waiting: [],
+    timeupdate: [], play: [], pause: [], finish: [], playing: [], waiting: [], swap: [],
   };
   private pendingTime: number | null = null;
   private currentFallbackUrl: string | null = null;
@@ -49,22 +62,28 @@ export class NativeAudioEngine {
 
   private readonly hooks: AudioEngineHooks;
 
-  constructor(hooks: AudioEngineHooks = {}, element?: MediaElementLike) {
+  /** `element`: tests pass one fake (one deck) or two (two decks, crossfade testable). */
+  constructor(hooks: AudioEngineHooks = {}, element?: MediaElementLike | MediaElementLike[]) {
     this.hooks = hooks;
-    if (element) {
-      this.el = element;
-    } else {
-      const audio = document.createElement('audio');
-      document.body.appendChild(audio);
-      this.el = audio;
-    }
-    const el = this.el;
+    const make = () => { const a = document.createElement('audio'); document.body.appendChild(a); return a; };
+    this.decks = Array.isArray(element) ? element.slice(0, 2) : element ? [element] : [make(), make()];
+    this.decks.forEach(d => this.wire(d));
+  }
+
+  /** True for this engine's own elements (the stray-media rule must not pause them). */
+  owns(m: unknown): boolean { return this.decks.includes(m as MediaElementLike); }
+  /** Both decks (teardown). */
+  allDecks(): readonly MediaElementLike[] { return this.decks; }
+
+  private wire(el: MediaElementLike): void {
+    const live = () => el === this.el;
     el.preload = 'auto';
     // WEB AUDIO FIX - the graph reads the samples, which browsers allow for other origins only
     // with CORS. Without this, a service URL would play as silence through the graph.
     // The local service sends CORS headers; a link without them fails and the fallback plays.
     if ('crossOrigin' in el) el.crossOrigin = 'anonymous';
     el.addEventListener('loadedmetadata', () => {
+      if (!live()) return;
       if (el.duration && Number.isFinite(el.duration) && el.duration > 0) this.hooks.onDuration?.(el.duration);
       if (this.pendingTime !== null) {
         try { el.currentTime = this.pendingTime; } catch { /* not seekable yet */ }
@@ -72,6 +91,7 @@ export class NativeAudioEngine {
       }
     });
     el.addEventListener('error', () => {
+      if (!live()) return;
       if (el.error && el.error.code === 1) return; // MEDIA_ERR_ABORTED during track switch
       console.warn('Audio playback notice on source:', el.src, el.error);
       if (!this.usedFallback && this.currentFallbackUrl && el.src !== this.currentFallbackUrl) {
@@ -83,8 +103,8 @@ export class NativeAudioEngine {
         if (this.hooks.wantsPlayback?.()) el.play().catch(() => { });
       }
     });
-    el.addEventListener('timeupdate', () => this.fire('timeupdate', el.currentTime || 0));
-    el.addEventListener('play', () => this.fire('play'));
+    el.addEventListener('timeupdate', () => { if (live()) this.fire('timeupdate', el.currentTime || 0); });
+    el.addEventListener('play', () => { if (live()) this.fire('play'); });
     // SYNC FIX 1 - "requested" vs "audible".
     // 'play' fires the moment play() is called, even while the file is still buffering and
     // nothing can be heard. 'playing' fires when sound actually starts; 'waiting' fires when
@@ -92,13 +112,13 @@ export class NativeAudioEngine {
     // Example: on a track served over HTTP, you press play at 0:00 wall-clock, the browser
     // buffers, and sound starts about a second later. Before this fix that silent second
     // was logged as listening time and the playhead sat still while the UI said "playing".
-    el.addEventListener('playing', () => this.fire('playing'));
-    el.addEventListener('waiting', () => this.fire('waiting'));
-    el.addEventListener('pause', () => this.fire('pause'));
-    el.addEventListener('ended', () => this.fire('finish'));
+    el.addEventListener('playing', () => { if (live()) this.fire('playing'); });
+    el.addEventListener('waiting', () => { if (live()) this.fire('waiting'); });
+    el.addEventListener('pause', () => { if (live()) this.fire('pause'); });
+    el.addEventListener('ended', () => { if (live()) this.fire('finish'); });
     // SEEK CLICK FIX (core/audioGraph.ts): fade around every seek while sound is playing.
-    el.addEventListener('seeking', () => { if (!el.paused) this.graph?.duck(); });
-    el.addEventListener('seeked', () => this.graph?.unduck());
+    el.addEventListener('seeking', () => { if (live() && !el.paused && !this.crossfading) this.gain?.duck(); });
+    el.addEventListener('seeked', () => { if (live() && !this.crossfading) this.gain?.unduck(); });
   }
 
   private fire(ev: EngineEvent, value?: number): void {
@@ -142,7 +162,7 @@ export class NativeAudioEngine {
     // Not awaited, so el.play() below still runs inside the click (Safari is strict here).
     this.ensureGraph();
     this.graph?.resume();
-    this.graph?.unduck(); // never stay faded out if a seek did not finish
+    if (!this.crossfading) this.gain?.unduck(); // never stay faded out if a seek did not finish
     try {
       return await el.play();
     } catch (err) {
@@ -157,7 +177,11 @@ export class NativeAudioEngine {
     }
   }
 
-  pause(): void { this.el.pause(); }
+  /** Pauses; during a crossfade both decks stop and the new one stays the playing deck. */
+  pause(): void {
+    if (this.crossfading) this.finishCrossfade();
+    this.el.pause();
+  }
   hasSource(): boolean { return Boolean(this.el.src) && (!this.el.error || this.el.error.code === 1); }
   isPlaying(): boolean { return !this.el.paused && !this.el.ended; }
   /** True while the browser is still moving to a new position after setTime(). */
@@ -183,7 +207,9 @@ export class NativeAudioEngine {
   private ensureGraph(): void {
     if (this.graphTried || !this.hooks.createGraph) return;
     this.graphTried = true;
-    try { this.graph = this.hooks.createGraph(this.el); } catch (err) { console.warn('Web Audio notice:', err); this.graph = null; }
+    try { this.graph = this.hooks.createGraph(); } catch (err) { console.warn('Web Audio notice:', err); this.graph = null; }
+    try { this.gains = this.graph ? this.decks.map(d => this.graph!.addDeck(d as HTMLMediaElement)) : []; }
+    catch (err) { console.warn('Web Audio notice:', err); this.gains = []; }
     this.applyLevel(0);
   }
 
@@ -193,9 +219,9 @@ export class NativeAudioEngine {
    */
   private applyLevel(rampSec: number): void {
     if (this.graph) {
-      this.el.volume = 1;
+      for (const d of this.decks) d.volume = 1;
       this.graph.setVolume(this.volume);
-      this.graph.setNormalization(this.normDb, rampSec);
+      this.gain?.setNormalization(this.normDb, rampSec);
     } else {
       this.el.volume = Math.max(0, Math.min(1, this.volume * Math.min(1, dbToGain(this.normDb))));
     }
@@ -224,14 +250,78 @@ export class NativeAudioEngine {
   setRate(r: number): void {
     const rate = Math.max(0.25, Math.min(2, Number(r) || 1));
     this.rate = rate;
-    this.el.preservesPitch = true;
-    this.el.defaultPlaybackRate = rate;
-    this.el.playbackRate = rate;
+    for (const d of this.decks) {
+      d.preservesPitch = true;
+      d.defaultPlaybackRate = rate;
+      d.playbackRate = rate;
+    }
   }
   getRate(): number { return this.rate; }
 
-  /** Fades the sound to `target` (0..1) over `sec`; no-op without the graph. */
-  fade(target: number, sec: number): void { this.graph?.fade(target, sec); }
+  /** Fades the playing deck to `target` (0..1) over `sec`; no-op without the graph. */
+  fade(target: number, sec: number): void { this.gain?.fade(target, sec); }
+
+  /** True when crossfade() can run: two decks routed through the graph. */
+  canCrossfade(): boolean { return this.decks.length > 1 && this.gains.length === this.decks.length; }
+
+  /**
+   * Starts `url` at `startSec` on the idle deck and fades it in over `sec` while the playing
+   * deck fades out (equal-power, so the overlap does not get louder). The idle deck becomes the
+   * playing one as soon as it starts; 'swap' tells the UI. Resolves false (nothing changed)
+   * when it cannot crossfade or the new source fails to load: the caller then loads normally.
+   * `normDb` is the new song's loudness gain.
+   * Example: suggestion 1 ends at 1:42 → at 1:40.5 suggestion 2 starts under it; by 1:42 only
+   * suggestion 2 is heard.
+   */
+  async crossfade(url: string, startSec: number, fallbackUrl: string | null, sec: number, normDb: number): Promise<boolean> {
+    if (!this.canCrossfade() || !this.isPlaying()) return false;
+    if (this.crossfading) this.finishCrossfade();
+    const from = this.active, to = 1 - from, nb = this.decks[to], ng = this.gains[to]!;
+    ng.fade(0, 0);
+    const ready = await new Promise<boolean>(resolve => {
+      const done = (ok: boolean) => {
+        clearTimeout(timer);
+        nb.removeEventListener('loadedmetadata', onMeta); nb.removeEventListener('error', onErr);
+        resolve(ok);
+      };
+      const onMeta = () => {
+        try { nb.currentTime = startSec; } catch { /* not seekable */ }
+        done(true);
+      };
+      const onErr = () => done(false);
+      const timer = setTimeout(() => done(false), 4000);
+      nb.addEventListener('loadedmetadata', onMeta);
+      nb.addEventListener('error', onErr);
+      nb.src = url;
+      nb.load();
+    });
+    if (!ready || this.active !== from || !this.isPlaying()) { nb.pause(); return false; }
+    ng.setNormalization(normDb, 0);
+    try { await nb.play(); } catch { nb.pause(); return false; }
+    // The new deck plays: from here every event and control follows it.
+    this.active = to;
+    this.normDb = Number.isFinite(normDb) ? normDb : 0;
+    this.currentFallbackUrl = fallbackUrl; this.usedFallback = false; this.pendingTime = null;
+    const d = this.getDuration();
+    if (d > 0) this.hooks.onDuration?.(d);
+    ng.fade(1, sec);
+    this.gains[from]?.fade(0, sec);
+    this.crossfading = { from, timer: setTimeout(() => this.finishCrossfade(), sec * 1000 + 60) };
+    this.fire('swap');
+    // The new deck was paused when it became the playing one; tell the UI it plays.
+    this.fire('play'); this.fire('playing');
+    return true;
+  }
+
+  /** Ends a crossfade at once: the old deck stops, the new deck is at full level. */
+  private finishCrossfade(): void {
+    const x = this.crossfading;
+    if (!x) return;
+    clearTimeout(x.timer);
+    this.crossfading = null;
+    this.decks[x.from].pause();
+    this.gain?.fade(1, 0.02);
+  }
 
   /** Releases the audio device (hot-reload teardown). */
   closeGraph(): void { this.graph?.close(); this.graph = null; }

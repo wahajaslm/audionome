@@ -41,7 +41,7 @@ export function useAudioEngine(): NativeAudioEngine {
     onDuration: d => playback.onDuration(d),
     resumePosition: () => playback.t,
     wantsPlayback: () => playback.playing,
-    createGraph: el => createAudioGraph(el as HTMLMediaElement),
+    createGraph: () => createAudioGraph(),
   }));
   instance = engine;
   playback.attachEngine(engine);
@@ -69,7 +69,8 @@ export function useAudioEngine(): NativeAudioEngine {
     // here (left over from an old engine, a preview, a probe) is paused.
     // Example: an orphaned <audio> from before a hot reload is still on 0:40 -> it stops.
     document.querySelectorAll('audio, video').forEach(m => {
-      if (m !== (engine.el as unknown) && !(m as HTMLMediaElement).paused) (m as HTMLMediaElement).pause();
+      // The engine's own two decks are exempt: during a crossfade both play on purpose.
+      if (!engine.owns(m) && !(m as HTMLMediaElement).paused) (m as HTMLMediaElement).pause();
     });
   });
   const stopStudioListen = onStudioPlay(() => { if (engine.isPlaying()) engine.pause(); });
@@ -77,10 +78,13 @@ export function useAudioEngine(): NativeAudioEngine {
   globalWithEngine[TEARDOWN_KEY] = () => {
     clock.stop();
     engine.pause();
-    const el = engine.el as HTMLMediaElement;
-    el.removeAttribute('src');
-    el.load();
-    el.remove();
+    for (const d of engine.allDecks()) {
+      const el = d as HTMLMediaElement;
+      el.pause();
+      el.removeAttribute('src');
+      el.load();
+      el.remove();
+    }
     engine.closeGraph();
     tabs?.close();
     stopStudioListen();

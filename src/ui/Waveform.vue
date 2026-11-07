@@ -247,6 +247,14 @@ onBeforeUnmount(() => {
 watch(() => props.selection, syncSelection, { deep: true });
 watch(() => props.saved, syncSaved, { deep: true });
 watch(() => props.hints, syncHints, { deep: true });
+// CROSSFADE FIX - the player swapped to its other <audio> deck: draw and follow that one.
+watch(() => props.media, (el, old) => {
+  old?.removeEventListener('loadedmetadata', loadWave);
+  if (!ws || !el) return;
+  ws.setMediaElement(el);
+  el.addEventListener('loadedmetadata', loadWave);
+  loadWave();
+});
 
 // A click is a press and release in nearly the same place; a drag (selection) is not.
 let downX: number | null = null;

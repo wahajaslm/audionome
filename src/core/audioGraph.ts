@@ -104,53 +104,45 @@ export function normalizationGainDb(l: Partial<Loudness> | null | undefined): nu
 
 export const dbToGain = (db: number) => 10 ** (db / 20);
 
-/** What the engine needs from a graph. Tests pass a small fake. */
-export interface AudioGraphLike {
-  /** Starts the audio clock. Call inside the click that starts playback (autoplay rules). */
-  resume(): void;
-  setVolume(v: number): void;
+/** One deck's own gain stages: its fades and its song's loudness. */
+export interface DeckGainLike {
   /** Loudness gain in dB, eased over `rampSec` so a change is never a jump. */
   setNormalization(db: number, rampSec: number): void;
   /** Seek started: fade out in a few ms instead of cutting the wave mid-cycle. */
   duck(): void;
   /** Seek landed: fade back in. */
   unduck(): void;
-  /** A longer fade (Moment radio's passage changes): to `target` (0..1) over `sec`. */
+  /** A longer fade (crossfades): to `target` (0..1) over `sec`; 0 s = at once. */
   fade(target: number, sec: number): void;
+}
+
+/** What the engine needs from a graph. Tests pass a small fake. */
+export interface AudioGraphLike {
+  /** Starts the audio clock. Call inside the click that starts playback (autoplay rules). */
+  resume(): void;
+  /** Master volume (the slider), shared by both decks. */
+  setVolume(v: number): void;
+  /** Routes one <audio> element (a deck) into the graph and returns its gain stages. */
+  addDeck(el: HTMLMediaElement): DeckGainLike;
   close(): void;
 }
 
+/**
+ *   deck A <audio> → fade → loudness ┐
+ *   deck B <audio> → fade → loudness ┴→ volume → speakers
+ *
+ * CROSSFADE FIX - with one element, a passage change had to fade out, load, then fade in: a
+ * dip of silence between passages. Two decks let the next passage start while the last one
+ * is still sounding, each at its own song's loudness.
+ */
 export class AudioGraph implements AudioGraphLike {
   private readonly ctx: AudioContext;
-  private readonly norm: GainNode;
   private readonly vol: GainNode;
-  /** Seek fades, kept apart from volume and loudness so they never fight. */
-  private readonly seekFade: GainNode;
 
-  constructor(el: HTMLMediaElement, ctx: AudioContext = new AudioContext({ latencyHint: 'playback' })) {
+  constructor(ctx: AudioContext = new AudioContext({ latencyHint: 'playback' })) {
     this.ctx = ctx;
-    const src = ctx.createMediaElementSource(el);
-    this.norm = ctx.createGain();
     this.vol = ctx.createGain();
-    this.seekFade = ctx.createGain();
-    src.connect(this.seekFade).connect(this.norm).connect(this.vol).connect(ctx.destination);
-  }
-
-  // SEEK CLICK FIX - a seek cut the sound mid-wave and restarted it mid-wave: a click on every
-  // jump, loop restart and scrub. Now it fades out in ~5 ms and back in over ~20 ms, too short
-  // to hear as a fade, long enough to remove the click.
-  // Example: a 4-bar loop restarts 30 times → 30 clean restarts instead of 30 ticks.
-  duck(): void {
-    const g = this.seekFade.gain, now = this.ctx.currentTime;
-    g.cancelScheduledValues(now); g.setValueAtTime(g.value, now); g.setTargetAtTime(0, now, 0.0015);
-  }
-  unduck(): void {
-    const g = this.seekFade.gain, now = this.ctx.currentTime;
-    g.cancelScheduledValues(now); g.setValueAtTime(g.value, now); g.setTargetAtTime(1, now, 0.007);
-  }
-  fade(target: number, sec: number): void {
-    const g = this.seekFade.gain, now = this.ctx.currentTime;
-    g.cancelScheduledValues(now); g.setValueAtTime(g.value, now); g.linearRampToValueAtTime(Math.max(0, Math.min(1, target)), now + Math.max(0.01, sec));
+    this.vol.connect(ctx.destination);
   }
 
   resume(): void {
@@ -169,13 +161,43 @@ export class AudioGraph implements AudioGraphLike {
   // A 30 ms ease: slider moves without zipper noise.
   setVolume(v: number): void { this.ease(this.vol.gain, Math.max(0, Math.min(1, v)), 0.03); }
 
-  setNormalization(db: number, rampSec: number): void { this.ease(this.norm.gain, dbToGain(db), rampSec); }
+  addDeck(el: HTMLMediaElement): DeckGainLike {
+    const ctx = this.ctx;
+    const src = ctx.createMediaElementSource(el);
+    const fade = ctx.createGain(), norm = ctx.createGain();
+    src.connect(fade).connect(norm).connect(this.vol);
+    const set = (g: AudioParam, fn: (now: number) => void) => {
+      const now = ctx.currentTime;
+      g.cancelScheduledValues(now); g.setValueAtTime(g.value, now); fn(now);
+    };
+    return {
+      setNormalization: (db, rampSec) => this.ease(norm.gain, dbToGain(db), rampSec),
+      // SEEK CLICK FIX - a seek cut the sound mid-wave and restarted it mid-wave: a click on
+      // every jump, loop restart and scrub. Now it fades out in ~5 ms and back in over ~20 ms.
+      duck: () => set(fade.gain, now => fade.gain.setTargetAtTime(0, now, 0.0015)),
+      unduck: () => set(fade.gain, now => fade.gain.setTargetAtTime(1, now, 0.007)),
+      // Equal-power curve: the sum of two decks sounds equally loud through the whole fade.
+      // (A value curve may not share its start time with another event, so it is scheduled
+      // alone, starting from the current value.)
+      fade: (target, sec) => {
+        const g = fade.gain, now = ctx.currentTime, from = g.value, to = Math.max(0, Math.min(1, target));
+        g.cancelScheduledValues(now);
+        if (sec <= 0) { g.setValueAtTime(to, now); return; }
+        const steps = 32, curve = new Float32Array(steps);
+        for (let i = 0; i < steps; i++) {
+          const x = i / (steps - 1);
+          curve[i] = to > from ? from + (to - from) * Math.sin(x * Math.PI / 2) : to + (from - to) * Math.cos(x * Math.PI / 2);
+        }
+        g.setValueCurveAtTime(curve, now, sec);
+      },
+    };
+  }
 
   close(): void { this.ctx.close().catch(() => { }); }
 }
 
 /** Builds the graph when the browser has Web Audio; null otherwise (the element plays directly). */
-export function createAudioGraph(el: HTMLMediaElement): AudioGraphLike | null {
+export function createAudioGraph(): AudioGraphLike | null {
   if (typeof AudioContext !== 'function') return null;
-  try { return new AudioGraph(el); } catch (err) { console.warn('Web Audio unavailable:', err); return null; }
+  try { return new AudioGraph(); } catch (err) { console.warn('Web Audio unavailable:', err); return null; }
 }

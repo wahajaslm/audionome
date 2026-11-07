@@ -15,7 +15,8 @@ export function useWaveform() {
   const moments = useMomentsStore();
 
   const props = computed(() => ({
-    media: (playback.engine()?.el as HTMLMediaElement | undefined) ?? null,
+    // `deck` is read so this recomputes when a crossfade swaps the playing element.
+    media: (playback.deck, (playback.engine()?.el as HTMLMediaElement | undefined) ?? null),
     duration: playback.duration,
     currentTime: playback.t,
     selection: playback.sel,

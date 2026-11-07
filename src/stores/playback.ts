@@ -47,14 +47,19 @@ export const usePlaybackStore = defineStore('playback', () => {
   const normalize = ref(true);
   /** Settings: selection edges move to the beat. */
   const snapToBeat = ref(true);
+  /** Bumped when a crossfade swaps decks, so the waveform follows the playing element. */
+  const deck = ref(0);
   /** Moment radio (core/radio.ts): on while it runs; `radioNow` is the passage playing. */
   const radio = ref(false);
   const radioNow = ref<RadioItem | null>(null);
   let radioPlayed = new Set<string>();
   let radioUpcoming: RadioItem[] = [];
-  let radioFading = false;
-  /** Fade length at each passage change (seconds). */
-  const RADIO_FADE = 0.6;
+  /** True while the radio is moving to its next passage (loading, then crossfading). */
+  let radioBusy = false;
+  /** Crossfade length between passages, and after Skip (seconds). */
+  const RADIO_XF = 1.5, SKIP_XF = 0.8;
+  /** The next passage starts loading this much before the crossfade should begin. */
+  const RADIO_LEAD = 0.4;
   /** Practising now (slowed down, or a long loop): events are tagged so taste ignores them. */
   const practicing = computed(() => practicingNow({ rate: rate.value, loop: region.loop, loops: region.loops }));
   // QUIET FIX - said once per device (it was once per song), the first time practice starts,
@@ -85,6 +90,7 @@ export const usePlaybackStore = defineStore('playback', () => {
       isLoading: () => loading.value,
       onPreviewEnd: () => {
         if (!queue.value.length && !radio.value) return false;
+        if (radioBusy) return true; // the crossfade is on its way: keep playing into it
         playNext().catch(console.error);
         return true;
       },
@@ -104,10 +110,9 @@ export const usePlaybackStore = defineStore('playback', () => {
     region.t = t;
     checkRegionEnd(t);
     if (Date.now() - savedAt > 5000) rememberPosition();
-    // Moment radio: fade out just before the passage ends; the next one fades in.
-    if (radio.value && region.previewEnd !== null && !radioFading && t >= region.previewEnd - RADIO_FADE) {
-      radioFading = true;
-      engineRef?.fade(0, RADIO_FADE);
+    // Moment radio: the next passage starts under the end of this one (crossfade).
+    if (radio.value && region.previewEnd !== null && !radioBusy && t >= region.previewEnd - RADIO_XF - RADIO_LEAD) {
+      radioAdvance(RADIO_XF).catch(console.warn);
     }
   }
 
@@ -115,7 +120,7 @@ export const usePlaybackStore = defineStore('playback', () => {
    * Moment radio. Starts from a button (Discover); runs until you stop it or take over
    * (play another song or moment, or click away from the passage).
    * Next skips (logged as a 'skip', a mild "not this" for the ranker); ♡ saves the passage.
-   * Example: start → suggestion 1 fades into suggestion 2 … every 4th is a saved moment.
+   * Example: start → suggestion 1 crossfades into suggestion 2 … every 4th is a saved moment.
    */
   async function startRadio(): Promise<void> {
     radioPlayed = new Set(); radioUpcoming = [];
@@ -126,7 +131,6 @@ export const usePlaybackStore = defineStore('playback', () => {
   function stopRadio(): void {
     if (!radio.value) return;
     radio.value = false; radioNow.value = null; radioUpcoming = [];
-    if (radioFading) { radioFading = false; engineRef?.fade(1, 0.2); }
   }
 
   /** The bar's back button on the radio: the passage from its start. */
@@ -138,14 +142,22 @@ export const usePlaybackStore = defineStore('playback', () => {
   /** Skip: logs it at the current position and moves on. */
   async function radioSkip(): Promise<void> {
     if (!radio.value) return;
+    if (radioBusy) return;
     useListeningStore().emit('skip', 'user', { positionSec: region.t });
-    engineRef?.fade(0, 0.25);
-    await new Promise(r => setTimeout(r, 250));
-    await radioAdvance();
+    await radioAdvance(SKIP_XF);
   }
 
-  async function radioAdvance(): Promise<void> {
-    if (!radio.value) return;
+  /**
+   * Moves the radio to its next passage: a crossfade of `xfSec` while playing; otherwise (paused,
+   * no Web Audio, or the source failed) a short fade out, load, fade in.
+   */
+  async function radioAdvance(xfSec = 0): Promise<void> {
+    if (!radio.value || radioBusy) return;
+    radioBusy = true;
+    try { await radioAdvanceNow(xfSec); } finally { radioBusy = false; }
+  }
+
+  async function radioAdvanceNow(xfSec: number): Promise<void> {
     if (radioUpcoming.length < 2) {
       const intel = useIntelligenceStore(), lib = useLibraryStore();
       const playable = (x: { trackId: string }) => !!lib.track(x.trackId);
@@ -159,11 +171,54 @@ export const usePlaybackStore = defineStore('playback', () => {
     const item = radioUpcoming.shift();
     if (!item) { stopRadio(); useUiStore().notify('Save a moment or analyse a song first; then the radio has something to play.'); return; }
     radioPlayed.add(radioKey(item));
+    if (xfSec > 0 && await crossfadeTo(item, xfSec)) { radioNow.value = item; return; }
+    if (!radio.value) return;
     radioNow.value = item;
-    radioFading = true; // stays silent until the new passage plays
+    if (engineRef?.isPlaying()) { engineRef.fade(0, 0.25); await new Promise(r => setTimeout(r, 250)); }
     await openRangeInternal(item.a, item.b, item.trackId, false, true);
-    radioFading = false;
     engineRef?.fade(1, 0.35);
+  }
+
+  /**
+   * CROSSFADE FIX - plays a passage by crossfading into it on the engine's idle deck, and moves
+   * the player's state (song, selection, passage end) to it. False when it could not (the
+   * caller then loads it the normal way). The old song's object URL is released only after
+   * the old deck has stopped reading it.
+   */
+  async function crossfadeTo(item: RadioItem, sec: number): Promise<boolean> {
+    const e = engineRef, t = useLibraryStore().track(item.trackId);
+    if (!e || !t || !e.canCrossfade() || !e.isPlaying()) return false;
+    const src = await resolveTrackSource(t);
+    const db = normalize.value ? normalizationGainDb({ lufs: t.loudnessLufs, peakDb: t.peakDb }) : 0;
+    // The old passage's listening span ends here, while its deck is still the playing one
+    // (after the swap the clock reads the new passage). The new deck's 'playing' opens the next.
+    const listening = useListeningStore();
+    listening.flushSpan('radio_next');
+    const ok = radio.value && await e.crossfade(src.srcUrl, item.a, src.fallbackUrl, sec, db);
+    if (!ok) {
+      if (src.objectUrl) URL.revokeObjectURL(src.objectUrl);
+      if (e.isPlaying()) listening.openSpan();
+      return false;
+    }
+    const old = objectUrl;
+    objectUrl = src.objectUrl;
+    if (old) setTimeout(() => URL.revokeObjectURL(old), (sec + 2) * 1000);
+    loadSeq++; // any slower load still running is now out of date
+    const changed = trackId.value !== t.id;
+    trackId.value = t.id; loadedTrackId = t.id; loading.value = false;
+    if (changed) {
+      useMomentFlowStore().resetForTrack();
+      activeStem.value = 'all';
+      const d = e.getDuration();
+      duration.value = d > 0 ? d : (t.durationSec || duration.value);
+      useIntelligenceStore().recomputeInterest();
+    }
+    region.sel = { a: item.a, b: item.b }; region.t = item.a; region.loop = false; region.loops = 0;
+    region.previewEnd = item.b;
+    playing.value = true;
+    deck.value++; // now the waveform re-binds, with the new song's state already in place
+    rememberPosition();
+    return true;
   }
 
   // RESUME FIX - where you are is stored every 5 s while playing, on pause, on a song change and
@@ -597,7 +652,7 @@ export const usePlaybackStore = defineStore('playback', () => {
 
   return {
     ...toRefs(region), trackId, duration, playing, loading, volume, activeStem, queue, currentTrack,
-    rate, normalize, snapToBeat, practicing, setRate, radio, radioNow, startRadio, stopRadio, radioSkip, radioRestart, cycleRate, setNormalize, setSnapToBeat, onLoudnessMeasured,
+    rate, normalize, snapToBeat, practicing, setRate, deck, radio, radioNow, startRadio, stopRadio, radioSkip, radioRestart, cycleRate, setNormalize, setSnapToBeat, onLoudnessMeasured,
     engine, attachEngine, onDuration, onFrame, checkRegionEnd, loadSettings, lastPlayed,
     selectTrack, changeTrack, openRange, playQueue, playNext, togglePlay, playSelection, seekBy, stepBy,
     clickSeek, beginSelection, updateSelection, commitSelection, resizeSelection, endResize, selectAroundPlayhead, clearSelection,

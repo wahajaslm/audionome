@@ -97,22 +97,67 @@ test('engine: AbortError from play() is ignored', async () => {
   await engine.play();
 });
 
+/** A fake graph that records what each deck's gains were told. */
+function fakeGraph(calls) {
+  let n = 0;
+  return {
+    resume: () => calls.push('resume'), close: () => calls.push('close'), setVolume: v => calls.push(['vol', v]),
+    addDeck: () => { const d = n++; return {
+      setNormalization: (db, ramp) => calls.push(['norm', d, db, ramp]), duck: () => calls.push(['duck', d]),
+      unduck: () => calls.push(['unduck', d]), fade: (to, sec) => calls.push(['fade', d, to, sec]),
+    }; },
+  };
+}
+
 test('engine: with a graph, volume and loudness go to the graph and the element stays at 1 (WEB AUDIO FIX)', async () => {
   const el = new FakeMedia();
   const calls = [];
-  const graph = {
-    resume: () => calls.push('resume'), close: () => calls.push('close'),
-    setVolume: v => calls.push(['vol', v]), duck: () => { }, unduck: () => { }, fade: () => { }, setNormalization: (db, ramp) => calls.push(['norm', db, ramp]),
-  };
-  const engine = new NativeAudioEngine({ createGraph: () => graph }, el);
+  const engine = new NativeAudioEngine({ createGraph: () => fakeGraph(calls) }, el);
   engine.setVolume(0.5);
   engine.setNormalization(-6);
   assert.ok(Math.abs(el.volume - 0.5 * 10 ** (-6 / 20)) < 1e-9, 'before the first play there is no graph: both fold into el.volume');
   await engine.play();
   assert.equal(el.volume, 1, 'graph built on play; the element plays at full level');
-  assert.deepEqual(calls.slice(0, 3), [['vol', 0.5], ['norm', -6, 0], 'resume']);
+  assert.deepEqual(calls.slice(0, 4), [['vol', 0.5], ['norm', 0, -6, 0], 'resume', ['unduck', 0]]);
   engine.setNormalization(-2, 2);
-  assert.deepEqual(calls.at(-1), ['norm', -2, 2]);
+  assert.deepEqual(calls.at(-1), ['norm', 0, -2, 2]);
+  assert.equal(engine.canCrossfade(), false, 'one deck: no crossfade');
+});
+
+test('engine: crossfade starts the idle deck, swaps, fades both and stops the old one (CROSSFADE FIX)', async () => {
+  const a = new FakeMedia(), b = new FakeMedia(), calls = [];
+  const engine = new NativeAudioEngine({ createGraph: () => fakeGraph(calls) }, [a, b]);
+  const seen = [];
+  for (const ev of ['play', 'playing', 'pause', 'swap']) engine.on(ev, () => seen.push(ev));
+  a.src = 'song1'; a.metadata(100); await engine.play();
+  seen.length = 0;
+  assert.equal(engine.canCrossfade(), true);
+  const p = engine.crossfade('song2', 40, null, 0.05, -3);
+  await tick();
+  b.metadata(200);
+  assert.equal(await p, true);
+  assert.equal(engine.el, b, 'the new deck is the playing one');
+  assert.equal(b.currentTime, 40);
+  assert.equal(engine.getDuration(), 200);
+  assert.ok(calls.some(c => c[0] === 'fade' && c[1] === 1 && c[2] === 1), 'new deck fades in');
+  assert.ok(calls.some(c => c[0] === 'fade' && c[1] === 0 && c[2] === 0), 'old deck fades out');
+  assert.ok(calls.some(c => c[0] === 'norm' && c[1] === 1 && c[2] === -3), "new song's loudness on its own deck");
+  assert.equal(a.paused, false, 'old deck still sounds during the fade');
+  await new Promise(r => setTimeout(r, 150));
+  assert.equal(a.paused, true, 'old deck stopped after the fade');
+  assert.deepEqual(seen, ['swap', 'play', 'playing'], "the old deck's pause is not reported");
+});
+
+test('engine: crossfade reports false when paused or when the new source fails', async () => {
+  const a = new FakeMedia(), b = new FakeMedia();
+  const engine = new NativeAudioEngine({ createGraph: () => fakeGraph([]) }, [a, b]);
+  assert.equal(await engine.crossfade('x', 0, null, 1, 0), false, 'paused: nothing to fade from');
+  a.src = 'song1'; a.metadata(100); await engine.play();
+  const p = engine.crossfade('broken', 0, null, 1, 0);
+  await tick();
+  b.dispatchEvent(new Event('error'));
+  assert.equal(await p, false);
+  assert.equal(engine.el, a, 'still on the old deck');
 });
 
 test('engine: without a graph a loudness lift cannot raise el.volume above the slider', () => {
