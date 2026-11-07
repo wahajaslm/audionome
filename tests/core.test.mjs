@@ -841,3 +841,18 @@ test('bitrate: a passage gets its own min / avg / max and bytes (Nerds view)', a
   assert.equal(rangeStats(info, 0.75, 1.25).avg, 130, 'half bins weigh by time');
   assert.equal(rangeStats(info, 3, 4), null, 'outside the file');
 });
+
+test('frames: every MP3 frame is kept, found by time, and described (FRAME FIX)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { parseBitrate, frameAt, frameLine, frameSummary } = await import('../src/core/bitrate.ts');
+  const i = parseBitrate(readFileSync(new URL('../public/Naina-Moray-Coke-Studio-129-205.mp3', import.meta.url)));
+  const f = i.frames;
+  assert.equal(f.unit, 'frame');
+  assert.ok(Math.abs(f.t.length - Math.round(76.07 * 44100 / 1152)) <= 2, 'about one frame per 26.1 ms: ' + f.t.length);
+  const k = frameAt(f, 10);
+  assert.ok(f.t[k] <= 10 && f.t[k] + f.dur[k] > 10, 'the frame playing at 0:10');
+  assert.equal(frameAt(f, -1), -1);
+  const s = frameSummary(f);
+  assert.ok(Math.abs(s.durMs - 26.12) < 0.01 && s.minBytes >= 626 && s.maxBytes <= 627, JSON.stringify(s));
+  assert.match(frameLine(f, k), /^frame [\d,]+ of [\d,]+ · 62[67] B · 192 kbps in its header · 26\.12 ms · byte [\d,]+$/);
+});

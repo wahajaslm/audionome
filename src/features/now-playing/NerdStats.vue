@@ -79,7 +79,8 @@ const sourcesNote = computed(() => state.value === 'loading' ? 'Reading MediaInf
         <dl>
           <template v-for="r in g.rows" :key="r[0]">
             <dt>{{ r[0] }}</dt>
-            <dd :title="r[2] ? 'from ' + r[2] : undefined">{{ r[1] }}<span v-if="r[2]" class="from">{{ r[2] }}</span></dd>
+            <!-- The source (frames · MediaInfo · ffprobe) is only a tooltip: values read clean. -->
+            <dd :title="r[2] ? 'from ' + r[2] : undefined">{{ r[1] }}</dd>
           </template>
         </dl>
       </div>
@@ -99,6 +100,5 @@ const sourcesNote = computed(() => state.value === 'loading' ? 'Reading MediaInf
 dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
 dt { color: var(--ink-mute); }
 dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-.from { margin-left: 8px; color: var(--ink-mute); font-size: 10px; opacity: 0.7; }
 @media (max-width: 900px) { .grid { grid-template-columns: 1fr; gap: var(--space-4); } }
 </style>

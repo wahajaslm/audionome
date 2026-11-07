@@ -10,7 +10,7 @@
  * works with the service off (browser sources only) and gets richer when it is on.
  * Example row: ["Encoder settings", "-m j -V 0 -q 0 -lowpass 22.1 --vbr-new", "MediaInfo"].
  */
-import type { BitrateInfo } from './bitrate.ts';
+import { frameSummary, type BitrateInfo } from './bitrate.ts';
 
 export type NerdRow = [label: string, value: string, source?: string];
 
@@ -94,6 +94,10 @@ export function fileRows(br: BitrateInfo | null, mi: MediaInfoFacts | null, pr: 
   add('Channels', [[a.Channels, a.ChannelLayout].filter(Boolean).join(' · '), 'MediaInfo'],
     [[pr?.channels, pr?.channelLayout].filter(Boolean).join(' · '), 'ffprobe'], [br?.channels, 'frames']);
   add('Samples per frame', [a.SamplesPerFrame, 'MediaInfo']);
+  if (br?.frames) {
+    const f = frameSummary(br.frames), unit = br.frames.unit === 'page' ? 'pages' : br.frames.unit === 'sample' ? 'packets' : 'frames';
+    rows.push(['Frames', `${f.count.toLocaleString('en')} ${unit} × ${f.durMs.toFixed(1)} ms · ${f.minBytes}–${f.maxBytes} B`, 'frames']);
+  }
   add('Duration', [clock(pr?.durationSec), 'ffprobe'], [clock(g.Duration), 'MediaInfo'], [clock(br?.durationSec), 'frames']);
   add('File size', [bytes(g.FileSize), 'MediaInfo'], [bytes(pr?.sizeBytes), 'ffprobe']);
   add('Audio stream size', [bytes(a.StreamSize), 'MediaInfo']);

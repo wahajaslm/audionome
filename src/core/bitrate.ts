@@ -24,6 +24,41 @@ export interface BitrateInfo {
   durationSec: number;
   /** False when the curve is only the file's average (FLAC). */
   exact: boolean;
+  /**
+   * FRAME FIX - every frame the parser walked (MP3 frames, AAC samples, OGG pages), so the
+   * Nerds view can show the one under the playhead. Absent for WAV and FLAC.
+   * `offset` is the byte position in the file (0 when the container does not say, e.g. M4A);
+   * `kbps` is the MP3 header's own bitrate (0 for other codecs).
+   */
+  frames?: FrameTable;
+}
+
+export interface FrameTable { unit: 'frame' | 'sample' | 'page'; t: Float64Array; dur: Float32Array; size: Uint32Array; offset: Float64Array; kbps: Uint16Array }
+
+/** Grows while parsing, then becomes typed arrays (a 13-min AAC: ~34 000 entries, ~1 MB). */
+class FrameLog {
+  t: number[] = []; dur: number[] = []; size: number[] = []; offset: number[] = []; kbps: number[] = [];
+  add(t: number, dur: number, size: number, offset = 0, kbps = 0): void { this.t.push(t); this.dur.push(dur); this.size.push(size); this.offset.push(offset); this.kbps.push(kbps); }
+  table(unit: FrameTable['unit']): FrameTable | undefined {
+    return this.t.length ? { unit, t: Float64Array.from(this.t), dur: Float32Array.from(this.dur), size: Uint32Array.from(this.size),
+      offset: Float64Array.from(this.offset), kbps: Uint16Array.from(this.kbps) } : undefined;
+  }
+}
+
+/** Index of the frame playing at `sec` (binary search), or -1. */
+export function frameAt(f: FrameTable, sec: number): number {
+  let lo = 0, hi = f.t.length - 1;
+  if (hi < 0 || sec < f.t[0]) return -1;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (f.t[mid] <= sec) lo = mid; else hi = mid - 1; }
+  return lo;
+}
+
+/** Count, typical length and size range of the frames. Example: 3 276 × 26.1 ms · 417–1044 B. */
+export function frameSummary(f: FrameTable): { count: number; durMs: number; minBytes: number; maxBytes: number } {
+  let min = Infinity, max = 0;
+  for (let i = 0; i < f.size.length; i++) { min = Math.min(min, f.size[i]); max = Math.max(max, f.size[i]); }
+  const d = [...f.dur.slice(0, 200)].sort((x, y) => x - y);
+  return { count: f.t.length, durMs: (d[d.length >> 1] ?? 0) * 1000, minBytes: min, maxBytes: max };
 }
 
 export const BIN_SEC = 0.5;
@@ -86,7 +121,7 @@ function parseMp3(b: Uint8Array): BitrateInfo | null {
     const f = mp3Frame(b, o);
     if (f && mp3Frame(b, o + f.len)) break;
   }
-  const bins = new Bins(), rates = new Set<number>();
+  const bins = new Bins(), rates = new Set<number>(), log = new FrameLog();
   let t = 0, sr = 0, mono = false, frames = 0;
   while (o < b.length) {
     const f = mp3Frame(b, o);
@@ -94,13 +129,14 @@ function parseMp3(b: Uint8Array): BitrateInfo | null {
     // A Xing/Info frame describes the file; it is not audio.
     const tag = ascii(b, o + (f.mono ? 21 : 36), 4);
     if (frames === 0 && (tag === 'Xing' || tag === 'Info')) { o += f.len; frames++; continue; }
-    const dur = f.spf / f.sr;
-    bins.add(t, dur, Math.min(f.len, b.length - o));
+    const dur = f.spf / f.sr, size = Math.min(f.len, b.length - o);
+    bins.add(t, dur, size);
+    log.add(t, dur, size, o, f.kbps);
     rates.add(f.kbps); t += dur; sr = f.sr; mono = f.mono; o += f.len; frames++;
   }
   if (!bins.time) return null;
   return { codec: 'MP3', container: 'MP3', mode: rates.size > 1 ? 'VBR' : 'CBR', sampleRate: sr, channels: mono ? 1 : 2,
-    avgKbps: bins.avg(), kbps: bins.kbps(), binSec: BIN_SEC, durationSec: bins.time, exact: true };
+    avgKbps: bins.avg(), kbps: bins.kbps(), binSec: BIN_SEC, durationSec: bins.time, exact: true, frames: log.table('frame') };
 }
 
 // ---- MP4 / M4A ---------------------------------------------------------------------------
@@ -141,7 +177,7 @@ function parseMp4(b: Uint8Array): BitrateInfo | null {
     codec = ({ mp4a: 'AAC', alac: 'ALAC', Opus: 'Opus', fLaC: 'FLAC', 'ac-3': 'AC-3', 'ec-3': 'E-AC-3' } as Record<string, string>)[four] ?? four;
     ch = dv.getUint16(e + 24); sr = dv.getUint32(e + 32) >>> 16;
   }
-  const bins = new Bins(), sizes = new Set<number>();
+  const bins = new Bins(), sizes = new Set<number>(), log = new FrameLog();
   // Plain files: one size per sample (stsz) and runs of durations (stts).
   const stsz = child(dv, stbl, 'stsz'), stts = child(dv, stbl, 'stts');
   if (stsz && stts && dv.getUint32(stsz.body + 8) > 0) {
@@ -152,7 +188,7 @@ function parseMp4(b: Uint8Array): BitrateInfo | null {
       const n = dv.getUint32(stts.body + 8 + r * 8), delta = dv.getUint32(stts.body + 12 + r * 8) / timescale;
       for (let k = 0; k < n && s < count; k++, s++) {
         const size = fixed || dv.getUint32(stsz.body + 12 + s * 4);
-        bins.add(t, delta, size); sizes.add(size); t += delta;
+        bins.add(t, delta, size); log.add(t, delta, size); sizes.add(size); t += delta;
       }
     }
   } else {
@@ -183,7 +219,7 @@ function parseMp4(b: Uint8Array): BitrateInfo | null {
             if (fl & 0x100) { dur = dv.getUint32(p); p += 4; }
             if (fl & 0x200) { size = dv.getUint32(p); p += 4; }
             if (fl & 0x400) p += 4; if (fl & 0x800) p += 4;
-            bins.add(t, dur / timescale, size); sizes.add(size); t += dur / timescale;
+            bins.add(t, dur / timescale, size); log.add(t, dur / timescale, size); sizes.add(size); t += dur / timescale;
           }
         }
       }
@@ -192,14 +228,14 @@ function parseMp4(b: Uint8Array): BitrateInfo | null {
   if (!bins.time) return null;
   const lossless = codec === 'ALAC' || codec === 'FLAC';
   return { codec, container: 'M4A', mode: lossless ? 'lossless' : sizes.size > 1 ? 'VBR' : 'CBR', sampleRate: sr, channels: ch,
-    avgKbps: bins.avg(), kbps: bins.kbps(), binSec: BIN_SEC, durationSec: bins.time, exact: true };
+    avgKbps: bins.avg(), kbps: bins.kbps(), binSec: BIN_SEC, durationSec: bins.time, exact: true, frames: log.table('sample') };
 }
 
 // ---- OGG (Opus, Vorbis) --------------------------------------------------------------------
 function parseOgg(b: Uint8Array): BitrateInfo | null {
   const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
   let o = 0, codec = 'Vorbis', sr = 48000, ch: number | undefined, lastGran = 0, first = true;
-  const bins = new Bins();
+  const bins = new Bins(), log = new FrameLog();
   while (o + 27 <= b.length && ascii(b, o, 4) === 'OggS') {
     const gran = Number(dv.getBigInt64(o + 6, true)), nseg = b[o + 26];
     let body = 0;
@@ -211,13 +247,14 @@ function parseOgg(b: Uint8Array): BitrateInfo | null {
       first = false;
     } else if (gran > lastGran) {
       bins.add(lastGran / sr, (gran - lastGran) / sr, size);
+      log.add(lastGran / sr, (gran - lastGran) / sr, size, o);
       lastGran = gran;
     }
     o += size;
   }
   if (!bins.time) return null;
   return { codec, container: 'OGG', mode: 'VBR', sampleRate: codec === 'Opus' ? undefined : sr, channels: ch,
-    avgKbps: bins.avg(), kbps: bins.kbps(), binSec: BIN_SEC, durationSec: bins.time, exact: true };
+    avgKbps: bins.avg(), kbps: bins.kbps(), binSec: BIN_SEC, durationSec: bins.time, exact: true, frames: log.table('page') };
 }
 
 // ---- WAV, FLAC -------------------------------------------------------------------------------
@@ -288,4 +325,19 @@ export function rangeStats(i: BitrateInfo, a: number, b: number): { min: number;
   }
   if (!bits) return null;
   return { min, avg: Math.round(bits / (hi - lo) / 1000), max, bytes: Math.round(bits / 8), sec: hi - lo };
+}
+
+/**
+ * The frame under the playhead, in words (Nerds view, live).
+ * Example: "frame 4,123 of 3,276 · 418 B · 128 kbps in its header · 26.12 ms · byte 1,712,034 · 192 kbps over this frame".
+ */
+export function frameLine(f: FrameTable, i: number): string {
+  if (i < 0 || i >= f.t.length) return '';
+  const name = f.unit === 'page' ? 'page' : f.unit === 'sample' ? 'packet' : 'frame';
+  const out = [`${name} ${(i + 1).toLocaleString('en')} of ${f.t.length.toLocaleString('en')}`, `${f.size[i]} B`];
+  if (f.kbps[i]) out.push(`${f.kbps[i]} kbps in its header`);
+  out.push(`${(f.dur[i] * 1000).toFixed(2)} ms`);
+  if (f.offset[i]) out.push(`byte ${Math.round(f.offset[i]).toLocaleString('en')}`);
+  if (!f.kbps[i] && f.dur[i] > 0) out.push(`${Math.round(f.size[i] * 8 / f.dur[i] / 1000)} kbps over this ${name}`);
+  return out.join(' · ');
 }

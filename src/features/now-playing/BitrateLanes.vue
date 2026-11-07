@@ -3,10 +3,11 @@
  * Nerds view curves, on the song's clock: Bitrate (large: kbps per half second, the file's
  * average as a dashed line, min…max scale), Loudness, and time. The playhead and the selected
  * passage (or loop) are drawn on top. Click to jump there, drag to loop that stretch.
- * Follow = 20 s around the playhead; Whole passage = the passage (or the whole song).
+ * Frames = 2 s around the playhead, one bar per frame (height = its bytes, the one playing
+ * lit); Follow = 20 s around the playhead; Whole passage = the passage (or the whole song).
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import type { BitrateInfo } from '../../core/bitrate';
+import { frameAt, type BitrateInfo } from '../../core/bitrate';
 import { labelStep, quantile, TIME_STEPS } from '../../core/timeline';
 import { useTimeDrag } from '../../composables/useTimeDrag';
 
@@ -18,7 +19,7 @@ const props = defineProps<{
   range: { a: number; b: number };
   sel: { a: number; b: number } | null;
   t: number;
-  zoom: 'live' | 'all';
+  zoom: 'frames' | 'live' | 'all';
 }>();
 const emit = defineEmits<{ seek: [sec: number]; loop: [a: number, b: number] }>();
 
@@ -31,6 +32,7 @@ const dragRange = ref<[number, number] | null>(null);
 
 const view = computed<[number, number]>(() => {
   if (props.zoom === 'all') return [props.range.a, props.range.b];
+  if (props.zoom === 'frames') return [props.t - 1, props.t + 1];
   const span = Math.min(20, props.range.b - props.range.a || 20);
   const c = props.t >= props.range.a && props.t <= props.range.b ? props.t : props.range.a + span / 2;
   return [c - span / 2, c + span / 2];
@@ -55,7 +57,23 @@ function draw(): void {
   const br = props.bitrate, R = ROWS.rate;
   g.font = '10px ' + font;
   if (!br) { g.fillStyle = C.mute; g.fillText('Reading the file…', 8, R.y + R.h / 2); }
-  else {
+  else if (props.zoom === 'frames' && br.frames) {
+    // FRAME FIX - one bar per frame / packet / page; height = its bytes on this window's scale.
+    const f = br.frames, now = frameAt(f, props.t);
+    let i0 = Math.max(0, frameAt(f, v0)), i1 = frameAt(f, v1);
+    if (i1 < 0) i1 = f.t.length - 1;
+    let maxB = 1;
+    for (let i = i0; i <= i1; i++) maxB = Math.max(maxB, f.size[i]);
+    for (let i = i0; i <= i1; i++) {
+      const x0 = X(f.t[i]), x1 = X(f.t[i] + f.dur[i]), hgt = (f.size[i] / maxB) * (R.h - 14);
+      g.fillStyle = i === now ? C.accent : C.sub;
+      g.globalAlpha = i === now ? 1 : 0.55;
+      g.fillRect(x0 + 0.5, R.y + R.h - hgt, Math.max(1, x1 - x0 - 1), hgt);
+    }
+    g.globalAlpha = 1; g.fillStyle = C.mute;
+    g.fillText(`${maxB} B`, 4, R.y + 10);
+    g.fillText(`${i1 - i0 + 1} ${f.unit === 'page' ? 'pages' : f.unit === 'sample' ? 'packets' : 'frames'} in 2 s`, w - 110, R.y + 10);
+  } else {
     const k = br.kbps, i0 = Math.max(0, Math.floor(v0 / br.binSec)), i1 = Math.min(k.length - 1, Math.ceil(v1 / br.binSec));
     const vis = k.slice(i0, i1 + 1).filter(v => v > 0);
     let lo = Math.min(...vis, br.avgKbps), hi = Math.max(...vis, br.avgKbps);
