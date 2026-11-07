@@ -181,6 +181,19 @@ sprisk already has decode/audit, librosa features, openSMILE, VAD, transcription
 | 16 | Speech LLMs, post-training, RLHF | 20 of 114, but it means training foundation models. That is out of scope for sprisk. |
 | 17 | Beamforming, echo cancellation, multichannel | Hardware-only demand. It does not fit music analysis. |
 
+## Addendum: Germany (28 postings)
+
+A follow-up search covered Germany only. Notes: `research_notes/Audio ML job requirements Germany/germany.md`. 15 of the 28 were read in full; the other 13 are snippets, so their counts are minimums.
+
+- **Sample:** 10 startups (voize, Sonia, ai-coustics, Mirelo, Parloa, DeepL), 9 established firms (Sonova/Audatic, Ableton, Allianz, HARMAN, BMW, Cerence, NICE/Cognigy, Sennheiser) and 9 research roles (Fraunhofer IIS and IDMT, AudioLabs Erlangen, University of Oldenburg).
+- **Most asked:** Python 13, DSP basics 13, vague "evaluation" 13, ASR 9, cloud/MLOps 9, PyTorch 8, TTS 7, speech enhancement 7.
+- **Never named:** metrics, audio features, split or leakage rules, licensing or GDPR. That includes clinical speech startups that handle patient audio.
+- **Startups vs established firms:** startups want production ML (PyTorch, MLOps, evaluation). Established firms and labs want DSP, degrees and C/C++.
+- **Language:** English is the working language. Only 1 posting requires German.
+- **Music:** 5 of 28 roles. Fraunhofer IDMT (MIR, tagging, recommendation), Ableton (music creation) and Mirelo (generative audio and codecs). No German music-streaming ML role was found.
+- **Not found:** readable 2025-2026 roles at Native Instruments, Steinberg, Bosch, Siemens, Mercedes or the big-tech offices in Germany.
+- **Effect on the recommendation:** none. Germany shows the same gap, more strongly: evaluation is demanded but never specified.
+
 ## Conclusion
 
 - **The job market and the methodology answer different questions.** Postings show where audio ML jobs are: speech, real-time systems and devices. Methodology shows what makes any audio result credible. sprisk is a methodology engine, so the methodology should set the Must tier.
