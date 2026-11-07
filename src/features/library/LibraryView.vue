@@ -17,8 +17,11 @@ import Button from '../../ui/Button.vue';
 import Icon from '../../ui/Icon.vue';
 import { formatTime } from '../../ui/format';
 import StreamImport from './StreamImport.vue';
+import Artwork from '../../ui/Artwork.vue';
+import { useArtwork } from '../../composables/useArtwork';
 
 const library = useLibraryStore();
+const { artworkFor } = useArtwork();
 const momentsStore = useMomentsStore();
 const intelligence = useIntelligenceStore();
 const playback = usePlaybackStore();
@@ -155,6 +158,7 @@ async function remove(id: string) {
           <button type="button" class="cp" :class="{ on: isCurrent(t) && playback.playing, cur: isCurrent(t) && !playback.playing }" :aria-label="(isCurrent(t) && playback.playing ? 'Pause ' : 'Play ') + t.title" @click="playRow(t)">
             <Icon :name="isCurrent(t) && playback.playing ? 'pause' : 'play'" :size="12" />
           </button>
+          <button type="button" class="thumb" tabindex="-1" aria-hidden="true" @click="openRow(t)"><Artwork v-bind="artworkFor(t)" :size="44" radius="6px" /></button>
           <div class="info">
             <button type="button" class="s item title" @click="openRow(t)">
               {{ t.title }} <span class="mute">— {{ t.artist }}</span>
@@ -239,6 +243,7 @@ h1 { margin: 0; color: var(--ink); }
 /* Same rule as MomentRow: accent while playing, accent outline while loaded and paused. */
 .cp.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
 .cp.cur { border-color: var(--accent); color: var(--accent); }
+.thumb { flex: none; padding: 0; border: 0; background: none; cursor: pointer; }
 .info { flex: 1; min-width: 0; }
 .title { display: block; max-width: 100%; padding: 0; border: 0; background: none; color: var(--ink); text-align: left; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mute { color: var(--ink-mute); }
@@ -267,7 +272,7 @@ h1 { margin: 0; color: var(--ink); }
 .rm:hover { background: var(--bg-raise); color: var(--ink); }
 @media (max-width: 600px) {
   .lrow { flex-wrap: wrap; gap: var(--space-3); }
-  .info { flex-basis: calc(100% - 56px); }
+  .info { flex-basis: calc(100% - 116px); }
   .hide-phone { display: none; }
 }
 </style>

@@ -9,6 +9,8 @@ import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts';
 import AppSidebar from './features/shell/AppSidebar.vue';
 import Toast from './ui/Toast.vue';
 import PlaybackBar from './ui/PlaybackBar.vue';
+import Artwork from './ui/Artwork.vue';
+import { useArtwork } from './composables/useArtwork';
 import { usePlaybackStore } from './stores/playback';
 import { useMomentFlowStore } from './stores/momentFlow';
 import { useLibraryStore } from './stores/library';
@@ -27,6 +29,7 @@ const playback = usePlaybackStore();
 useKeyboardShortcuts({ ' ': () => { playback.togglePlay(); } });
 const flow = useMomentFlowStore();
 const library = useLibraryStore();
+const { artworkFor } = useArtwork();
 
 // Drop audio files on any screen: same import as Library's "Import audio" button.
 const { dragging } = useFileDrop(async files => {
@@ -74,7 +77,11 @@ function onToastAction(): void {
       @scrub="playback.scrubTo"
       @scrub-end="playback.endScrub"
       @step="playback.stepBy"
-    />
+    >
+      <template v-if="playback.currentTrack" #art>
+        <Artwork v-bind="artworkFor(playback.currentTrack)" :size="48" radius="3px" />
+      </template>
+    </PlaybackBar>
     <div v-if="dragging" class="drop" aria-hidden="true">
       <div class="drop-box">
         <div class="heading">Drop to add</div>

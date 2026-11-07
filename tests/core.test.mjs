@@ -9,6 +9,7 @@ import {
 import { measureLoudness, normalizationGainDb, MAX_BOOST_DB } from '../src/core/audioGraph.ts';
 import { toDbMoment, withTags, collectionsOf, newMoment, savedRanges } from '../src/core/moments.ts';
 import { barAt, beatInBar, blockIndexAt, chordChart, chordSheet, noteName, passageEvidence, passageMoments, rankIn } from '../src/core/timeline.ts';
+import { extractEmbeddedPicture, parseKey, artRecipe, artFromAnalysis } from '../src/core/artwork.ts';
 import { bandForHz, computeSpectrum, computeView, fft, hzToMel, melFilters, melToHz, SPEC_SR } from '../src/core/spectrum.ts';
 
 /** Minimal HTMLMediaElement stand-in: an EventTarget with the fields the engine reads. */
@@ -657,4 +658,49 @@ test('titles: placeholder names come from the corpus; names you typed stay (TITL
     { title: 'Aamay Bhashaili Rey', artist: 'Ali' }, 'a real artist is kept');
   assert.equal(namedFromCorpus({ id: 'FnDmg-cBVsA', title: 'My edit', artist: 'Your library' }, titles), null, 'a typed title is kept');
   assert.equal(namedFromCorpus({ id: 'zzz', title: 'zzz', artist: '' }, titles), null);
+});
+
+/* ---------- Artwork (core/artwork.ts) ---------- */
+
+/** A fake JPEG: the magic bytes, then filler, long enough to count as a picture. */
+const fakeJpeg = () => Uint8Array.from({ length: 120 }, (_, i) => (i === 0 ? 0xff : i === 1 ? 0xd8 : i % 251));
+const be32 = n => [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
+const ascii = s => [...s].map(c => c.charCodeAt(0));
+
+test('artwork: ID3v2.3 APIC front cover is found', () => {
+  const img = [...fakeJpeg()];
+  const body = [0, ...ascii('image/jpeg'), 0, 3, ...ascii('cover'), 0, ...img];
+  const frame = [...ascii('APIC'), ...be32(body.length), 0, 0, ...body];
+  const n = frame.length, size = [(n >> 21) & 127, (n >> 14) & 127, (n >> 7) & 127, n & 127];
+  const file = Uint8Array.from([...ascii('ID3'), 3, 0, 0, ...size, ...frame, 0xff, 0xfb]);
+  const pic = extractEmbeddedPicture(file);
+  assert.equal(pic?.mime, 'image/jpeg');
+  assert.deepEqual([...pic.bytes], img);
+});
+
+test('artwork: FLAC PICTURE block is found; plain audio has none', () => {
+  const img = [...fakeJpeg()], mime = ascii('image/jpeg');
+  const block = [...be32(3), ...be32(mime.length), ...mime, ...be32(0), ...be32(1), ...be32(1), ...be32(24), ...be32(0), ...be32(img.length), ...img];
+  const file = Uint8Array.from([...ascii('fLaC'), 0x80 | 6, (block.length >> 16) & 255, (block.length >> 8) & 255, block.length & 255, ...block]);
+  assert.deepEqual([...extractEmbeddedPicture(file).bytes], img);
+  assert.equal(extractEmbeddedPicture(new Uint8Array(400)), null);
+});
+
+test('artwork: key names parse to circle-of-fifths position and mode', () => {
+  assert.deepEqual(parseKey('A Minor'), { fifths: 3, minor: true });
+  assert.deepEqual(parseKey('Bb major'), { fifths: 10, minor: false });
+  assert.deepEqual(parseKey('F#m'), { fifths: 6, minor: true });
+  assert.equal(parseKey('unknown'), null);
+});
+
+test('artwork: drawn cover is stable per song and follows its key and tempo', () => {
+  const a = artRecipe({ seed: 'song-1' }), b = artRecipe({ seed: 'song-1' });
+  assert.deepEqual(a, b);
+  assert.notEqual(artRecipe({ seed: 'song-2' }).contour, a.contour);
+  const slow = artRecipe({ seed: 's', key: 'C Major', tempoBpm: 60 }), fast = artRecipe({ seed: 's', key: 'C Major', tempoBpm: 160 });
+  assert.equal(slow.hue, fast.hue);
+  assert.ok(fast.rings.length > slow.rings.length);
+  const seg = (t, key) => ({ startSec: t, descriptors: { energy: t, brightness_hz: 2000, key, tempoBpm: 96 } });
+  assert.deepEqual(artFromAnalysis([seg(3, 'D Minor'), seg(0, 'D Minor'), seg(1, 'A Minor'), seg(2, 'D Minor')]),
+    { key: 'D Minor', tempoBpm: 96, energy: [0, 1, 2, 3], brightnessHz: 2000 });
 });

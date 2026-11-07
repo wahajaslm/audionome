@@ -4,6 +4,7 @@
  * player's Spotify-style bar).
  * Left: track (opens Now playing) + ♡ save the last 20 s. Centre: prev · play · next · loop over
  * a scrubber with times. Right: mute + volume. Below 820px: compact, above the tab bar.
+ * Slot 'art': the song's cover in the 48px tile (default: the wave icon, when nothing is loaded).
  * Props: title, artist; currentTime, duration (seconds); playing; loop (pressed); volume (0–1);
  *        rate (speed, 1 = normal).
  * Emits: open, save-last, prev, toggle-play, next, loop, rate (next speed), volume(v 0–1),
@@ -49,7 +50,7 @@ function toggleMute() {
 <template>
   <footer class="bar" role="region" aria-label="Playback">
     <div class="left">
-      <button type="button" class="art" aria-label="Open Now playing" @click="emit('open')"><Icon name="wave" :size="22" /></button>
+      <button type="button" class="art" aria-label="Open Now playing" @click="emit('open')"><slot name="art"><Icon name="wave" :size="22" /></slot></button>
       <div class="info">
         <button type="button" class="title" :title="title" @click="emit('open')">{{ title }}</button>
         <span class="artist" :title="artist">{{ artist }}</span>
@@ -138,7 +139,7 @@ function toggleMute() {
   width: 48px; height: 48px; flex: none; padding: 0;
   display: flex; align-items: center; justify-content: center;
   background: #141416; border: 1px solid var(--line); border-radius: 4px;
-  color: #b3b3b3; cursor: pointer; transition: transform .12s ease, border-color .12s ease;
+  color: #b3b3b3; cursor: pointer; overflow: hidden; transition: transform .12s ease, border-color .12s ease;
 }
 .art:hover { border-color: #555; transform: scale(1.02); }
 .info { display: flex; flex-direction: column; gap: 2px; min-width: 0; max-width: 124px; flex: 1; }

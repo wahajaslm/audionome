@@ -1,5 +1,6 @@
 import Dexie, { type EntityTable } from 'dexie';
 import type { ListeningEvent, Moment, Track, UserSetting, TrackAnalysis, MomentRating, PassageAnalysis } from './types';
+import { extractEmbeddedPicture, toArtwork } from '../core/artwork';
 export class MusicDatabase extends Dexie {
   tracks!: EntityTable<Track, 'id'>;
   moments!: EntityTable<Moment, 'id'>;
@@ -83,6 +84,9 @@ async function importOne(file: File): Promise<Track> {
       nameLower.endsWith('.opus') ? 'audio/opus' : 'audio/mpeg'
     );
     const audioBlob = new Blob([buf], { type: mimeType });
+    // Cover art from the file's tags; '' marks "checked, none" so it is not looked for again.
+    const pic = extractEmbeddedPicture(buf);
+    const art = pic ? await toArtwork(pic) : null;
     const trackItem: Track = {
       id: crypto.randomUUID(),
       title,
@@ -93,7 +97,9 @@ async function importOne(file: File): Promise<Track> {
       analysisRight: 'cleared',
       audioBlob,
       addedAt: Date.now(),
-      sha256
+      sha256,
+      artwork: art?.artwork ?? '',
+      artworkColor: art?.artworkColor,
     };
     await db.tracks.add(trackItem);
     return trackItem;

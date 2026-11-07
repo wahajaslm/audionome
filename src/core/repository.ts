@@ -71,6 +71,7 @@ export const putPassage = (p: PassageAnalysis) => db.passages.put(p);
 export const putAnalysis = (a: TrackAnalysis) => db.analyses.put(a);
 export const updateTrackDuration = (id: string, durationSec: number) => db.tracks.update(id, { durationSec }).catch(() => { });
 export const updateTrackPeaks = (id: string, peaks: { peaks: number[][]; duration: number }) => db.tracks.update(id, { peaks }).catch(() => { });
+export const updateTrackArtwork = (id: string, artwork: string, artworkColor?: string) => db.tracks.update(id, { artwork, artworkColor }).catch(() => { });
 export const updateTrackLoudness = (id: string, loudnessLufs: number, peakDb: number) => db.tracks.update(id, { loudnessLufs, peakDb }).catch(() => { });
 
 /** Event sink for ListeningLog. */

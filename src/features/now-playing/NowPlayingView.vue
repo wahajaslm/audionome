@@ -1,11 +1,12 @@
 <script setup lang="ts">
 /**
- * Now playing (design-system layout): cover + title → waveform → selection toolbar →
- * ask row / describe strip / explore / nudge slot → caption line.
+ * Now playing (design-system layout): artwork + title → waveform → selection toolbar →
+ * ask row / describe strip / explore / nudge slot → your moments in this song and what plays
+ * next. With nothing loaded it shows a start card (import, add a link, your songs).
  * The playback bar is app-wide (App.vue), so it looks the same on every screen.
  * Behaviour is ported from index.html's player screen; state lives in the stores.
  */
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRouter } from 'vue-router';
 import { usePlaybackStore } from '../../stores/playback';
@@ -18,6 +19,11 @@ import { useWaveform } from '../../composables/useWaveform';
 import { ASK_DEFAULT_CHIPS, FEELINGS, QUALITIES } from '../../core/moments';
 import { overlaps } from '../../core/playback';
 import Cover from '../../ui/Cover.vue';
+import Artwork from '../../ui/Artwork.vue';
+import Icon from '../../ui/Icon.vue';
+import { useArtwork } from '../../composables/useArtwork';
+import type { PlayableTrack } from '../../core/library';
+import type { Moment } from '../../data/types';
 import Waveform from '../../ui/Waveform.vue';
 import SelectionToolbar from '../../ui/SelectionToolbar.vue';
 import AskRow from '../../ui/AskRow.vue';
@@ -40,6 +46,7 @@ const listening = useListeningStore();
 const router = useRouter();
 const wf = useWaveform();
 const timelineStore = useTimelineStore();
+const { artworkFor, washFor } = useArtwork();
 
 const { sel, loop, loops, t, duration, playing, currentTrack } = storeToRefs(playback);
 const { ask, describe, feel, love, note, nudge, explore } = storeToRefs(flow);
@@ -103,18 +110,73 @@ function onStripRange(a: number, b: number, phase: 'start' | 'move' | 'end'): vo
 }
 
 function onLoopButton(): void { playback.toggleLoop(); }
+
+/** Saved moments of this song, in song order. Example: 0:42–1:05 Chills · 2:10–2:31 Melody. */
+const songMoments = computed(() => moments.moments.filter(m => m.trackId === currentTrack.value?.id).sort((a, b) => a.startSec - b.startSec));
+const isSelected = (m: Moment) => !!sel.value && Math.abs(sel.value.a - m.startSec) < 0.5 && Math.abs(sel.value.b - m.endSec) < 0.5;
+const momentWhat = (m: Moment) => [...(m.feelings || []), ...(m.qualities || [])].slice(0, 3).join(' · ') || m.note || 'Saved moment';
+
+/**
+ * What plays next. "Play all" in My Moments queues passages: those really play next, so they
+ * are listed as "Up next". Otherwise the next songs in Library order are offered; they only
+ * start when you pick one, so the heading says "More in your library", not "Up next".
+ */
+const queued = computed(() => playback.queue.slice(0, 5).flatMap(q => {
+  const track = library.track(q.trackId);
+  return track ? [{ ...q, track }] : [];
+}));
+const moreSongs = computed(() => {
+  const all = library.tracks, i = all.findIndex(x => x.id === currentTrack.value?.id);
+  return Array.from({ length: Math.min(5, all.length - (i >= 0 ? 1 : 0)) }, (_, k) => all[(i + 1 + k) % all.length]!);
+});
+const playSong = (s: PlayableTrack) => playback.changeTrack(s, true);
+
+// Start card: the same import as Library's "Import audio" button.
+const fileInput = ref<HTMLInputElement | null>(null);
+async function onFiles(e: Event): Promise<void> {
+  const input = e.target as HTMLInputElement;
+  await library.importFiles(Array.from(input.files || []));
+  input.value = '';
+}
 </script>
 
 <template>
   <div class="pcol">
-    <header class="track">
-      <Cover :size="96" />
+    <!-- Start card: nothing loaded yet. One primary action (import), a link, and your songs. -->
+    <section v-if="!currentTrack" class="start" aria-labelledby="start-title">
+      <Cover :size="120" />
+      <h1 id="start-title" class="title track-title">Nothing playing yet</h1>
+      <p class="body sub-line">Import a song from your device, or add one from a link. Audio stays on your device.</p>
+      <div class="start-actions">
+        <Button variant="primary" @click="fileInput?.click()">Import audio</Button>
+        <Button variant="outline" @click="router.push('/library')">Add from a link</Button>
+      </div>
+      <input ref="fileInput" type="file" class="file" accept="audio/*,.mp3,.wav,.flac,.ogg,.m4a,.aac,.opus" multiple aria-label="Import audio files" @change="onFiles" />
+      <template v-if="library.tracks.length">
+        <h2 class="heading sh">Your songs</h2>
+        <ul class="tiles">
+          <li v-for="s in library.tracks.slice(0, 8)" :key="s.id">
+            <button type="button" class="tile" @click="playSong(s)">
+              <Artwork v-bind="artworkFor(s)" :size="132" radius="var(--radius-md)" />
+              <span class="label tile-title">{{ s.title }}</span>
+              <span class="caption tile-artist">{{ s.artist }}</span>
+            </button>
+          </li>
+        </ul>
+      </template>
+    </section>
+
+    <template v-else>
+    <!-- Hero: the song's cover (its own picture, or one drawn from its sound) on a soft wash of its colour. -->
+    <header class="track" :style="{ '--wash': washFor(currentTrack) }">
+      <Artwork class="hero-art" v-bind="artworkFor(currentTrack)" :size="220" radius="var(--radius-md)" />
       <div class="meta">
-        <h1 class="title track-title">{{ currentTrack?.title || 'No track' }}</h1>
-        <div class="artist body">{{ currentTrack?.artist || 'Import audio in Library' }}</div>
+        <div class="eyebrow caption">Now playing</div>
+        <h1 class="title track-title">{{ currentTrack.title }}</h1>
+        <div class="artist body">{{ currentTrack.artist }}</div>
         <!-- One status line for the song's analysis tiers (stores/timeline.ts), instead of a pill
              that only knew about the window analysis. Example: "◐ Separating stems… · beats and chords ready". -->
-        <div v-if="currentTrack" class="status caption" role="status">
+        <div class="status caption" role="status">
           <span>{{ timelineStore.statusText.busy ? '◐' : '●' }} {{ timelineStore.statusText.text }}</span>
           <span v-if="analyzingStep" class="sub">· window analysis: {{ analyzingStep }}</span>
           <button v-else-if="analysis" type="button" class="link" @click="router.push({ path: '/admin', query: { track: currentTrack.id } })">· Anatomy →</button>
@@ -212,12 +274,63 @@ function onLoopButton(): void { playback.toggleLoop(); }
 
     </div>
 
+    <div class="below">
+      <section class="col" aria-labelledby="mine-h">
+        <h2 id="mine-h" class="heading sh">Your moments in this song</h2>
+        <p v-if="!songMoments.length" class="label empty-line">None yet. Drag across the waveform, then Save, and the passage is listed here.</p>
+        <ol v-else class="rows">
+          <li v-for="m in songMoments" :key="m.id">
+            <button type="button" class="mrow" :class="{ on: isSelected(m) }" @click="moments.play(m, false)">
+              <span class="cp" aria-hidden="true"><Icon :name="isSelected(m) && playing ? 'pause' : 'play'" :size="10" /></span>
+              <span class="range label">{{ formatTime(m.startSec) }} – {{ formatTime(m.endSec) }}</span>
+              <span class="what label">{{ momentWhat(m) }}</span>
+            </button>
+          </li>
+        </ol>
+      </section>
+
+      <section class="col" aria-labelledby="next-h">
+        <template v-if="queued.length">
+          <h2 id="next-h" class="heading sh">Up next · from My Moments</h2>
+          <ol class="rows">
+            <li v-for="q in queued" :key="q.trackId + ':' + q.a">
+              <div class="srow">
+                <Artwork v-bind="artworkFor(q.track)" :size="44" radius="6px" />
+                <span class="s-text">
+                  <span class="label s-title">{{ q.track.title }}</span>
+                  <span class="caption s-sub">{{ formatTime(q.a) }} – {{ formatTime(q.b) }}</span>
+                </span>
+              </div>
+            </li>
+          </ol>
+        </template>
+        <template v-else>
+          <h2 id="next-h" class="heading sh">More in your library</h2>
+          <p v-if="!moreSongs.length" class="label empty-line">Import more songs in Library and they show up here.</p>
+          <ol v-else class="rows">
+            <li v-for="s in moreSongs" :key="s.id">
+              <button type="button" class="srow" :aria-label="'Play ' + s.title" @click="playSong(s)">
+                <Artwork v-bind="artworkFor(s)" :size="44" radius="6px" />
+                <span class="s-text">
+                  <span class="label s-title">{{ s.title }}</span>
+                  <span class="caption s-sub">{{ s.artist }}</span>
+                </span>
+                <span class="caption s-dur">{{ formatTime(s.durationSec) }}</span>
+              </button>
+            </li>
+          </ol>
+        </template>
+      </section>
+    </div>
+    </template>
   </div>
 </template>
 
 <style scoped>
 /* Layout rule "Now playing": centred column. */
 .pcol {
+  position: relative;
+  isolation: isolate;
   max-width: var(--content-max);
   margin: 0 auto;
   display: flex;
@@ -225,8 +338,16 @@ function onLoopButton(): void { playback.toggleLoop(); }
   padding: var(--space-6) var(--space-4) 0;
   box-sizing: border-box;
 }
-.track { display: flex; align-items: center; gap: var(--space-5); }
-.meta { min-width: 0; }
+.track { position: relative; display: flex; align-items: flex-end; gap: var(--space-6); }
+/* Wash: the cover's colour, faded out before the waveform, so text stays on the page colour. */
+.track::before {
+  content: ''; position: absolute; z-index: -1; pointer-events: none;
+  inset: calc(-1 * var(--space-8)) -50vw calc(-1 * var(--space-7));
+  background: radial-gradient(ellipse 60% 100% at 30% 0%, color-mix(in srgb, var(--wash) 34%, transparent), transparent 75%);
+}
+.hero-art { box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45); }
+.meta { min-width: 0; padding-bottom: var(--space-1); }
+.eyebrow { color: var(--ink-mute); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: var(--space-2); }
 .title { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
 .artist { color: var(--ink-sub); margin-top: var(--space-1); }
 .status { margin-top: var(--space-3); display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; color: var(--ink-sub); }
@@ -243,12 +364,54 @@ function onLoopButton(): void { playback.toggleLoop(); }
 .slot-in { min-height: 0; overflow: hidden; }
 .slot.open .slot-in { padding-top: var(--space-2); }
 .hint { display: inline-flex; align-items: center; gap: var(--space-1); }
-@media (prefers-reduced-motion: reduce) { .slot { transition: none; } }
+/* Below the player: your moments in this song · what plays next. Open lists, no cards. */
+.below { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-7); margin-top: var(--space-7); padding-bottom: var(--space-7); }
+.col { min-width: 0; }
+.sh { margin: 0 0 var(--space-3); color: var(--ink); }
+.empty-line { color: var(--ink-mute); margin: 0; }
+.rows { list-style: none; margin: 0; padding: 0; }
+.rows li { border-bottom: 1px solid var(--line); }
+.mrow, .srow {
+  width: 100%; display: flex; align-items: center; gap: var(--space-3); padding: 10px 0;
+  background: none; border: 0; color: var(--ink); font: inherit; text-align: left;
+}
+button.mrow, button.srow { cursor: pointer; }
+button.mrow:hover .what, button.srow:hover .s-title { color: var(--ink); }
+.cp {
+  width: 28px; height: 28px; flex: none; border-radius: 50%; border: 1px solid var(--line-strong);
+  display: inline-flex; align-items: center; justify-content: center; color: var(--ink-sub);
+}
+.mrow.on .cp { border-color: var(--accent); color: var(--accent); }
+.range { color: var(--ink-sub); font-variant-numeric: tabular-nums; flex: none; min-width: 92px; }
+.mrow.on .range { color: var(--accent); }
+.what { color: var(--ink-sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.s-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.s-title { color: var(--ink-sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.s-sub, .s-dur { color: var(--ink-mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.s-dur { flex: none; font-variant-numeric: tabular-nums; }
+
+/* Start card (nothing loaded). */
+.start { display: flex; flex-direction: column; align-items: flex-start; padding-top: var(--space-6); }
+.start .title { margin-top: var(--space-5); }
+.sub-line { color: var(--ink-sub); margin: var(--space-2) 0 0; max-width: 46ch; }
+.start-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-5); }
+.file { display: none; }
+.start .sh { margin-top: var(--space-7); }
+.tiles { list-style: none; margin: 0; padding: 0 0 var(--space-7); display: grid; grid-template-columns: repeat(auto-fill, 132px); gap: var(--space-5) var(--space-4); width: 100%; }
+.tile { display: flex; flex-direction: column; gap: 2px; width: 132px; padding: 0; border: 0; background: none; color: inherit; text-align: left; cursor: pointer; }
+.tile .art { margin-bottom: var(--space-2); transition: transform .15s ease; }
+.tile:hover .art { transform: translateY(-2px); }
+.tile-title { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile-artist { color: var(--ink-mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (prefers-reduced-motion: reduce) { .slot, .tile .art { transition: none; } }
 @media (max-width: 820px) {
   .pcol { padding-top: var(--space-4); }
+  .below { grid-template-columns: 1fr; gap: var(--space-6); }
 }
 @media (max-width: 600px) {
-  .track { gap: var(--space-4); }
+  .track { gap: var(--space-4); align-items: center; }
+  .hero-art { width: 112px !important; height: 112px !important; }
   .stage { margin-top: var(--space-5); }
 }
 </style>

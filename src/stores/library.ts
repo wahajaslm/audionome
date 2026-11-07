@@ -1,11 +1,12 @@
 import { defineStore } from 'pinia';
 import { computed, reactive, ref, shallowRef } from 'vue';
 import type { Track } from '../data/types';
-import { deleteTrackEverywhere, forgetDeleted, getSetting, importAudioFiles, loadTracks, putAnalysis, putSetting, putTrack, syncFromAnalysisService, nameFromCorpus, updateTrackDuration, updateTrackLoudness, updateTrackPeaks } from '../core/repository';
+import { deleteTrackEverywhere, forgetDeleted, getSetting, importAudioFiles, loadTracks, putAnalysis, putSetting, putTrack, syncFromAnalysisService, nameFromCorpus, updateTrackArtwork, updateTrackDuration, updateTrackLoudness, updateTrackPeaks } from '../core/repository';
 import { intelligenceHealth, uploadAudioToCache } from '../intelligence/client';
 import { fetchTimelineStatuses, startTimeline, type TimelineJobStatus } from '../core/timeline';
 import { useMomentsStore } from './moments';
 import { runLocalAnalysis } from '../core/intelligence';
+import { extractEmbeddedPicture, toArtwork } from '../core/artwork';
 import type { PlayableTrack } from '../core/library';
 import { useUiStore } from './ui';
 import { useIntelligenceStore } from './intelligence';
@@ -51,10 +52,33 @@ export const useLibraryStore = defineStore('library', () => {
    */
   async function load(): Promise<void> {
     tracks.value = await loadTracks();
+    fillArtwork().catch(console.warn);
     syncFromAnalysisService().then(nameFromCorpus).then(async () => {
       tracks.value = await loadTracks();
       await useIntelligenceStore().refresh();
     }).catch(console.warn);
+  }
+
+  /**
+   * ARTWORK BACKFILL - songs imported before cover art was read have artwork undefined. Each one
+   * is checked once, one at a time in the background: its tag picture is stored, or '' (none),
+   * so it is never read again. Songs without audio on this device (links) keep the drawn cover.
+   * Example: 30 old MP3s → covers appear one by one in Library within a few seconds.
+   */
+  let filling = false;
+  async function fillArtwork(): Promise<void> {
+    if (filling) return;
+    filling = true;
+    try {
+      for (const t of tracks.value.filter(x => x.artwork === undefined && x.audioBlob)) {
+        const pic = extractEmbeddedPicture(await t.audioBlob!.arrayBuffer());
+        const art = pic ? await toArtwork(pic) : null;
+        await updateTrackArtwork(t.id, art?.artwork ?? '', art?.artworkColor);
+        // A new object, so screens holding this song (shallowRef rows) redraw with the cover.
+        const next = { ...t, artwork: art?.artwork ?? '', artworkColor: art?.artworkColor };
+        tracks.value = tracks.value.map(x => (x.id === t.id ? next : x));
+      }
+    } finally { filling = false; }
   }
 
   async function loadSettings(): Promise<void> {

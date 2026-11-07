@@ -15,7 +15,12 @@ export interface Track {
   // a corpus file imported as '7rLxN41avhY.m4a' has the title '7rLxN41avhY', which no song name matches,
   // and a re-encoded copy titled 'Garaj Baras' would match by name but not by audio. Unset for older imports.
   sha256?: string;
+  // Cover art from the file's own tags (core/artwork.ts), as a small JPEG data URL.
+  // '' = the file was checked and has none, so the player draws a cover from the song instead.
+  // undefined = not checked yet (older imports; filled in the background on the next load).
   artwork?: string;
+  // Average colour of that picture, for the soft wash behind Now playing's header.
+  artworkColor?: string;
   // Integrated loudness of the mono mix (LUFS) and sample peak (dBFS), measured once in the
   // browser (core/audioGraph.ts). The player uses them to play every song at the same level.
   loudnessLufs?: number;
