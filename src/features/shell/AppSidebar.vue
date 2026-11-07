@@ -8,10 +8,11 @@ import NavItem from '../../ui/NavItem.vue';
 import { COLLECTIONS } from '../../core/moments';
 import { useListeningStore } from '../../stores/listening';
 
-// NavItem rule: the five places in README order (Now playing, Library, My Moments, Discover,
-// My Music DNA), then Collections. `short` is the tab-bar label (< 820px). Settings and Feature
+// NavItem rule: Home, then the five places in README order (Now playing, Library, My Moments,
+// Discover, My Music DNA), then Collections. `short` is the tab-bar label (< 820px). Settings and Feature
 // analysis are secondary links on desktop; on phones they are reached from My Music DNA.
 const navItems: { to: string; label: string; short: string; icon: IconName }[] = [
+  { to: '/home', label: 'Home', short: 'Home', icon: 'home' },
   { to: '/', label: 'Now playing', short: 'Playing', icon: 'wave' },
   { to: '/library', label: 'Library', short: 'Library', icon: 'library' },
   { to: '/moments', label: 'My Moments', short: 'Moments', icon: 'heart' },

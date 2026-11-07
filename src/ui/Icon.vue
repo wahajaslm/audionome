@@ -8,6 +8,7 @@
  * Example: <Icon name="heart" :size="16" /> draws the Save heart in the text colour.
  */
 const ICONS = {
+  home: '<path d="M4 11l8-7 8 7M6 9.5V20h4.5v-5.5h3V20H18V9.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
   wave: '<path d="M3 12h1M6.5 8v8M10 5v14M13.5 9v6M17 6v12M20.5 11v2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
   library: '<path d="M5 4v16M10 4v16M14.5 4.5l5 15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
   heart: '<path d="M12 20s-7.5-4.6-7.5-10.2A4.2 4.2 0 0 1 12 7.4a4.2 4.2 0 0 1 7.5 2.4C19.5 15.4 12 20 12 20z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>',

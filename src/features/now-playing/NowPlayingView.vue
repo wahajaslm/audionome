@@ -2,11 +2,11 @@
 /**
  * Now playing (design-system layout): artwork + title → waveform → selection toolbar →
  * ask row / describe strip / explore / nudge slot → your moments in this song and what plays
- * next. With nothing loaded it shows a start card (import, add a link, your songs).
+ * next. With nothing loaded it points to Home (features/home), the app's front page.
  * The playback bar is app-wide (App.vue), so it looks the same on every screen.
  * Behaviour is ported from index.html's player screen; state lives in the stores.
  */
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRouter } from 'vue-router';
 import { usePlaybackStore } from '../../stores/playback';
@@ -153,39 +153,18 @@ const moreSongs = computed(() => {
 });
 const playSong = (s: PlayableTrack) => playback.changeTrack(s, true);
 
-// Start card: the same import as Library's "Import audio" button.
-const fileInput = ref<HTMLInputElement | null>(null);
-async function onFiles(e: Event): Promise<void> {
-  const input = e.target as HTMLInputElement;
-  await library.importFiles(Array.from(input.files || []));
-  input.value = '';
-}
 </script>
 
 <template>
   <div class="pcol">
-    <!-- Start card: nothing loaded yet. One primary action (import), a link, and your songs. -->
+    <!-- Nothing loaded (rare: a song is loaded at start-up). Home is the place to pick one. -->
     <section v-if="!currentTrack" class="start" aria-labelledby="start-title">
       <Cover :size="120" />
       <h1 id="start-title" class="title track-title">Nothing playing yet</h1>
-      <p class="body sub-line">Import a song from your device, or add one from a link. Audio stays on your device.</p>
+      <p class="body sub-line">Pick a song on Home, or import one there.</p>
       <div class="start-actions">
-        <Button variant="primary" @click="fileInput?.click()">Import audio</Button>
-        <Button variant="outline" @click="router.push('/library')">Add from a link</Button>
+        <Button variant="primary" @click="router.push('/home')">Go to Home</Button>
       </div>
-      <input ref="fileInput" type="file" class="file" accept="audio/*,.mp3,.wav,.flac,.ogg,.m4a,.aac,.opus" multiple aria-label="Import audio files" @change="onFiles" />
-      <template v-if="library.tracks.length">
-        <h2 class="heading sh">Your songs</h2>
-        <ul class="tiles">
-          <li v-for="s in library.tracks.slice(0, 8)" :key="s.id">
-            <button type="button" class="tile" @click="playSong(s)">
-              <Artwork v-bind="artworkFor(s)" :size="132" radius="var(--radius-md)" />
-              <span class="label tile-title">{{ s.title }}</span>
-              <span class="caption tile-artist">{{ s.artist }}</span>
-            </button>
-          </li>
-        </ul>
-      </template>
     </section>
 
     <template v-else>
@@ -430,16 +409,8 @@ button.mrow:hover .what, button.srow:hover .s-title { color: var(--ink); }
 .start .title { margin-top: var(--space-5); }
 .sub-line { color: var(--ink-sub); margin: var(--space-2) 0 0; max-width: 46ch; }
 .start-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-5); }
-.file { display: none; }
-.start .sh { margin-top: var(--space-7); }
-.tiles { list-style: none; margin: 0; padding: 0 0 var(--space-7); display: grid; grid-template-columns: repeat(auto-fill, 132px); gap: var(--space-5) var(--space-4); width: 100%; }
-.tile { display: flex; flex-direction: column; gap: 2px; width: 132px; padding: 0; border: 0; background: none; color: inherit; text-align: left; cursor: pointer; }
-.tile .art { margin-bottom: var(--space-2); transition: transform .15s ease; }
-.tile:hover .art { transform: translateY(-2px); }
-.tile-title { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tile-artist { color: var(--ink-mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-@media (prefers-reduced-motion: reduce) { .slot, .tile .art { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .slot { transition: none; } }
 @media (max-width: 820px) {
   .pcol { padding-top: var(--space-4); }
   .below { grid-template-columns: 1fr; gap: var(--space-6); }
