@@ -43,7 +43,7 @@ function loopRange(a: number, b: number): void {
         <button type="button" :aria-pressed="zoom === 'all'" @click="zoom = 'all'">Whole passage</button>
       </div>
     </header>
-    <BitrateLanes :bitrate="timeline.bitrate" :loud="loud" :range="range" :sel="playback.sel" :t="playback.t" :zoom="zoom" @seek="s => playback.clickSeek(s)" @loop="loopRange" />
+    <BitrateLanes :bitrate="timeline.bitrate" :envelope="timeline.envelope" :view="timeline.spectrumView" :loud="loud" :range="range" :sel="playback.sel" :t="playback.t" :zoom="zoom" @seek="s => playback.clickSeek(s)" @loop="loopRange" />
     <!-- At a glance: the frame now, this passage, the file (NerdCards.vue). -->
     <NerdCards :bitrate="timeline.bitrate" :t="playback.t" :range="range" :is-passage="!!playback.sel" />
     <details class="details">

@@ -8,11 +8,16 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { frameAt, type BitrateInfo } from '../../core/bitrate';
+import type { Envelope } from '../../core/envelope';
+import { bandForHz, spectrumLabels, spectrumTiles, SPEC_TILE, type SpectrumView } from '../../core/spectrum';
 import { labelStep, quantile, TIME_STEPS } from '../../core/timeline';
 import { useTimeDrag } from '../../composables/useTimeDrag';
 
 const props = defineProps<{
   bitrate: BitrateInfo | null;
+  /** Fine waveform (core/envelope.ts) and the spectrum view, on the same clock. */
+  envelope: Envelope | null;
+  view: SpectrumView | null;
   /** Loudness, 10 values per second (service curve or the browser's). */
   loud: ArrayLike<number> | null;
   /** The passage (selection) or the whole song. */
@@ -28,8 +33,16 @@ const emit = defineEmits<{ seek: [sec: number]; loop: [a: number, b: number] }>(
  * Gain (the quantiser's global gain), and Reservoir (MP3 bit reservoir) or Shape (AAC window
  * shape, KBD lit) sit between Bitrate and Loudness.
  */
-const ROWS = { rate: { y: 0, h: 84 }, blocks: { y: 92, h: 14 }, gain: { y: 112, h: 30 }, third: { y: 148, h: 22 }, loud: { y: 178, h: 30 }, axis: { y: 214, h: 14 } };
-const HEIGHT = 228;
+// ALIGN FIX - Waveform and Spectrum on top, on the same clock as the decoder lanes, so a short
+// block or a bitrate jump can be matched to the sound that caused it. At Frames zoom the frame
+// edges run down through them as faint lines.
+const ROWS = {
+  wave: { y: 0, h: 56 }, spec: { y: 62, h: 84 },
+  rate: { y: 154, h: 70 }, blocks: { y: 230, h: 14 }, gain: { y: 250, h: 30 }, third: { y: 286, h: 22 }, loud: { y: 316, h: 26 }, axis: { y: 348, h: 14 },
+};
+const HEIGHT = 362;
+let tiles: HTMLCanvasElement[] = [];
+watch(() => props.view, v => { tiles = v ? spectrumTiles(v) : []; }, { immediate: true });
 /** Block colours by kind: long (quiet), start / stop (amber), short (accent). */
 const BLOCK_PRIORITY = [1, 2, 3, 2];
 const cv = ref<HTMLCanvasElement | null>(null);
@@ -60,6 +73,55 @@ function draw(): void {
   // The passage (or loop) as a band; the dragged range while dragging.
   const band = dragRange.value ?? (props.sel ? [props.sel.a, props.sel.b] : null);
   if (band) { g.fillStyle = C.raise; g.fillRect(X(band[0]), 0, X(band[1]) - X(band[0]), HEIGHT - 14); }
+
+  // Waveform: min/max per screen pixel from the fine envelope.
+  const env = props.envelope, W = ROWS.wave;
+  if (env) {
+    const mid = W.y + W.h / 2;
+    g.fillStyle = C.sub;
+    for (let x = 0; x < w; x++) {
+      const k0 = Math.max(0, Math.floor((v0 + (x / w) * (v1 - v0)) * env.rate)), k1 = Math.min(env.max.length, Math.ceil((v0 + ((x + 1) / w) * (v1 - v0)) * env.rate));
+      let lo = 0, hi = 0;
+      for (let k = k0; k < Math.max(k1, k0 + 1) && k < env.max.length; k++) { if (env.min[k] < lo) lo = env.min[k]; if (env.max[k] > hi) hi = env.max[k]; }
+      g.fillRect(x, mid - hi * (W.h / 2), 1, Math.max(1, (hi - lo) * (W.h / 2)));
+    }
+  } else { g.fillStyle = C.mute; g.fillText('Reading audio…', 8, W.y + W.h / 2); }
+
+  // Spectrum: the same tiles as Explore, sliced to the view.
+  const sp = props.view, P = ROWS.spec;
+  if (sp && tiles.length) {
+    const f0 = Math.max(0, v0 * sp.fps), f1 = Math.min(sp.frames, v1 * sp.fps);
+    g.imageSmoothingEnabled = props.zoom !== 'frames'; // at frame zoom, crisp columns line up with frames
+    for (let ti = Math.floor(f0 / SPEC_TILE); ti <= Math.floor((f1 - 1) / SPEC_TILE) && ti < tiles.length; ti++) {
+      const t0 = ti * SPEC_TILE, a = Math.max(f0, t0), b = Math.min(f1, t0 + tiles[ti].width);
+      if (b <= a) continue;
+      g.drawImage(tiles[ti], a - t0, 0, b - a, sp.bands, X(a / sp.fps), P.y, X(b / sp.fps) - X(a / sp.fps), P.h);
+    }
+    g.imageSmoothingEnabled = true;
+    g.font = '600 10px ' + font;
+    for (const [hz, label] of spectrumLabels(sp.kind)) {
+      const yy = P.y + P.h - (bandForHz(sp, hz) + 0.5) / sp.bands * P.h;
+      g.fillStyle = 'rgba(14,14,16,0.72)'; g.fillRect(2, yy - 7, 40, 13);
+      g.fillStyle = C.ink; g.fillText(label, 5, yy + 3);
+    }
+    g.font = '10px ' + font;
+  } else { g.fillStyle = C.mute; g.fillText('Reading audio…', 8, P.y + P.h / 2); }
+
+  // Frame edges through waveform and spectrum (Frames zoom only).
+  const fe = props.bitrate?.frames;
+  if (props.zoom === 'frames' && fe) {
+    let i0 = Math.max(0, frameAt(fe, v0)), i1 = frameAt(fe, v1);
+    if (i1 < 0) i1 = fe.t.length - 1;
+    g.fillStyle = 'rgba(255,255,255,0.10)';
+    for (let i = i0; i <= i1; i++) g.fillRect(Math.round(X(fe.t[i])), W.y, 1, P.y + P.h - W.y);
+    // Short blocks / windows tint their frame across the waveform and spectrum.
+    const d = fe.dec;
+    if (d) for (let i = i0; i <= i1; i++) if (d.block[i] === 2) {
+      g.fillStyle = C.accent; g.globalAlpha = 0.12;
+      g.fillRect(X(fe.t[i]), W.y, X(fe.t[i] + fe.dur[i]) - X(fe.t[i]), P.y + P.h - W.y);
+      g.globalAlpha = 1;
+    }
+  }
 
   const br = props.bitrate, R = ROWS.rate;
   g.font = '10px ' + font;
@@ -182,7 +244,7 @@ function draw(): void {
   if (props.t >= v0 && props.t <= v1) { g.fillStyle = C.accent; g.fillRect(X(props.t) - 0.75, 0, 1.5, HEIGHT - 14); }
 }
 
-watch(() => [props.t, props.zoom, props.bitrate, props.loud, props.range.a, props.range.b, props.sel?.a, props.sel?.b, dragRange.value], () => requestAnimationFrame(draw));
+watch(() => [props.t, props.zoom, props.bitrate, props.loud, props.envelope, props.view, props.range.a, props.range.b, props.sel?.a, props.sel?.b, dragRange.value], () => requestAnimationFrame(draw));
 onMounted(() => {
   ro = new ResizeObserver(([e]) => { width.value = e.contentRect.width; draw(); });
   if (cv.value) ro.observe(cv.value);
@@ -206,6 +268,8 @@ const drag = useTimeDrag(
 <template>
   <div class="lanes">
     <div class="lbl" :style="{ height: HEIGHT + 'px' }">
+      <div class="l" :style="{ top: ROWS.wave.y + 'px', height: ROWS.wave.h + 'px' }"><span>Waveform</span></div>
+      <div class="l" :style="{ top: ROWS.spec.y + 'px', height: ROWS.spec.h + 'px' }"><span>Spectrum<small v-if="$props.view">{{ $props.view.kind === 'cqt' ? 'CQT' : $props.view.kind === 'linear' ? 'Linear' : 'Mel' }}</small></span></div>
       <div class="l" :style="{ top: ROWS.rate.y + 'px', height: ROWS.rate.h + 'px' }">
         <span>Bitrate<small v-if="bitrate">{{ bitrate.codec }} {{ bitrate.mode }}{{ bitrate.exact ? '' : ' · average' }}</small></span>
       </div>

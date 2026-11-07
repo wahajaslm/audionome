@@ -966,3 +966,12 @@ test('decoder fields: in a real AAC file every window overlaps its neighbour cor
   }
   assert.equal(bad, 0, 'every packet overlaps its neighbour with matching slopes');
 });
+
+test('envelope: min/max per step, silence is flat (ALIGN FIX)', async () => {
+  const { makeEnvelope } = await import('../src/core/envelope.ts');
+  const sr = 1000, mono = new Float32Array(sr).map((_, i) => (i < 500 ? Math.sin(i / 3) * 0.5 : 0));
+  const e = makeEnvelope(mono, sr, 10);
+  assert.equal(e.max.length, 10);
+  assert.ok(e.max[0] > 0.45 && e.min[0] < -0.45, 'the tone fills its steps');
+  assert.equal(e.max[9], 0); assert.equal(e.min[9], 0);
+});
