@@ -15,7 +15,7 @@ import librosa
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from musicdna.service.service import AudioIntelligenceService, _DEFAULT_SERVICE
@@ -45,6 +45,11 @@ app.include_router(studio_router)
 app.include_router(timeline_router)
 app.include_router(corpus_router)
 app.include_router(probe_router)
+
+@app.api_route('/', methods=['GET', 'HEAD'])
+def root() -> RedirectResponse:
+    """Redirect root requests to the interactive research studio."""
+    return RedirectResponse(url='/studio')
 
 app.add_middleware(
     CORSMiddleware,
