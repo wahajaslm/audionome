@@ -32,6 +32,7 @@ import Button from '../../ui/Button.vue';
 import ExplorePanel from './ExplorePanel.vue';
 import EffectsDrawer from './EffectsDrawer.vue';
 import { similarPassages } from '../../core/passageDetails';
+import { barAt, beatInBar, blockIndexAt } from '../../core/timeline';
 import SongStrip from './SongStrip.vue';
 import { useTimelineStore } from '../../stores/timeline';
 import { passageMoments } from '../../core/timeline';
@@ -64,13 +65,27 @@ const matchedSaved = computed(() => sel.value && moments.savedForCurrent.find(r 
 /** A saved moment with this exact range (within 0.5 s): the loop bar shows "Saved". */
 const savedHere = computed(() => sel.value && moments.savedForCurrent.find(r => Math.abs(r.a - sel.value!.a) < 0.5 && Math.abs(r.b - sel.value!.b) < 0.5));
 
-/** Strip, passage selected: its part and loop state. Example: "part B, heard 3× · looping". */
+/**
+ * ONE STRIP FIX - the live line (chord, next chord, bar · beat, part) was its own row above the
+ * strip; it now leads the strip. Example: "D#m → G# · bar 21.1 · part A".
+ */
+const liveNow = computed(() => {
+  const tl = timelineStore.timeline, at = t.value;
+  if (!tl?.chords?.length || !tl.beats?.length) return null;
+  const i = blockIndexAt(tl.chords, at), c = tl.chords[i], next = tl.chords[i + 1];
+  const part = tl.sections?.[blockIndexAt(tl.sections, at)];
+  return { chord: c?.c ?? '—', next: next?.c, bar: barAt(tl.downbeats ?? [], at), beat: beatInBar(tl.beats, tl.downbeats ?? [], at), part: part?.label };
+});
+
+/** Strip, passage selected. Example: "its part comes back 3× · looping". */
 const passageBits = computed(() => {
   const r = sel.value, tl = timelineStore.timeline;
   if (!r) return '';
   const out: string[] = [];
+  // The part itself is in the live lead-in; here only how often it comes back.
   const mid = (r.a + r.b) / 2, part = tl?.sections?.find(p => mid >= p.a && mid < p.b);
-  if (part) out.push(`part ${part.label}, heard ${tl!.sections!.filter(p => p.label === part.label).length}×`);
+  const times = part ? tl!.sections!.filter(p => p.label === part.label).length : 0;
+  if (times > 1) out.push(`its part comes back ${times}×`);
   if (loop.value) out.push('looping');
   return out.join(' · ');
 });
@@ -169,7 +184,7 @@ async function onFiles(e: Event): Promise<void> {
     <template v-else>
     <!-- Hero: the song's cover (its own picture, or one drawn from its sound) on a soft wash of its colour. -->
     <header class="track" :style="{ '--wash': washFor(currentTrack) }">
-      <Artwork class="hero-art" v-bind="artworkFor(currentTrack)" :size="220" radius="var(--radius-md)" />
+      <Artwork class="hero-art" v-bind="artworkFor(currentTrack)" :size="160" radius="var(--radius-md)" />
       <div class="meta">
         <div class="eyebrow caption">Now playing</div>
         <h1 class="title track-title">{{ currentTrack.title }}</h1>
@@ -215,6 +230,11 @@ async function onFiles(e: Event): Promise<void> {
         @effects="playback.effectsOpen = !playback.effectsOpen"
         @clear="playback.clearSelection()"
       >
+        <template v-if="liveNow" #live>
+          <span class="chord">{{ liveNow.chord }}<template v-if="liveNow.next"> → {{ liveNow.next }}</template></span>
+          <span>bar {{ liveNow.bar }}.{{ liveNow.beat }}</span>
+          <span v-if="liveNow.part">part {{ liveNow.part }}</span>
+        </template>
         <template #info>
           <template v-if="playback.radio">
             <span>· Moment radio · {{ playback.radioNow?.source === 'moment' ? 'one of your moments' : 'like your moments' }}</span>
@@ -352,6 +372,7 @@ async function onFiles(e: Event): Promise<void> {
 .artist { color: var(--ink-sub); margin-top: var(--space-1); }
 .status { margin-top: var(--space-3); display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; color: var(--ink-sub); }
 .status .sub { color: var(--ink-mute); }
+.chord { color: var(--ink); font-weight: 500; }
 .link { background: none; border: none; padding: 0; color: var(--ink-mute); font: inherit; cursor: pointer; }
 .link:hover { color: var(--ink); }
 .stage { margin-top: var(--space-7); }
@@ -411,7 +432,7 @@ button.mrow:hover .what, button.srow:hover .s-title { color: var(--ink); }
 }
 @media (max-width: 600px) {
   .track { gap: var(--space-4); align-items: center; }
-  .hero-art { width: 112px !important; height: 112px !important; }
+  .hero-art { width: 96px !important; height: 96px !important; }
   .stage { margin-top: var(--space-5); }
 }
 </style>

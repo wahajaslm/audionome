@@ -1,14 +1,13 @@
 <script setup lang="ts">
 /**
  * Under the waveform, on the same width: the song's parts (A, B, C… = parts that sound alike),
- * dots for the selected passage's moments, a faint mark where its chords come back, and one
- * live line — sounding chord, the next one, bar · beat, part. Click a part to select it, drag to mark
+ * dots for the selected passage's moments and a faint mark where its chords come back. (The
+ * live chord · bar · part line moved into the one strip below: ONE STRIP FIX.) Click a part to select it, drag to mark
  * a passage (both set the loop markers, like the waveform). It needs only the quick tier, so
  * it shows while stems are still being separated, and it works without opening Explore.
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { barAt, beatInBar, blockIndexAt, type PassageMoment, type Timeline } from '../../core/timeline';
-import { formatTime } from '../../ui/format';
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import type { PassageMoment, Timeline } from '../../core/timeline';
 import { useTimeDrag } from '../../composables/useTimeDrag';
 
 const props = defineProps<{ timeline: Timeline | null; duration: number; t: number; moments: PassageMoment[] }>();
@@ -53,19 +52,6 @@ onMounted(() => {
 });
 onBeforeUnmount(() => ro?.disconnect());
 
-const now = computed(() => {
-  const tl = props.timeline;
-  if (!tl?.chords?.length || !tl.beats?.length) return null;
-  const i = blockIndexAt(tl.chords, props.t), c = tl.chords[i], next = tl.chords[i + 1];
-  const part = tl.sections?.[blockIndexAt(tl.sections, props.t)];
-  return {
-    chord: c?.c ?? '—',
-    next: next ? { c: next.c, in: Math.max(0, next.a - props.t).toFixed(1) } : null,
-    bar: barAt(tl.downbeats ?? [], props.t),
-    beat: beatInBar(tl.beats, tl.downbeats ?? [], props.t),
-    part: part?.label,
-  };
-});
 
 // WHOLE-WAVEFORM FIX - a click on a part used to select the whole part. This bar sits just
 // under the waveform, so it was hit by accident, and parts can be most of a song: one click
@@ -85,21 +71,10 @@ const drag = useTimeDrag(
 <template>
   <div class="strip">
     <canvas ref="cv" class="cv" :style="{ height: H + 'px' }" aria-label="Song parts and marked moments. Click to move there, drag to mark a passage." @pointerdown="drag.pointerdown" @pointermove="drag.pointermove" @pointerup="drag.pointerup" @pointercancel="drag.pointercancel"></canvas>
-    <div v-if="now" class="now" aria-live="off">
-      <span class="ch">{{ now.chord }}</span>
-      <span v-if="now.next" class="nx">next {{ now.next.c }} in {{ now.next.in }} s</span>
-      <span>bar {{ now.bar }} · beat {{ now.beat }}</span>
-      <span v-if="now.part">part {{ now.part }}</span>
-      <span class="clock">{{ formatTime(t) }} / {{ formatTime(duration) }}</span>
-    </div>
   </div>
 </template>
 
 <style scoped>
 .strip { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
 .cv { display: block; width: 100%; cursor: pointer; touch-action: pan-y; }
-.now { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; font-size: 13px; color: var(--ink-sub); font-variant-numeric: tabular-nums; }
-.ch { color: var(--ink); font-size: 15px; font-weight: 500; min-width: 2.5em; }
-.nx { color: var(--ink-mute); }
-.clock { margin-left: auto; color: var(--ink-mute); }
 </style>

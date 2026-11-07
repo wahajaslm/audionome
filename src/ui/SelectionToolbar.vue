@@ -6,8 +6,8 @@
  * Now it is always there, in the same place: what you are hearing and how it fits your taste on
  * the left (the `info` slot), the controls on the right. With nothing selected the controls act
  * on the whole song; with a passage selected, on that passage.
- *   No selection:  Whole song · … │ Loop · Explore · ♡ · Effects
- *   Selection:     1:10 – 1:22 · … │ ▶ · Loop · Explore · ♡ · Effects · ✕
+ *   No selection:  D#m → G# · bar 21.1 · part A │ Whole song · …   Loop · Explore · ♡ · Effects
+ *   Selection:     D#m → G# · bar 21.1 · part A │ 1:10 – 1:22 · …   ▶ · Loop · Explore · ♡ · Effects · ✕
  * Effects opens a drawer under the same strip (the `drawer` slot); nothing pops up.
  * Props: range (null = whole song); loop; playing; exploring; saved; effects (drawer open);
  *        effectsOn (an effect is active: the button is tinted).
@@ -27,6 +27,8 @@ const emit = defineEmits<{ play: []; loop: []; explore: []; save: []; effects: [
   <div class="strip">
     <div class="row" role="toolbar" :aria-label="range ? 'Selected passage' : 'This song'">
       <div class="info label">
+        <!-- What is sounding now (chord · bar · part); the song or passage info follows. -->
+        <span v-if="$slots.live" class="live"><slot name="live" /></span>
         <span class="what">{{ range ? formatTime(range.a) + ' – ' + formatTime(range.b) : 'Whole song' }}</span>
         <slot name="info" />
       </div>
@@ -49,6 +51,7 @@ const emit = defineEmits<{ play: []; loop: []; explore: []; save: []; effects: [
 /* The info side shrinks first; the controls never move. */
 .info { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 6px; color: var(--ink-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .what { color: var(--ink); flex: none; }
+.live { flex: none; display: inline-flex; align-items: baseline; gap: 8px; padding-right: 10px; margin-right: 4px; border-right: 1px solid var(--line-strong); color: var(--ink-sub); }
 .ctl { flex: none; display: flex; align-items: center; gap: 2px; }
 .b {
   height: 34px; padding: 0 10px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--ink);
