@@ -130,6 +130,7 @@ function loopRange(a: number, b: number): void {
       :t="audibleT"
       :playing="playback.playing"
       :read-bytes="timeline.readBytes"
+      :view="timeline.spectrumView"
       @step="s => playback.stepTo(s)"
       @audition="(a, b, back) => playback.audition(a, b, back)"
     />

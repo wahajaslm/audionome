@@ -156,7 +156,7 @@ export const AAC_OBJECT: Record<number, string> = {
  * The esds descriptors inside an mp4a sample entry: object type, sample rate index, channel
  * configuration, and the declared max / average bitrate.
  */
-export function parseEsds(b: Uint8Array, from: number, to: number): { objectType: number; profile: string; channelConfig: number; maxBitrate: number; avgBitrate: number } | null {
+export function parseEsds(b: Uint8Array, from: number, to: number): { objectType: number; profile: string; channelConfig: number; maxBitrate: number; avgBitrate: number; samplingIndex: number } | null {
   let p = -1;
   for (let i = from; i + 4 < to; i++) if (b[i] === 0x65 && b[i + 1] === 0x73 && b[i + 2] === 0x64 && b[i + 3] === 0x73) { p = i + 8; break; } // 'esds' + version/flags
   if (p < 0) return null;
@@ -175,8 +175,7 @@ export function parseEsds(b: Uint8Array, from: number, to: number): { objectType
   if (objectType === 31) objectType = 32 + r.read(6);
   const sfi = r.read(4); if (sfi === 15) r.skip(24);
   const channelConfig = r.read(4);
-  // Explicit SBR / PS signalling: the base type is followed by the extension.
-  return { objectType, profile: AAC_OBJECT[objectType] ?? 'AAC type ' + objectType, channelConfig, maxBitrate, avgBitrate };
+  return { objectType, profile: AAC_OBJECT[objectType] ?? 'AAC type ' + objectType, channelConfig, maxBitrate, avgBitrate, samplingIndex: sfi };
 }
 
 /** Share of each block kind over frames i0..i1. Example: { long: 0.93, start: 0.02, short: 0.03, stop: 0.02 }. */

@@ -33,6 +33,8 @@ export interface BitrateInfo {
   frames?: FrameTable;
   /** AAC: profile from the AudioSpecificConfig (e.g. "HE-AAC (SBR)") and the declared bitrates. */
   profile?: string;
+  /** AAC: sampling-frequency index from the AudioSpecificConfig (4 = 44.1 kHz); the decoder's band edges. */
+  aacSfi?: number;
   declaredMaxKbps?: number;
   declaredAvgKbps?: number;
 }
@@ -311,7 +313,7 @@ function parseMp4(b: Uint8Array): BitrateInfo | null {
   return { codec, container: 'M4A', mode: lossless ? 'lossless' : sizes.size > 1 ? 'VBR' : 'CBR', sampleRate: sr, channels: ch,
     avgKbps: bins.avg(), kbps: bins.kbps(), binSec: BIN_SEC, durationSec: bins.time, exact: true,
     frames: codec === 'AAC' ? withDecoder(log.table('sample', skip), t => decodeAac(b, t)) : log.table('sample', skip),
-    profile: esds?.profile, declaredMaxKbps: esds?.maxBitrate ? Math.round(esds.maxBitrate / 1000) : undefined,
+    profile: esds?.profile, aacSfi: esds?.samplingIndex, declaredMaxKbps: esds?.maxBitrate ? Math.round(esds.maxBitrate / 1000) : undefined,
     declaredAvgKbps: esds?.avgBitrate ? Math.round(esds.avgBitrate / 1000) : undefined };
 }
 

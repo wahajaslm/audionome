@@ -15,9 +15,14 @@
  */
 import { computed, ref, watch } from 'vue';
 import { frameAt, type BitrateInfo } from '../../core/bitrate';
+import { decodeAacPacket, type Channel } from '../../core/aacDecode';
+import type { SpectrumView } from '../../core/spectrum';
+import CodedSpectrum from './CodedSpectrum.vue';
 import { aacFields, aacPacket, BLOCK_NAMES, mp3HeaderFields, mp3SideInfo, reservoirSource, type BitField } from '../../core/bitstream';
 
-const props = defineProps<{ bitrate: BitrateInfo | null; t: number; playing: boolean; readBytes: (offset: number, length: number) => Promise<Uint8Array> }>();
+const props = defineProps<{ bitrate: BitrateInfo | null; t: number; playing: boolean; readBytes: (offset: number, length: number) => Promise<Uint8Array>;
+  /** The spectrum view, for the signal line under the coded spectrum. */
+  view?: SpectrumView | null }>();
 const emit = defineEmits<{ step: [sec: number]; audition: [a: number, b: number, back: number] }>();
 
 const f = computed(() => props.bitrate?.frames ?? null);
@@ -49,6 +54,21 @@ const frame = computed(() => {
 
 const side = computed(() => (codec.value === 'mp3' && bytes.value && frame.value?.hdr ? mp3SideInfo(bytes.value, frame.value.hdr) : null));
 const aac = computed(() => (codec.value === 'aac' && bytes.value ? aacPacket(bytes.value) : null));
+/**
+ * AAC DECODER - the whole packet decoded to the quantised spectrum (core/aacDecode.ts): both
+ * channels, sections, scalefactors, TNS, pulse and every spectral value.
+ */
+const decoded = computed(() => (codec.value === 'aac' && bytes.value && props.bitrate?.aacSfi !== undefined ? decodeAacPacket(bytes.value, props.bitrate.aacSfi) : null));
+const cpe = computed(() => decoded.value?.elements.find(e => e.type === 'CPE' || e.type === 'SCE' || e.type === 'LFE') ?? null);
+/** Channel names: with M/S on all bands, the two coded channels are Mid and Side, not L and R. */
+const chNames = computed(() => {
+  const e = cpe.value;
+  if (!e || e.channels.length < 2) return ['Mono'];
+  return e.msMask === 2 ? ['Mid', 'Side'] : e.msMask === 1 ? ['Ch 1 (L or M per band)', 'Ch 2 (R or S per band)'] : ['Left', 'Right'];
+});
+const chSel = ref(0);
+const shortWin = ref(0);
+const chan = computed<Channel | null>(() => cpe.value?.channels[Math.min(chSel.value, (cpe.value?.channels.length ?? 1) - 1)] ?? null);
 const fields = computed<BitField[]>(() => {
   if (codec.value === 'mp3' && frame.value?.hdr) return mp3HeaderFields(frame.value.hdr);
   if (codec.value === 'aac' && bytes.value) return aacFields(bytes.value);
@@ -79,6 +99,25 @@ const map = computed(() => {
       data: { left: 0, width: Math.min(100, P(dataBytes)), label: `this frame's audio data: ${n(dataBytes)} B${back ? `, starts ${n(back)} B back (bit reservoir)` : ''}` },
     };
   }
+  if (decoded.value?.ok) {
+    // Every part of the packet, from the decoder's bit positions.
+    const total = fr.size * 8, P = (bits: number) => (bits / total) * 100, parts: { cls: string; w: number; label: string }[] = [];
+    let last = 0;
+    for (const e of decoded.value.elements) {
+      if (e.channels.length) {
+        parts.push({ cls: 'hdr', w: P(e.channels[0].bits.start - e.at), label: `${e.type} header ${e.channels[0].bits.start - e.at} bits` });
+        e.channels.forEach((c, k) => {
+          const nm = chNames.value[k] ?? 'ch ' + (k + 1), b = c.bits;
+          parts.push({ cls: 'side', w: P(b.section - b.start + b.scalefactors - b.section), label: `${nm}: gain · sections ${b.scalefactors - b.start} bits` });
+          parts.push({ cls: 'crc', w: P(b.spectral - b.scalefactors), label: `${nm}: scalefactors · tools ${b.spectral - b.scalefactors} bits` });
+          parts.push({ cls: k ? 'main2' : 'main', w: P(b.end - b.spectral), label: `${nm}: spectral data ${n(Math.round((b.end - b.spectral) / 8))} B` });
+        });
+      } else if (e.type !== 'END') parts.push({ cls: 'prev', w: P(e.end - e.at), label: `${e.type} ${n(Math.round((e.end - e.at) / 8))} B` + (e.type === 'FIL' ? ' (fill / SBR)' : '') });
+      last = e.end;
+    }
+    if (total - last > 0) parts.push({ cls: 'pad', w: P(total - last), label: `END + byte align ${total - last} bits` });
+    return { parts, data: null };
+  }
   if (aac.value) {
     const head = Math.ceil(fieldBits.value / 8), P = (x: number) => (x / fr.size) * 100;
     return {
@@ -102,10 +141,38 @@ const granuleRows = computed(() => side.value?.granules.flatMap((chans, gr) => c
 }))) ?? []);
 
 const WIN = ['Only long', 'Long start', 'Eight short', 'Long stop'];
-const aacRows = computed(() => aac.value?.channels.map((c, k) => ({
-  key: k, ch: aac.value!.channels.length > 1 ? (k ? 'ch 2' : 'ch 1') : 'ch 1', win: WIN[c.windowSequence], kind: BLOCK_NAMES[c.windowSequence],
-  shape: c.windowShape ? 'KBD' : 'Sine', sfb: c.maxSfb, groups: c.groups, gain: c.globalGain ?? (k ? 'after ch 1 data' : '—'),
-})) ?? []);
+const aacRows = computed(() => {
+  if (cpe.value) return cpe.value.channels.map((c, k) => {
+    let nz = 0, maxQ = 0;
+    for (const v of c.spectrum) if (v) { nz++; maxQ = Math.max(maxQ, Math.abs(v)); }
+    const books = [...new Set(c.sectionCb.flat())].sort((a, b) => a - b);
+    return {
+      key: k, ch: chNames.value[k] ?? 'ch ' + (k + 1), win: WIN[c.info.windowSequence], kind: BLOCK_NAMES[c.info.windowSequence],
+      shape: c.info.windowShape ? 'KBD' : 'Sine', sfb: c.info.maxSfb, groups: c.info.groupLengths.length, gain: c.globalGain,
+      sections: c.sectionCb.reduce((s, cbs) => s + cbs.filter((cb, i) => i === 0 || cb !== cbs[i - 1]).length, 0),
+      books: books.join(' '), nz, maxQ, tns: c.tns ? `${c.tns.filters} (order ${c.tns.orders.join('/')})` : '—', pulse: c.pulse ? `${c.pulse.offsets.length}` : '—',
+    };
+  });
+  return aac.value?.channels.map((c, k) => ({
+    key: k, ch: aac.value!.channels.length > 1 ? (k ? 'ch 2' : 'ch 1') : 'ch 1', win: WIN[c.windowSequence], kind: BLOCK_NAMES[c.windowSequence],
+    shape: c.windowShape ? 'KBD' : 'Sine', sfb: c.maxSfb, groups: c.groups, gain: c.globalGain ?? '—', sections: '', books: '', nz: '', maxQ: '', tns: '', pulse: '',
+  })) ?? [];
+});
+/** Scalefactor per band for the chosen channel (window group 1), for the band strip. */
+const bands = computed(() => {
+  const c = chan.value;
+  if (!c) return [];
+  const sfs = c.scalefactors[0] ?? [], cbs = c.sectionCb[0] ?? [];
+  const coded = sfs.filter((_, k) => cbs[k] && cbs[k] < 13);
+  const lo = Math.min(...coded, 999), hi = Math.max(...coded, 0);
+  const lines = c.info.windowSequence === 2 ? 128 : 1024;
+  const out = cbs.map((cb, k) => ({ k, cb, sf: sfs[k], w: c.swb[k + 1] - c.swb[k], above: false,
+    h: cb && cb < 13 && hi > lo ? 0.15 + 0.85 * (sfs[k] - lo) / (hi - lo) : cb && cb < 13 ? 0.5 : 0 }));
+  // the lines above max_sfb (not coded), so the strip spans the same axis as the coded spectrum
+  const coveredTo = c.swb[cbs.length] ?? 0;
+  if (coveredTo < lines) out.push({ k: -1, cb: -1, sf: 0, w: lines - coveredTo, above: true, h: 0 });
+  return out;
+});
 /** Eight-short windows and their groups: a 0 in the grouping starts a new group. */
 const shortGroups = computed(() => {
   const g = aac.value?.channels[0]?.grouping;
@@ -210,10 +277,11 @@ defineExpose({ step, play });
       <div class="lbl">Channels<small>{{ aac?.element }}{{ aac?.commonWindow ? ' · common window' : '' }}{{ aac?.msMaskPresent !== null ? ' · M/S ' + ['off', 'per band', 'all bands', '—'][aac!.msMaskPresent!] : '' }}</small></div>
       <div>
         <table class="tbl">
-          <thead><tr><th></th><th>window sequence</th><th>shape</th><th>max_sfb</th><th>groups</th><th>global gain</th></tr></thead>
+          <thead><tr><th></th><th>window sequence</th><th>shape</th><th>max_sfb</th><th>groups</th><th>gain</th><th>sections</th><th>codebooks</th><th>non-zero lines</th><th>max |q|</th><th>TNS</th><th>pulses</th></tr></thead>
           <tbody>
-            <tr v-for="c in aacRows" :key="c.key">
+            <tr v-for="c in aacRows" :key="c.key" :class="{ sel: cpe && c.key === chSel }" @click="chSel = c.key">
               <td class="mute">{{ c.ch }}</td><td><i class="sq" :class="'b-' + c.kind"></i>{{ c.win }}</td><td>{{ c.shape }}</td><td>{{ c.sfb }}</td><td>{{ c.groups }}</td><td>{{ c.gain }}</td>
+              <td>{{ c.sections }}</td><td>{{ c.books }}</td><td>{{ c.nz }}</td><td>{{ c.maxQ }}</td><td>{{ c.tns }}</td><td>{{ c.pulse }}</td>
             </tr>
           </tbody>
         </table>
@@ -221,6 +289,26 @@ defineExpose({ step, play });
           <span v-for="(g, k) in shortGroups" :key="k" class="w" :class="'g' + (g % 4)">{{ k + 1 }}</span>
           <span class="cap">8 short windows · {{ new Set(shortGroups).size }} groups</span>
         </div>
+      </div>
+    </div>
+
+    <!-- The relationship to the signal: what the encoder coded vs the spectrum at this moment. -->
+    <div v-if="chan" class="block">
+      <div class="lbl">Coded spectrum<small>{{ chNames[chSel] }} · teal line = signal{{ view ? ' (' + (view.kind === 'mel' ? 'Mel' : view.kind === 'cqt' ? 'CQT' : 'Linear') + ', to ' + Math.round(view.fmax / 1000) + ' kHz)' : '' }}</small></div>
+      <div>
+        <div class="chsw">
+          <div class="seg2" role="radiogroup" aria-label="Channel">
+            <button v-for="(nm, k) in chNames" :key="k" type="button" role="radio" :aria-checked="chSel === k" @click="chSel = k">{{ nm }}</button>
+          </div>
+          <div v-if="chan.info.windowSequence === 2" class="seg2" role="radiogroup" aria-label="Short window">
+            <button v-for="w in 8" :key="w" type="button" role="radio" :aria-checked="shortWin === w - 1" @click="shortWin = w - 1">{{ w }}</button>
+          </div>
+        </div>
+        <CodedSpectrum :ch="chan" :sample-rate="bitrate?.sampleRate || 44100" :view="view ?? null" :t="frame ? frame.t + frame.dur / 2 : 0" :window="shortWin" />
+        <div class="bandstrip" aria-label="scalefactor per band; hatched = coded as zero">
+          <i v-for="b in bands" :key="b.k" :class="{ zero: !b.cb, special: b.cb >= 13, above: b.above }" :style="{ flexGrow: b.w, height: (b.above ? 100 : b.cb ? Math.max(8, b.h * 100) : 100) + '%' }" :title="b.above ? 'above max_sfb: not coded' : 'band ' + b.k + ' · codebook ' + b.cb + (b.cb && b.cb < 13 ? ' · scalefactor ' + b.sf : b.cb === 13 ? ' · noise' : b.cb >= 14 ? ' · intensity' : ' · zero')"></i>
+        </div>
+        <div class="cap2">scalefactor per band (taller = coarser quantiser) · hatched = band coded as zero · grey area = above max_sfb, not coded</div>
       </div>
     </div>
 
@@ -286,6 +374,20 @@ defineExpose({ step, play });
 .w { width: 22px; height: 18px; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; color: var(--bg); border-radius: 2px; }
 .g0 { background: var(--accent); } .g1 { background: #c9a25a; } .g2 { background: #8aa3c4; } .g3 { background: var(--ink-sub); }
 .groups .cap { margin-left: 10px; font-size: 11px; color: var(--ink-mute); }
+.main2 { background: var(--ink-sub); }
+.pad { background: var(--bg-raise); }
+.tbl tr.sel td { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.tbl tbody tr { cursor: pointer; }
+.chsw { display: flex; gap: 12px; margin-bottom: 6px; flex-wrap: wrap; }
+.seg2 { display: flex; gap: 2px; }
+.seg2 button { height: 22px; min-width: 24px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: none; color: var(--ink-sub); font: 11px var(--font-sans); cursor: pointer; }
+.seg2 button[aria-checked='true'] { color: var(--ink); border-color: var(--ink-sub); background: var(--bg-raise); }
+.bandstrip { display: flex; align-items: flex-end; gap: 1px; height: 26px; margin-top: 4px; }
+.bandstrip i { flex: 1 1 0; min-width: 1px; background: var(--ink-mute); }
+.bandstrip i.above { background: var(--bg-raise); }
+.bandstrip i.zero { background: repeating-linear-gradient(135deg, var(--line-strong) 0 2px, transparent 2px 4px); }
+.bandstrip i.special { background: #8aa3c4; }
+.cap2 { margin-top: 4px; font-size: 11px; color: var(--ink-mute); }
 .hex { font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .hr { display: flex; gap: 6px; }
 .off { color: var(--ink-mute); margin-right: 8px; }

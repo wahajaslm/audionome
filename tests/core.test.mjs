@@ -1058,3 +1058,32 @@ test('frame table: filters and sorting over a frame range', async () => {
   const cbr = { ...f, size: Uint32Array.from([960, 961, 960, 960, 961, 960]) };
   assert.equal(frameRows(cbr, 0, 5, 'large', 'index').length, 0, 'constant sizes: nothing is "largest"');
 });
+
+test('AAC decoder: every packet of a real file ends on END in its last byte (AAC DECODER)', async () => {
+  const { existsSync, readFileSync } = await import('node:fs');
+  const p = new URL('../musicdna/service/audio_cache/06f0b181-a56f-4f88-acbd-9b186fb4c93d.m4a', import.meta.url);
+  if (!existsSync(p)) return; // the local service cache is not in every checkout
+  const { parseBitrate } = await import('../src/core/bitrate.ts');
+  const { decodeAacPacket } = await import('../src/core/aacDecode.ts');
+  const file = new Uint8Array(readFileSync(p)), i = parseBitrate(file), f = i.frames;
+  let ok = 0, both = 0;
+  for (let k = 0; k < f.t.length; k++) {
+    const d = decodeAacPacket(file.subarray(f.offset[k], f.offset[k] + f.size[k]), i.aacSfi);
+    if (d.ok) ok++;
+    const e = d.elements.find(x => x.type === 'CPE');
+    if (e && e.channels.length === 2 && e.channels[1].globalGain > 0) both++;
+  }
+  assert.equal(ok, f.t.length, 'every packet decodes exactly');
+  assert.equal(both, f.t.length, 'channel 2 is reached in every packet');
+});
+
+test('AAC tables: every codebook is a complete prefix code', async () => {
+  const { SPECTRAL_CODES, SPECTRAL_BITS, SF_CODES, SF_BITS } = await import('../src/core/aacTables.ts');
+  const check = (codes, bits) => {
+    const words = codes.map((c, i) => c.toString(2).padStart(bits[i], '0')).sort();
+    for (let i = 1; i < words.length; i++) assert.ok(!words[i].startsWith(words[i - 1]), 'prefix-free');
+    assert.ok(Math.abs(bits.reduce((s, l) => s + 2 ** -l, 0) - 1) < 1e-12, 'complete (Kraft = 1)');
+  };
+  for (let n = 1; n <= 11; n++) check(SPECTRAL_CODES[n], SPECTRAL_BITS[n]);
+  check(SF_CODES, SF_BITS);
+});
