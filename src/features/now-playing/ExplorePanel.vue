@@ -39,7 +39,22 @@ const { feel, love, note, ask } = storeToRefs(flow);
  * ONE STRIP FIX - Explore opens without a selection too: then it is about the whole song
  * (nothing gets highlighted). With a selection it is about that passage, as before.
  */
-const range = computed(() => sel.value ?? (playback.duration > 0 ? { a: 0, b: playback.duration } : null));
+// WHOLE SONG FIX - the song's length is the analysed audio's (timeline.durationSec) when known:
+// the player's length can be wrong (a placeholder, or a misread VBR MP3), and the lanes then
+// filled only part of the width. Example: player says 10:00, the analysis decoded 4:31 →
+// Explore spans 0:00–4:31. Exception: the service analyses at most ANALYSIS_CAP_SEC, so a
+// longer song keeps its real length and says the lanes stop there.
+const ANALYSIS_CAP_SEC = 600;
+const capped = computed(() => {
+  const tl = timeline.value?.durationSec ?? 0;
+  return tl >= ANALYSIS_CAP_SEC - 1 && playback.duration > tl + 5;
+});
+const range = computed(() => {
+  if (sel.value) return sel.value;
+  const tl = timeline.value?.durationSec ?? 0;
+  const d = tl > 0 && !capped.value ? tl : playback.duration;
+  return d > 0 ? { a: 0, b: d } : null;
+});
 /** The question after Save, for this passage (EXPLORE ASK FIX); More… opens Describe below. */
 const askHere = computed(() => (ask.value && sel.value && Math.abs(ask.value.a - sel.value.a) < 0.5 && Math.abs(ask.value.b - sel.value.b) < 0.5 ? ask.value : null));
 const describeOpen = ref(false);
@@ -167,6 +182,7 @@ const measurements = computed(() => {
       <div>
         <h2 class="heading">{{ sel ? 'Explore this passage' : 'Explore this song' }}</h2>
         <div class="caption sub">{{ formatTime(range.a) }} – {{ formatTime(range.b) }}<template v-if="facts"> · {{ facts }}</template></div>
+        <div v-if="!sel && capped" class="caption sub">Analysis covers the first {{ ANALYSIS_CAP_SEC / 60 }} minutes of this song.</div>
       </div>
       <div class="tools">
         <SpectrumSwitch :kind="spectrumKind" :busy="viewBusy" @select="k => timelineStore.setSpectrumKind(k)" />

@@ -736,3 +736,11 @@ test('effects: DJ filter, width matrix, echo timing and tab dots', async () => {
   assert.equal(fx.groupActive(fx.withControl(fx.NEUTRAL, 'stem', 'vocals'), 'tape'), true);
   assert.equal(fx.withControl(p, 'chorus', 0).preset, 'off', 'back to neutral: Off');
 });
+
+test('lanes: label spacing grows with the zoom so labels never collide (LABEL FIX)', async () => {
+  const { labelStep, BAR_STEPS, TIME_STEPS } = await import('../src/core/timeline.ts');
+  assert.equal(labelStep(40, BAR_STEPS, 34), 1, 'a short passage: every bar');
+  assert.equal(labelStep(6, BAR_STEPS, 34), 8, '137 bars on 820 px: every 8th');
+  assert.equal(labelStep(1640 / 271, TIME_STEPS, 60), 10, '4:31 on 1640 px: every 10 s');
+  assert.equal(labelStep(1640 / 793, TIME_STEPS, 60), 30, '13 min on 1640 px: every 30 s');
+});

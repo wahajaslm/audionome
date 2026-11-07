@@ -380,3 +380,16 @@ export function passageEvidence(tl: Timeline | null | undefined, r: { a: number;
   asks.sort((x, y) => y.score - x.score);
   return { salience: sal, question: asks[0]?.q ?? 'Saved. What stood out in this passage?' };
 }
+
+/**
+ * LABEL FIX - the lanes labelled every bar (or every 4th) and every 10 s whatever the zoom, so
+ * across a whole song the numbers ran into each other. This picks the smallest step from
+ * `steps` whose labels are at least `minPx` apart.
+ * Example: 137 bars on 820 px (6 px per bar), steps 1·2·4·8·16…, 34 px → every 8th bar.
+ */
+export function labelStep(pxPerUnit: number, steps: number[], minPx: number): number {
+  for (const s of steps) if (s * pxPerUnit >= minPx) return s;
+  return steps[steps.length - 1];
+}
+export const BAR_STEPS = [1, 2, 4, 8, 16, 32, 64];
+export const TIME_STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300];

@@ -7,7 +7,7 @@
  * Click a lane to move the playhead there.
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { noteName, quantile, STEM_NAMES, type StemName, type Timeline } from '../../core/timeline';
+import { BAR_STEPS, labelStep, noteName, quantile, STEM_NAMES, TIME_STEPS, type StemName, type Timeline } from '../../core/timeline';
 import { bandForHz, spectrumLabels, spectrumTiles, SPEC_TILE, type Spectrum, type SpectrumView } from '../../core/spectrum';
 import { useTimeDrag } from '../../composables/useTimeDrag';
 
@@ -103,11 +103,15 @@ function draw(): void {
     if (r.k === 'bar') {
       if (!tl?.beats?.length) { pend(r, props.waitingText.quick); continue; }
       g.font = '11px ' + font;
-      for (const b of tl.beats) if (b >= v0 && b <= v1) { g.fillStyle = C.strong; g.fillRect(X(b), ry + 14, 1, 8); }
-      (tl.downbeats ?? []).forEach((d, i) => {
-        if (d < v0 || d > v1) return;
+      const downs = tl.downbeats ?? [];
+      const barPx = downs.length > 1 ? (X(downs[downs.length - 1]) - X(downs[0])) / (downs.length - 1) : 40;
+      // Beat ticks only while they are at least 4 px apart; bar labels spaced by labelStep (LABEL FIX).
+      if (barPx / 4 >= 4) for (const b of tl.beats) if (b >= v0 && b <= v1) { g.fillStyle = C.strong; g.fillRect(X(b), ry + 14, 1, 8); }
+      const every = labelStep(barPx, BAR_STEPS, 34);
+      downs.forEach((d, i) => {
+        if (d < v0 || d > v1 || i % every !== 0) return;
         g.fillStyle = C.mute; g.fillRect(X(d), ry + 8, 1, 14);
-        if (props.zoom === 'live' || i % 4 === 0) { g.fillStyle = C.sub; g.fillText(String(i + 1), X(d) + 3, ry + 10); }
+        g.fillStyle = C.sub; g.fillText(String(i + 1), X(d) + 3, ry + 10);
       });
     } else if (r.k === 'spec') {
       const sp = props.view;
@@ -180,7 +184,7 @@ function draw(): void {
       g.stroke(); g.lineWidth = 1;
     } else if (r.k === 'axis') {
       g.fillStyle = C.mute; g.font = '10px ' + font;
-      const tick = v1 - v0 > 30 ? 10 : 2;
+      const tick = labelStep(w / Math.max(1e-6, v1 - v0), TIME_STEPS, 60);
       for (let s = Math.ceil(v0 / tick) * tick; s <= v1; s += tick) {
         if (s < 0) continue;
         g.fillText(Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0'), X(s) + 2, ry + 11);
