@@ -60,7 +60,7 @@ export class NativeAudioEngine {
   private volume = 1;
   private normDb = 0;
   private rate = 1;
-  private effects: { p: EffectParams; delaySec: number } = { p: NEUTRAL, delaySec: 0.33 };
+  private effects: { p: EffectParams; bpm: number | null } = { p: NEUTRAL, bpm: null };
 
   private readonly hooks: AudioEngineHooks;
 
@@ -106,7 +106,7 @@ export class NativeAudioEngine {
       }
     });
     el.addEventListener('timeupdate', () => { if (live()) this.fire('timeupdate', el.currentTime || 0); });
-    el.addEventListener('play', () => { if (live()) this.fire('play'); });
+    el.addEventListener('play', () => { if (live()) { this.graph?.setPlaying(true); this.fire('play'); } });
     // SYNC FIX 1 - "requested" vs "audible".
     // 'play' fires the moment play() is called, even while the file is still buffering and
     // nothing can be heard. 'playing' fires when sound actually starts; 'waiting' fires when
@@ -116,8 +116,8 @@ export class NativeAudioEngine {
     // was logged as listening time and the playhead sat still while the UI said "playing".
     el.addEventListener('playing', () => { if (live()) this.fire('playing'); });
     el.addEventListener('waiting', () => { if (live()) this.fire('waiting'); });
-    el.addEventListener('pause', () => { if (live()) this.fire('pause'); });
-    el.addEventListener('ended', () => { if (live()) this.fire('finish'); });
+    el.addEventListener('pause', () => { if (live()) { this.graph?.setPlaying(false); this.fire('pause'); } });
+    el.addEventListener('ended', () => { if (live()) { this.graph?.setPlaying(false); this.fire('finish'); } });
     // SEEK CLICK FIX (core/audioGraph.ts): fade around every seek while sound is playing.
     el.addEventListener('seeking', () => { if (live() && !el.paused && !this.crossfading) this.gain?.duck(); });
     el.addEventListener('seeked', () => { if (live() && !this.crossfading) this.gain?.unduck(); });
@@ -212,7 +212,8 @@ export class NativeAudioEngine {
     try { this.graph = this.hooks.createGraph(); } catch (err) { console.warn('Web Audio notice:', err); this.graph = null; }
     try { this.gains = this.graph ? this.decks.map(d => this.graph!.addDeck(d as HTMLMediaElement)) : []; }
     catch (err) { console.warn('Web Audio notice:', err); this.gains = []; }
-    this.graph?.setEffects(this.effects.p, this.effects.delaySec);
+    this.graph?.setEffects(this.effects.p, this.effects.bpm);
+    this.graph?.setPlaying(!this.el.paused);
     this.applyLevel(0);
   }
 
@@ -251,10 +252,19 @@ export class NativeAudioEngine {
    * Example: setRate(0.75) on a 12 s loop → each cycle takes 16 s, notes stay in key.
    */
   setRate(r: number): void {
-    const rate = Math.max(0.25, Math.min(2, Number(r) || 1));
-    this.rate = rate;
+    this.rate = Math.max(0.25, Math.min(2, Number(r) || 1));
+    this.applyRate();
+  }
+
+  /**
+   * Practice speed × tape speed. The practice speed keeps the pitch; tape speed (Effects:
+   * "Slowed + reverb", "Sped up") moves pitch with tempo, like a record at the wrong speed.
+   * Example: practice 1× and tape 0.85× → 0.85×, a little lower in pitch.
+   */
+  private applyRate(): void {
+    const tape = this.effects.p.tape, rate = this.rate * tape;
     for (const d of this.decks) {
-      d.preservesPitch = true;
+      d.preservesPitch = tape === 1;
       d.defaultPlaybackRate = rate;
       d.playbackRate = rate;
     }
@@ -268,9 +278,11 @@ export class NativeAudioEngine {
    * Effects on what you hear (core/effects.ts). Kept until the graph exists (first play), then
    * applied there. Without Web Audio they are not available (hasEffects() is false).
    */
-  setEffects(p: EffectParams, delaySec: number): void {
-    this.effects = { p, delaySec };
-    this.graph?.setEffects(p, delaySec);
+  setEffects(p: EffectParams, bpm: number | null): void {
+    const tapeChanged = p.tape !== this.effects.p.tape;
+    this.effects = { p, bpm };
+    this.graph?.setEffects(p, bpm);
+    if (tapeChanged) this.applyRate();
   }
   /** False only when the browser has no Web Audio (checked after the first play). */
   hasEffects(): boolean { return !this.graphTried || !!this.graph; }

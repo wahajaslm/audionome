@@ -102,7 +102,7 @@ test('engine: AbortError from play() is ignored', async () => {
 function fakeGraph(calls) {
   let n = 0;
   return {
-    resume: () => calls.push('resume'), close: () => calls.push('close'), setVolume: v => calls.push(['vol', v]), setEffects: () => { },
+    resume: () => calls.push('resume'), close: () => calls.push('close'), setVolume: v => calls.push(['vol', v]), setEffects: () => { }, setPlaying: () => { },
     addDeck: () => { const d = n++; return {
       setNormalization: (db, ramp) => calls.push(['norm', d, db, ramp]), duck: () => calls.push(['duck', d]),
       unduck: () => calls.push(['unduck', d]), fade: (to, sec) => calls.push(['fade', d, to, sec]),
@@ -703,4 +703,36 @@ test('artwork: drawn cover is stable per song and follows its key and tempo', ()
   const seg = (t, key) => ({ startSec: t, descriptors: { energy: t, brightness_hz: 2000, key, tempoBpm: 96 } });
   assert.deepEqual(artFromAnalysis([seg(3, 'D Minor'), seg(0, 'D Minor'), seg(1, 'A Minor'), seg(2, 'D Minor')]),
     { key: 'D Minor', tempoBpm: 96, energy: [0, 1, 2, 3], brightnessHz: 2000 });
+});
+
+test('effects: presets are in range, Off is neutral, old saves still load', async () => {
+  const fx = await import('../src/core/effects.ts');
+  for (const [name, { params }] of Object.entries(fx.PRESETS)) {
+    assert.deepEqual(fx.cleanEffects(params), params, name + ' survives a save and reload');
+    assert.equal(fx.effectsActive(params), name !== 'off', name);
+  }
+  const old = fx.cleanEffects({ preset: 'karaoke', karaoke: true, room: 0.15, lofi: true });
+  assert.equal(old.stem, 'no_vocals', 'the earlier Karaoke switch becomes the stem mode');
+  assert.equal(old.width, 1, 'missing values are neutral, not 0');
+  assert.equal(fx.cleanEffects({ room: 9, tape: 0.1 }).room, 1);
+  assert.equal(fx.cleanEffects({ room: 9, tape: 0.1 }).tape, 0.75);
+  assert.equal(fx.cleanEffects('nonsense').preset, 'off');
+});
+
+test('effects: DJ filter, width matrix, echo timing and tab dots', async () => {
+  const fx = await import('../src/core/effects.ts');
+  assert.deepEqual(fx.filterCutoffs(0), { lowpass: 20000, highpass: 10 }, 'centre: fully open');
+  assert.ok(Math.abs(fx.filterCutoffs(-1).lowpass - 300) < 1e-6);
+  assert.ok(Math.abs(fx.filterCutoffs(1).highpass - 2500) < 1e-6);
+  assert.ok(Math.abs(fx.filterCutoffs(-0.5).lowpass - 2449) < 1);
+  assert.deepEqual(fx.widthGains(1), { a: 1, b: 0 }, 'as recorded');
+  assert.deepEqual(fx.widthGains(0), { a: 0.5, b: 0.5 }, 'mono');
+  assert.equal(fx.echoDelaySec(120), 0.375);
+  assert.equal(fx.echoDelaySec(null), 0.375, 'unknown tempo: 120 BPM');
+  const p = fx.withControl(fx.NEUTRAL, 'chorus', 0.4);
+  assert.equal(p.preset, 'custom');
+  assert.equal(fx.groupActive(p, 'motion'), true);
+  assert.equal(fx.groupActive(p, 'space'), false);
+  assert.equal(fx.groupActive(fx.withControl(fx.NEUTRAL, 'stem', 'vocals'), 'tape'), true);
+  assert.equal(fx.withControl(p, 'chorus', 0).preset, 'off', 'back to neutral: Off');
 });

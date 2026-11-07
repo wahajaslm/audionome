@@ -126,8 +126,10 @@ export interface AudioGraphLike {
   setVolume(v: number): void;
   /** Routes one <audio> element (a deck) into the graph and returns its gain stages. */
   addDeck(el: HTMLMediaElement): DeckGainLike;
-  /** Effects on the sum of both decks (core/effects.ts); `delaySec` = echo time. */
-  setEffects(p: EffectParams, delaySec: number): void;
+  /** Effects on the sum of both decks (core/effects.ts); `bpm` times echo and tremolo. */
+  setEffects(p: EffectParams, bpm: number | null): void;
+  /** Playing or paused (vinyl crackle only plays under the music). */
+  setPlaying(on: boolean): void;
   close(): void;
 }
 
@@ -152,7 +154,8 @@ export class AudioGraph implements AudioGraphLike {
     this.vol.connect(ctx.destination);
   }
 
-  setEffects(p: EffectParams, delaySec: number): void { this.fx.set(p, delaySec); }
+  setEffects(p: EffectParams, bpm: number | null): void { this.fx.set(p, bpm); }
+  setPlaying(on: boolean): void { this.fx.setPlaying(on); }
 
   resume(): void {
     if (this.ctx.state !== 'running') this.ctx.resume().catch(() => { });

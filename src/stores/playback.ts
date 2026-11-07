@@ -9,7 +9,7 @@ import {
 import { normalizationGainDb } from '../core/audioGraph';
 import { practicingNow } from '../core/practice';
 import { radioKey, radioQueue, type RadioItem } from '../core/radio';
-import { cleanEffects, echoDelaySec, effectsActive, NEUTRAL, PRESETS, withControl, type EffectParams, type PresetName } from '../core/effects';
+import { cleanEffects, effectsActive, GROUPS, NEUTRAL, PRESETS, withControl, type EffectGroup, type EffectParams, type PresetName, type StemMode } from '../core/effects';
 import { putSetting, getSetting } from '../core/repository';
 import { useLibraryStore } from './library';
 import { useListeningStore } from './listening';
@@ -51,8 +51,10 @@ export const usePlaybackStore = defineStore('playback', () => {
   /** Effects on what you hear (core/effects.ts), remembered between visits. */
   const effects = ref<EffectParams>({ ...NEUTRAL });
   const effectsOn = computed(() => effectsActive(effects.value));
-  /** The Effects drawer under the strip is open. */
+  /** The Effects drawer under the strip is open, and which group it shows (remembered). */
   const effectsOpen = ref(false);
+  const effectsTab = ref<EffectGroup>('space');
+  function setEffectsTab(g: EffectGroup): void { effectsTab.value = g; putSetting('effectsTab', g).catch(() => { }); }
   /** Bumped when a crossfade swaps decks, so the waveform follows the playing element. */
   const deck = ref(0);
   /** Moment radio (core/radio.ts): on while it runs; `radioNow` is the passage playing. */
@@ -106,9 +108,11 @@ export const usePlaybackStore = defineStore('playback', () => {
     applyEffects();
     // Echo repeats on the beat: re-time it when a song's tempo arrives.
     watch(() => useTimelineStore().timeline?.tempoBpm, applyEffects);
-    // Karaoke carries over to the next song once its stems exist, without a toast each time.
+    // A stem mode (Karaoke, A cappella, No drums) carries over to the next song once its stems
+    // exist, without a toast each time.
     watch(() => [trackId.value, useTimelineStore().full] as const, ([, full]) => {
-      if (effects.value.karaoke && full && activeStem.value !== 'no_vocals') switchStem('no_vocals', true).catch(console.warn);
+      const want = stemFor(effects.value.stem);
+      if (want !== 'all' && full && activeStem.value !== want) switchStem(want, true).catch(console.warn);
     });
   }
 
@@ -267,6 +271,8 @@ export const usePlaybackStore = defineStore('playback', () => {
     const snap = await getSetting<boolean>('snapToBeat');
     if (typeof snap === 'boolean') snapToBeat.value = snap;
     try { effects.value = cleanEffects(JSON.parse((await getSetting<string>('effects')) || 'null')); } catch { effects.value = { ...NEUTRAL }; }
+    const tab = await getSetting<string>('effectsTab');
+    if (GROUPS.some(g => g.id === tab)) effectsTab.value = tab as EffectGroup;
     applyEffects();
     applyLoudness(0);
   }
@@ -311,10 +317,13 @@ export const usePlaybackStore = defineStore('playback', () => {
     setRate(RATES[(i + 1) % RATES.length]);
   }
 
-  /** Sends the effects to the engine; echo follows the song's tempo when it is known. */
+  /** Sends the effects to the engine; echo and tremolo follow the song's tempo when it is known. */
   function applyEffects(): void {
-    engineRef?.setEffects(effects.value, echoDelaySec(useTimelineStore().timeline?.tempoBpm));
+    engineRef?.setEffects(effects.value, useTimelineStore().timeline?.tempoBpm ?? null);
   }
+
+  /** The stem source for a stem mode: Karaoke = without vocals, A cappella = vocals only. */
+  const stemFor = (m: StemMode) => (m === 'mix' ? 'all' : m);
 
   /**
    * Sets the effects (a preset or one moved control), remembers them, and handles Karaoke,
@@ -322,12 +331,11 @@ export const usePlaybackStore = defineStore('playback', () => {
    * Example: setEffects(PRESETS.hall.params) → a large room; withControl(p, 'pan', -0.5) → custom.
    */
   async function setEffects(p: EffectParams): Promise<void> {
-    const wasKaraoke = effects.value.karaoke;
+    const prevStem = effects.value.stem;
     effects.value = p;
     applyEffects();
     putSetting('effects', JSON.stringify(p)).catch(() => { });
-    if (p.karaoke && activeStem.value !== 'no_vocals') await switchStem('no_vocals');
-    else if (!p.karaoke && wasKaraoke && activeStem.value === 'no_vocals') await switchStem('all');
+    if (p.stem !== prevStem && activeStem.value !== stemFor(p.stem)) await switchStem(stemFor(p.stem));
   }
   const applyPreset = (name: Exclude<PresetName, 'custom'>) => setEffects({ ...PRESETS[name].params });
   function setControl<K extends keyof EffectParams>(key: K, value: EffectParams[K]): Promise<void> {
@@ -660,7 +668,7 @@ export const usePlaybackStore = defineStore('playback', () => {
   function restoreFullMix(): void {
     const e = engineRef;
     if (!e || !trackId.value || activeStem.value === 'all') return;
-    if (effects.value.karaoke && activeStem.value === 'no_vocals') return;
+    if (effects.value.stem !== 'mix' && activeStem.value === stemFor(effects.value.stem)) return;
     activeStem.value = 'all';
     const pos = region.t, wasPlaying = playing.value;
     e.load(fullMixUrl(trackId.value), pos).then(() => { if (wasPlaying) e.play().catch(console.warn); }).catch(console.warn);
@@ -691,7 +699,7 @@ export const usePlaybackStore = defineStore('playback', () => {
 
   return {
     ...toRefs(region), trackId, duration, playing, loading, volume, activeStem, queue, currentTrack,
-    rate, normalize, snapToBeat, practicing, setRate, effects, effectsOn, effectsOpen, setEffects, applyPreset, setControl, deck, radio, radioNow, startRadio, stopRadio, radioSkip, radioRestart, cycleRate, setNormalize, setSnapToBeat, onLoudnessMeasured,
+    rate, normalize, snapToBeat, practicing, setRate, effects, effectsOn, effectsOpen, effectsTab, setEffectsTab, setEffects, applyPreset, setControl, deck, radio, radioNow, startRadio, stopRadio, radioSkip, radioRestart, cycleRate, setNormalize, setSnapToBeat, onLoudnessMeasured,
     engine, attachEngine, onDuration, onFrame, checkRegionEnd, loadSettings, lastPlayed,
     selectTrack, changeTrack, openRange, playQueue, playNext, togglePlay, playSelection, seekBy, stepBy,
     clickSeek, beginSelection, updateSelection, commitSelection, resizeSelection, endResize, selectAroundPlayhead, clearSelection,
