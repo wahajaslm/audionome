@@ -12,7 +12,7 @@ import { formatTime } from '../../ui/format';
 import { useTimeDrag } from '../../composables/useTimeDrag';
 
 const props = defineProps<{ timeline: Timeline | null; duration: number; t: number; moments: PassageMoment[] }>();
-const emit = defineEmits<{ range: [a: number, b: number, phase: 'start' | 'move' | 'end'] }>();
+const emit = defineEmits<{ range: [a: number, b: number, phase: 'start' | 'move' | 'end']; seek: [sec: number] }>();
 
 const cv = ref<HTMLCanvasElement | null>(null);
 const width = ref(0);
@@ -67,15 +67,16 @@ const now = computed(() => {
   };
 });
 
-// LOOP ANYWHERE FIX - click a part to select the whole part; drag to mark any range.
-// Example: click the C block at 0:58 → selection 0:58–1:18.
+// WHOLE-WAVEFORM FIX - a click on a part used to select the whole part. This bar sits just
+// under the waveform, so it was hit by accident, and parts can be most of a song: one click
+// then highlighted nearly the whole waveform. Now a click seeks (like the waveform) and a
+// drag marks a range.
+// Example: a song whose part B is 0:20–4:10 of 4:40 → before: a click selected 0:20–4:10;
+// now: the playhead moves to where you clicked.
 const drag = useTimeDrag(
   x => { const r = cv.value!.getBoundingClientRect(); return Math.max(0, Math.min(props.duration, (x - r.left) / r.width * props.duration)); },
   {
-    click: sec => {
-      const p = props.timeline?.sections?.find(s => sec >= s.a && sec < s.b);
-      if (p) { emit('range', p.a, p.a, 'start'); emit('range', p.a, p.b, 'end'); }
-    },
+    click: sec => emit('seek', sec),
     range: (a, b, phase) => emit('range', a, b, phase),
   },
 );
@@ -83,7 +84,7 @@ const drag = useTimeDrag(
 
 <template>
   <div class="strip">
-    <canvas ref="cv" class="cv" :style="{ height: H + 'px' }" aria-label="Song parts and marked moments. Click a part to select it, drag to mark a passage." @pointerdown="drag.pointerdown" @pointermove="drag.pointermove" @pointerup="drag.pointerup" @pointercancel="drag.pointercancel"></canvas>
+    <canvas ref="cv" class="cv" :style="{ height: H + 'px' }" aria-label="Song parts and marked moments. Click to move there, drag to mark a passage." @pointerdown="drag.pointerdown" @pointermove="drag.pointermove" @pointerup="drag.pointerup" @pointercancel="drag.pointercancel"></canvas>
     <div v-if="now" class="now" aria-live="off">
       <span class="ch">{{ now.chord }}</span>
       <span v-if="now.next" class="nx">next {{ now.next.c }} in {{ now.next.in }} s</span>
