@@ -8,7 +8,7 @@
  *   cards       Now · This passage · File (NerdCards.vue)
  *   Details     the File · Playback · Analysis columns as text (NerdStats.vue), folded
  */
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { panBy, spanLabel, stepZoom, viewOf, zoomAt, type ZoomState } from '../../core/zoom';
 import NerdOverview from './NerdOverview.vue';
 import { useAudibleTime } from '../../composables/useAudibleTime';
@@ -61,6 +61,24 @@ const onCenter = (c: number) => { if (!fitted.value) zoom.value = { ...zoom.valu
 // A new passage starts at Fit.
 watch(() => [range.value.a, range.value.b], () => { zoom.value = { ...zoom.value, span: null }; });
 const inspector = ref<InstanceType<typeof NerdFrameInspector> | null>(null);
+
+/**
+ * CONTEXT STRIP - once the big lanes scroll out of view (you are reading the panel, the
+ * inspector or the table), a compact waveform · spectrum · blocks strip pins to the top, on the
+ * same zoom and with the same frame outline, so the signal never leaves the screen.
+ */
+const lanesEl = ref<HTMLElement | null>(null);
+const lanesHidden = ref(false);
+/** Where the strip sits: pinned to the window, lined up with the lanes (a parent clips overflow, so CSS sticky cannot work). */
+const pin = ref({ left: 0, width: 0 });
+let io: IntersectionObserver | null = null;
+const place = () => { const r = lanesEl.value?.getBoundingClientRect(); if (r) pin.value = { left: r.left, width: r.width }; };
+onMounted(() => {
+  io = new IntersectionObserver(([e]) => { lanesHidden.value = !e.isIntersecting && e.boundingClientRect.top < 0; place(); }, { threshold: 0 });
+  if (lanesEl.value) io.observe(lanesEl.value);
+  window.addEventListener('resize', place);
+});
+onBeforeUnmount(() => { io?.disconnect(); window.removeEventListener('resize', place); });
 function onKey(e: KeyboardEvent): void {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   // Frame by frame: ← / → one frame (Shift: 10), Enter plays the frame.
@@ -93,10 +111,17 @@ function loopRange(a: number, b: number): void {
       </div>
     </header>
     <NerdOverview v-if="!fitted" class="over" :envelope="timeline.envelope" :range="range" :win="win" :t="audibleT" @center="onCenter" />
-    <div class="lanes-wrap" tabindex="0" aria-label="Lanes. + and − zoom, 0 fits, F follows the playhead, ← → step frames, Enter plays the frame" @keydown="onKey">
+    <div ref="lanesEl" class="lanes-wrap" tabindex="0" aria-label="Lanes. + and − zoom, 0 fits, F follows the playhead, ← → step frames, Enter plays the frame" @keydown="onKey">
     <BitrateLanes :bitrate="timeline.bitrate" :envelope="timeline.envelope" :view="timeline.spectrumView" :win="win" :spectrum-kind="timeline.spectrumKind" :ready-kinds="timeline.readyKinds" @kind="k => timeline.setSpectrumKind(k)" :loud="loud" :range="range" :sel="playback.sel" :t="audibleT" @seek="s => playback.clickSeek(s)" @loop="loopRange" @zoom="onZoom" @pan="onPan" />
     </div>
     <p class="hint">Pinch or ⌘-scroll to zoom · ⇧-scroll or swipe to pan · drag to loop · ← → step frames · Enter plays the frame</p>
+    <!-- Sticky context strip (no height of its own, so nothing below moves when it appears). -->
+    <div class="ctx-pin">
+      <div v-if="lanesHidden" class="ctx" aria-label="Signal context" :style="{ left: pin.left + 'px', width: pin.width + 'px' }">
+        <BitrateLanes compact :bitrate="timeline.bitrate" :envelope="timeline.envelope" :view="timeline.spectrumView" :win="win" :spectrum-kind="timeline.spectrumKind" :ready-kinds="timeline.readyKinds"
+          :loud="null" :range="range" :sel="playback.sel" :t="audibleT" @seek="s => playback.clickSeek(s)" @loop="loopRange" @zoom="onZoom" @pan="onPan" />
+      </div>
+    </div>
     <!-- At a glance: the frame now, this passage, the file (NerdCards.vue). -->
     <NerdCards :bitrate="timeline.bitrate" :t="audibleT" :alignment="alignment" :range="range" :is-passage="!!playback.sel" />
     <NerdFrameInspector
@@ -131,6 +156,8 @@ function loopRange(a: number, b: number): void {
 .zt[aria-pressed='true'] { color: var(--ink); border-color: var(--ink-sub); background: var(--bg-raise); }
 .over { margin: 0 0 8px 106px; width: calc(100% - 106px); }
 .lanes-wrap { outline: none; }
+.ctx-pin { height: 0; }
+.ctx { position: fixed; top: 0; z-index: 40; padding: 8px 0 6px; background: var(--bg-panel); border-bottom: 1px solid var(--line); box-shadow: 0 6px 12px -8px rgba(0, 0, 0, 0.6); }
 .lanes-wrap:focus-visible { box-shadow: 0 0 0 1px var(--accent); border-radius: 2px; }
 .hint { margin: 6px 0 0 106px; font-size: 11px; color: var(--ink-mute); }
 .details { margin-top: var(--space-3); }

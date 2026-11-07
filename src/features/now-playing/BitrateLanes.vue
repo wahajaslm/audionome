@@ -27,6 +27,8 @@ const props = defineProps<{
   /** The chosen spectrum view and the views ready to show (picker in the label column). */
   spectrumKind: SpectrumKind;
   readyKinds: SpectrumKind[];
+  /** The sticky context strip: waveform, spectrum, blocks and time only. */
+  compact?: boolean;
   /** Loudness, 10 values per second (service curve or the browser's). */
   loud: ArrayLike<number> | null;
   /** The passage (selection) or the whole song. */
@@ -46,11 +48,20 @@ const emit = defineEmits<{ seek: [sec: number]; loop: [a: number, b: number]; zo
 // ALIGN FIX - Waveform and Spectrum on top, on the same clock as the decoder lanes, so a short
 // block or a bitrate jump can be matched to the sound that caused it. At Frames zoom the frame
 // edges run down through them as faint lines.
-const ROWS = {
+const FULL_ROWS = {
   wave: { y: 0, h: 56 }, spec: { y: 62, h: 84 },
   rate: { y: 154, h: 70 }, blocks: { y: 230, h: 14 }, gain: { y: 250, h: 30 }, third: { y: 286, h: 22 }, loud: { y: 316, h: 26 }, axis: { y: 348, h: 14 },
 };
-const HEIGHT = 362;
+/**
+ * CONTEXT STRIP - compact rows (waveform, spectrum, blocks, time) for the sticky strip that
+ * keeps the signal on screen while you read the inspector and the frame table below.
+ */
+const COMPACT_ROWS = {
+  wave: { y: 0, h: 34 }, spec: { y: 38, h: 54 },
+  rate: { y: 0, h: 0 }, blocks: { y: 96, h: 10 }, gain: { y: 0, h: 0 }, third: { y: 0, h: 0 }, loud: { y: 0, h: 0 }, axis: { y: 110, h: 14 },
+};
+const ROWS = props.compact ? COMPACT_ROWS : FULL_ROWS;
+const HEIGHT = props.compact ? 124 : 362;
 let tiles: HTMLCanvasElement[] = [];
 watch(() => props.view, v => { tiles = v ? tilesFor(v) : []; }, { immediate: true });
 /** Block colours by kind: long (quiet), start / stop (amber), short (accent). */
@@ -113,7 +124,7 @@ function draw(): void {
     const cur = frameAt(fe, props.t);
     if (cur >= 0) {
       g.strokeStyle = C.ink; g.lineWidth = 1;
-      g.strokeRect(Math.round(X(fe.t[cur])) + 0.5, W.y + 0.5, Math.max(2, Math.round(X(fe.t[cur] + fe.dur[cur]) - X(fe.t[cur])) - 1), ROWS.third.y + ROWS.third.h - W.y - 1);
+      g.strokeRect(Math.round(X(fe.t[cur])) + 0.5, W.y + 0.5, Math.max(2, Math.round(X(fe.t[cur] + fe.dur[cur]) - X(fe.t[cur])) - 1), (ROWS.third.h ? ROWS.third.y + ROWS.third.h : ROWS.blocks.y + ROWS.blocks.h) - W.y - 1);
     }
     // Short blocks / windows tint their frame across the waveform and spectrum.
     const d = fe.dec;
@@ -125,6 +136,7 @@ function draw(): void {
   }
 
   const br = props.bitrate, R = ROWS.rate;
+  if (R.h) { // the bitrate lane (not in the compact strip)
   g.font = '10px ' + font;
   if (!br) { g.fillStyle = C.mute; g.fillText('Reading the file…', 8, R.y + R.h / 2); }
   else if (frameMode.value && br.frames) {
@@ -165,6 +177,8 @@ function draw(): void {
     g.fillText(`avg ${br.avgKbps}`, w - 52, Y(br.avgKbps) - 3);
   }
 
+  }
+
   // Decoder lanes: one value per screen pixel (the strongest block, the mean gain …).
   const fr = br?.frames, dec = fr?.dec;
   if (fr && dec) {
@@ -201,6 +215,7 @@ function draw(): void {
       g.stroke(); g.lineWidth = 1;
       return [lo, hi];
     };
+    if (ROWS.gain.h) {
     const [glo, ghi] = curve(ROWS.gain, gSum, gN, C.ink);
     g.fillStyle = C.mute; g.fillText(`${Math.round(ghi)}`, 4, ROWS.gain.y + 9); g.fillText(`${Math.round(glo)}`, 4, ROWS.gain.y + ROWS.gain.h - 2);
     const T = ROWS.third;
@@ -217,13 +232,14 @@ function draw(): void {
       }
       g.globalAlpha = 1;
     }
-  } else if (br) {
+    }
+  } else if (br && ROWS.gain.h) {
     g.fillStyle = C.mute;
     g.fillText(br.codec === 'MP3' || br.codec === 'AAC' ? 'Reading the bitstream…' : 'No decoder fields for ' + br.codec, 8, ROWS.gain.y + 18);
   }
 
   const L = ROWS.loud, loud = props.loud;
-  if (loud && loud.length > 2) {
+  if (L.h && loud && loud.length > 2) {
     const lo = quantile(loud, 0.05), hi = quantile(loud, 0.995) || 1;
     g.strokeStyle = C.sub; g.lineWidth = 1.25; g.beginPath();
     let first = true;
@@ -293,14 +309,14 @@ const drag = useTimeDrag(
   <div class="lanes">
     <div class="lbl" :style="{ height: HEIGHT + 'px' }">
       <div class="l" :style="{ top: ROWS.wave.y + 'px', height: ROWS.wave.h + 'px' }"><span>Waveform</span></div>
-      <div class="l" :style="{ top: ROWS.spec.y + 'px', height: ROWS.spec.h + 'px' }"><span>Spectrum<SpectrumKindPicker :kind="$props.spectrumKind" :ready="$props.readyKinds" @select="k => emit('kind', k)" /></span></div>
-      <div class="l" :style="{ top: ROWS.rate.y + 'px', height: ROWS.rate.h + 'px' }">
+      <div class="l" :style="{ top: ROWS.spec.y + 'px', height: ROWS.spec.h + 'px' }"><span>Spectrum<SpectrumKindPicker v-if="!compact" :kind="$props.spectrumKind" :ready="$props.readyKinds" @select="k => emit('kind', k)" /></span></div>
+      <div v-if="ROWS.rate.h" class="l" :style="{ top: ROWS.rate.y + 'px', height: ROWS.rate.h + 'px' }">
         <span>Bitrate<small v-if="bitrate">{{ bitrate.codec }} {{ bitrate.mode }}{{ bitrate.exact ? '' : ' · average' }}</small></span>
       </div>
       <div class="l" :style="{ top: ROWS.blocks.y + 'px', height: ROWS.blocks.h + 'px' }"><span>Blocks</span></div>
-      <div class="l" :style="{ top: ROWS.gain.y + 'px', height: ROWS.gain.h + 'px' }"><span>Gain<small>global gain</small></span></div>
-      <div class="l" :style="{ top: ROWS.third.y + 'px', height: ROWS.third.h + 'px' }"><span>{{ bitrate?.frames?.dec?.codec === 'aac' ? 'Shape' : 'Reservoir' }}<small>{{ bitrate?.frames?.dec?.codec === 'aac' ? 'KBD lit · sine dim' : 'main_data_begin' }}</small></span></div>
-      <div class="l" :style="{ top: ROWS.loud.y + 'px', height: ROWS.loud.h + 'px' }"><span>Loudness</span></div>
+      <div v-if="ROWS.gain.h" class="l" :style="{ top: ROWS.gain.y + 'px', height: ROWS.gain.h + 'px' }"><span>Gain<small>global gain</small></span></div>
+      <div v-if="ROWS.third.h" class="l" :style="{ top: ROWS.third.y + 'px', height: ROWS.third.h + 'px' }"><span>{{ bitrate?.frames?.dec?.codec === 'aac' ? 'Shape' : 'Reservoir' }}<small>{{ bitrate?.frames?.dec?.codec === 'aac' ? 'KBD lit · sine dim' : 'main_data_begin' }}</small></span></div>
+      <div v-if="ROWS.loud.h" class="l" :style="{ top: ROWS.loud.y + 'px', height: ROWS.loud.h + 'px' }"><span>Loudness</span></div>
     </div>
     <canvas ref="cv" class="cv" :style="{ height: HEIGHT + 'px' }" aria-label="Bitrate and loudness over time. Click to jump, drag to loop." @pointerdown="drag.pointerdown" @pointermove="drag.pointermove" @pointerup="drag.pointerup" @pointercancel="drag.pointercancel" @wheel="onWheel"></canvas>
   </div>
