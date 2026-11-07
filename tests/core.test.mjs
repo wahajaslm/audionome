@@ -975,3 +975,22 @@ test('envelope: min/max per step, silence is flat (ALIGN FIX)', async () => {
   assert.ok(e.max[0] > 0.45 && e.min[0] < -0.45, 'the tone fills its steps');
   assert.equal(e.max[9], 0); assert.equal(e.min[9], 0);
 });
+
+test('nerds zoom: steps, Fit, pointer-anchored zoom and pan (ZOOM FIX)', async () => {
+  const z = await import('../src/core/zoom.ts');
+  const r = { a: 10, b: 22 }, fit = { span: null, center: 16, follow: false };
+  assert.deepEqual(z.viewOf(fit, r, 15), [10, 22]);
+  const in1 = z.stepZoom(fit, r, 15, -1);
+  assert.equal(in1.span, 10); assert.equal(in1.center, 15, 'from Fit: centred on the playhead');
+  const in2 = z.stepZoom(z.stepZoom(in1, r, 15, -1), r, 15, -1);
+  assert.equal(in2.span, 2);
+  assert.deepEqual(z.viewOf(in2, r, 15), [14, 16]);
+  assert.equal(z.stepZoom(z.stepZoom(z.stepZoom(in2, r, 15, 1), r, 15, 1), r, 15, 1).span, null, 'out past the passage: Fit');
+  const at = z.zoomAt({ span: 10, center: 15, follow: true }, r, 15, 0.5, 12);
+  assert.equal(at.follow, false); assert.equal(at.span, 5);
+  const [a0, a1] = z.viewOf(at, r, 15);
+  assert.ok(Math.abs((12 - a0) / (a1 - a0) - (12 - 10) / 10) < 1e-9, 'the time under the pointer stays put');
+  assert.deepEqual(z.viewOf(z.panBy({ span: 2, center: 15, follow: false }, r, 0, 100), r, 0), [20, 22], 'pan stops at the end');
+  assert.equal(z.panBy(fit, r, 0, 3), fit, 'nothing to pan at Fit');
+  assert.equal(z.spanLabel(0.5), '500 ms'); assert.equal(z.spanLabel(2), '2 s'); assert.equal(z.spanLabel(90), '1:30');
+});

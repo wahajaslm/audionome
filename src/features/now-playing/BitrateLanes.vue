@@ -8,10 +8,14 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { frameAt, type BitrateInfo } from '../../core/bitrate';
+import { FRAME_DETAIL_SEC } from '../../core/zoom';
 import type { Envelope } from '../../core/envelope';
 import { bandForHz, spectrumLabels, spectrumTiles, SPEC_TILE, type SpectrumView } from '../../core/spectrum';
 import { labelStep, quantile, TIME_STEPS } from '../../core/timeline';
 import { useTimeDrag } from '../../composables/useTimeDrag';
+
+/** Time-axis steps, down to 20 ms for frame-level zoom. */
+const FINE_STEPS = [0.02, 0.05, 0.1, 0.2, 0.5, ...TIME_STEPS];
 
 const props = defineProps<{
   bitrate: BitrateInfo | null;
@@ -24,9 +28,10 @@ const props = defineProps<{
   range: { a: number; b: number };
   sel: { a: number; b: number } | null;
   t: number;
-  zoom: 'frames' | 'live' | 'all';
+  /** The visible [start, end] in seconds (ZOOM FIX: the panel owns zoom and pan, core/zoom.ts). */
+  win: [number, number];
 }>();
-const emit = defineEmits<{ seek: [sec: number]; loop: [a: number, b: number] }>();
+const emit = defineEmits<{ seek: [sec: number]; loop: [a: number, b: number]; zoom: [factor: number, atSec: number]; pan: [deltaSec: number] }>();
 
 /**
  * DECODER LANES - Blocks (long · start · short · stop per frame: shorts mark transients),
@@ -50,13 +55,9 @@ const width = ref(0);
 let ro: ResizeObserver | null = null;
 const dragRange = ref<[number, number] | null>(null);
 
-const view = computed<[number, number]>(() => {
-  if (props.zoom === 'all') return [props.range.a, props.range.b];
-  if (props.zoom === 'frames') return [props.t - 1, props.t + 1];
-  const span = Math.min(20, props.range.b - props.range.a || 20);
-  const c = props.t >= props.range.a && props.t <= props.range.b ? props.t : props.range.a + span / 2;
-  return [c - span / 2, c + span / 2];
-});
+const view = computed<[number, number]>(() => props.win);
+/** Close enough to see single frames: one bar per frame, frame edges, crisp spectrum columns. */
+const frameMode = computed(() => props.win[1] - props.win[0] <= FRAME_DETAIL_SEC);
 
 function draw(): void {
   const c = cv.value, w = width.value;
@@ -91,7 +92,7 @@ function draw(): void {
   const sp = props.view, P = ROWS.spec;
   if (sp && tiles.length) {
     const f0 = Math.max(0, v0 * sp.fps), f1 = Math.min(sp.frames, v1 * sp.fps);
-    g.imageSmoothingEnabled = props.zoom !== 'frames'; // at frame zoom, crisp columns line up with frames
+    g.imageSmoothingEnabled = !frameMode.value; // at frame zoom, crisp columns line up with frames
     for (let ti = Math.floor(f0 / SPEC_TILE); ti <= Math.floor((f1 - 1) / SPEC_TILE) && ti < tiles.length; ti++) {
       const t0 = ti * SPEC_TILE, a = Math.max(f0, t0), b = Math.min(f1, t0 + tiles[ti].width);
       if (b <= a) continue;
@@ -109,7 +110,7 @@ function draw(): void {
 
   // Frame edges through waveform and spectrum (Frames zoom only).
   const fe = props.bitrate?.frames;
-  if (props.zoom === 'frames' && fe) {
+  if (frameMode.value && fe) {
     let i0 = Math.max(0, frameAt(fe, v0)), i1 = frameAt(fe, v1);
     if (i1 < 0) i1 = fe.t.length - 1;
     g.fillStyle = 'rgba(255,255,255,0.10)';
@@ -126,7 +127,7 @@ function draw(): void {
   const br = props.bitrate, R = ROWS.rate;
   g.font = '10px ' + font;
   if (!br) { g.fillStyle = C.mute; g.fillText('Reading the file…', 8, R.y + R.h / 2); }
-  else if (props.zoom === 'frames' && br.frames) {
+  else if (frameMode.value && br.frames) {
     // FRAME FIX - one bar per frame / packet / page; height = its bytes on this window's scale.
     const f = br.frames, now = frameAt(f, props.t);
     let i0 = Math.max(0, frameAt(f, v0)), i1 = frameAt(f, v1);
@@ -141,7 +142,7 @@ function draw(): void {
     }
     g.globalAlpha = 1; g.fillStyle = C.mute;
     g.fillText(`${maxB} B`, 4, R.y + 10);
-    g.fillText(`${i1 - i0 + 1} ${f.unit === 'page' ? 'pages' : f.unit === 'sample' ? 'packets' : 'frames'} in 2 s`, w - 110, R.y + 10);
+    g.fillText(`${i1 - i0 + 1} ${f.unit === 'page' ? 'pages' : f.unit === 'sample' ? 'packets' : 'frames'} in view`, w - 110, R.y + 10);
   } else {
     const k = br.kbps, i0 = Math.max(0, Math.floor(v0 / br.binSec)), i1 = Math.min(k.length - 1, Math.ceil(v1 / br.binSec));
     const vis = k.slice(i0, i1 + 1).filter(v => v > 0);
@@ -234,22 +235,45 @@ function draw(): void {
     g.stroke(); g.lineWidth = 1;
   }
 
-  const A = ROWS.axis, step = labelStep(w / Math.max(1e-6, v1 - v0), TIME_STEPS, 60);
+  // Sub-second steps at close zoom, labelled to the millisecond: "1:48.200".
+  const A = ROWS.axis, step = labelStep(w / Math.max(1e-6, v1 - v0), FINE_STEPS, 64);
+  const digits = step < 0.1 ? 3 : step < 1 ? (step < 0.5 ? 2 : 1) : 0;
   g.fillStyle = C.mute; g.font = '10px ' + font;
-  for (let s = Math.ceil(v0 / step) * step; s <= v1; s += step) {
+  for (let k = Math.ceil(v0 / step); k * step <= v1; k++) {
+    const s = k * step;
     if (s < 0) continue;
     g.fillRect(X(s), A.y, 1, 3);
-    g.fillText(Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0'), X(s) + 2, A.y + 11);
+    const sec = s % 60;
+    g.fillText(Math.floor(s / 60) + ':' + (digits ? sec.toFixed(digits).padStart(3 + digits, '0') : String(Math.floor(sec)).padStart(2, '0')), X(s) + 2, A.y + 11);
   }
   if (props.t >= v0 && props.t <= v1) { g.fillStyle = C.accent; g.fillRect(X(props.t) - 0.75, 0, 1.5, HEIGHT - 14); }
 }
 
-watch(() => [props.t, props.zoom, props.bitrate, props.loud, props.envelope, props.view, props.range.a, props.range.b, props.sel?.a, props.sel?.b, dragRange.value], () => requestAnimationFrame(draw));
+watch(() => [props.t, props.win[0], props.win[1], props.bitrate, props.loud, props.envelope, props.view, props.range.a, props.range.b, props.sel?.a, props.sel?.b, dragRange.value], () => requestAnimationFrame(draw));
 onMounted(() => {
   ro = new ResizeObserver(([e]) => { width.value = e.contentRect.width; draw(); });
   if (cv.value) ro.observe(cv.value);
 });
 onBeforeUnmount(() => ro?.disconnect());
+
+/**
+ * Pinch (macOS sends it as ctrl + wheel) or ⌘ / ctrl + scroll: zoom around the pointer.
+ * Shift + scroll or a sideways swipe: pan. A plain vertical scroll still scrolls the page.
+ */
+function onWheel(e: WheelEvent): void {
+  const c = cv.value;
+  if (!c) return;
+  const r = c.getBoundingClientRect(), [v0, v1] = view.value;
+  const at = v0 + ((e.clientX - r.left) / Math.max(1, r.width)) * (v1 - v0);
+  if (e.ctrlKey || e.metaKey) {
+    e.preventDefault();
+    emit('zoom', Math.exp(e.deltaY * (e.ctrlKey && !e.metaKey ? 0.012 : 0.004)), at);
+  } else if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+    e.preventDefault();
+    const d = e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX;
+    emit('pan', (d / Math.max(1, r.width)) * (v1 - v0));
+  }
+}
 
 const frozen = ref<[number, number] | null>(null);
 const drag = useTimeDrag(
@@ -278,7 +302,7 @@ const drag = useTimeDrag(
       <div class="l" :style="{ top: ROWS.third.y + 'px', height: ROWS.third.h + 'px' }"><span>{{ bitrate?.frames?.dec?.codec === 'aac' ? 'Shape' : 'Reservoir' }}<small>{{ bitrate?.frames?.dec?.codec === 'aac' ? 'KBD lit · sine dim' : 'main_data_begin' }}</small></span></div>
       <div class="l" :style="{ top: ROWS.loud.y + 'px', height: ROWS.loud.h + 'px' }"><span>Loudness</span></div>
     </div>
-    <canvas ref="cv" class="cv" :style="{ height: HEIGHT + 'px' }" aria-label="Bitrate and loudness over time. Click to jump, drag to loop." @pointerdown="drag.pointerdown" @pointermove="drag.pointermove" @pointerup="drag.pointerup" @pointercancel="drag.pointercancel"></canvas>
+    <canvas ref="cv" class="cv" :style="{ height: HEIGHT + 'px' }" aria-label="Bitrate and loudness over time. Click to jump, drag to loop." @pointerdown="drag.pointerdown" @pointermove="drag.pointermove" @pointerup="drag.pointerup" @pointercancel="drag.pointercancel" @wheel="onWheel"></canvas>
   </div>
 </template>
 
