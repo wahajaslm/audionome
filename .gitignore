@@ -25,3 +25,9 @@ data/genre_mix/likes_cache.json
 data/genre_mix/replay_cache.json
 data/genre_mix_confirm/audio/
 data/genre_mix_confirm/features/
+
+# Copyrighted recordings and renders: kept locally, never published
+public/*.mp3
+public/Chaap-Tilak-*.wav
+public/videos/
+chaap_tilak_visualizer/assets/*.mp4
