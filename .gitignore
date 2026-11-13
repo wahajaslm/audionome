@@ -31,3 +31,4 @@ public/*.mp3
 public/Chaap-Tilak-*.wav
 public/videos/
 chaap_tilak_visualizer/assets/*.mp4
+!docs/screenshots/*.png
